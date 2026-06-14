@@ -22681,32 +22681,38 @@ button.chat-files-dropdown-item:hover:not(:disabled) {
 .projects-detail-header-main {
     min-width: 0;
     flex: 1;
-}
-.projects-detail-title-row {
     display: flex;
-    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+}
+.projects-detail-headline {
+    display: flex;
+    align-items: center;
     flex-wrap: wrap;
+    gap: 10px 12px;
+    min-width: 0;
+}
+.projects-detail-title-group {
+    display: flex;
+    align-items: center;
     gap: 10px;
+    min-width: 0;
+    max-width: min(560px, 100%);
 }
 .projects-detail-title {
-    flex: 1;
-    min-width: 0;
     margin: 0;
+    min-width: 0;
     font-size: 1.375rem;
     font-weight: 600;
     color: #0f172a;
     letter-spacing: -0.02em;
     line-height: 1.35;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
 }
 .projects-status-pill {
     flex-shrink: 0;
-    margin-top: 4px;
     display: inline-flex;
     align-items: center;
     font-size: 0.6875rem;
@@ -22714,22 +22720,26 @@ button.chat-files-dropdown-item:hover:not(:disabled) {
     padding: 3px 10px;
     border-radius: 999px;
     line-height: 1.2;
+    border: 1px solid transparent;
 }
 .projects-status-pill--active {
     background: #dcfce7;
     color: #166534;
+    border-color: #86efac;
 }
 .projects-status-pill--archived {
     background: #f1f5f9;
     color: #64748b;
+    border-color: #e2e8f0;
 }
 .projects-detail-meta {
-    margin: 6px 0 0;
+    margin: 0;
     font-size: 0.8125rem;
     color: #94a3b8;
+    line-height: 1.4;
 }
 .projects-detail-desc {
-    margin: 10px 0 0;
+    margin: 0;
     max-width: min(640px, 100%);
     font-size: 0.875rem;
     color: #475569;
@@ -22749,17 +22759,36 @@ button.chat-files-dropdown-item:hover:not(:disabled) {
 .projects-detail-stats {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 14px;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    padding-left: 12px;
+    border-left: 1px solid #e2e8f0;
 }
 .projects-stat-chip {
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     font-weight: 500;
     color: #475569;
     background: #f1f5f9;
     border: 1px solid #e2e8f0;
-    padding: 4px 10px;
+    padding: 3px 8px;
     border-radius: 999px;
+    white-space: nowrap;
+}
+.projects-stat-chip--facts {
+    color: #1d4ed8;
+    background: #dbeafe;
+    border-color: #93c5fd;
+}
+.projects-stat-chip--vulns {
+    color: #c2410c;
+    background: #ffedd5;
+    border-color: #fdba74;
+}
+.projects-stat-chip--conversations {
+    color: #6d28d9;
+    background: #ede9fe;
+    border-color: #c4b5fd;
 }
 .projects-stat-chip--warn {
     color: #92400e;
@@ -22771,7 +22800,23 @@ button.chat-files-dropdown-item:hover:not(:disabled) {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    align-items: flex-start;
+    align-items: center;
+    align-self: flex-start;
+    margin-top: 2px;
+}
+@media (max-width: 860px) {
+    .projects-detail-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .projects-detail-header-actions {
+        align-self: stretch;
+        margin-top: 0;
+    }
+    .projects-detail-stats {
+        padding-left: 0;
+        border-left: none;
+    }
 }
 .projects-tabs {
     display: flex;

@@ -1471,18 +1471,20 @@
                             <div class="projects-detail-inner" id="projects-detail-inner" hidden>
                                 <header class="projects-detail-header">
                                     <div class="projects-detail-header-main">
-                                        <div class="projects-detail-title-row">
-                                            <h3 id="projects-detail-title" class="projects-detail-title" data-i18n="projects.defaultProjectName">项目</h3>
-                                            <span id="projects-detail-status" class="projects-status-pill projects-status-pill--active" data-i18n="projects.statusActive">进行中</span>
+                                        <div class="projects-detail-headline">
+                                            <div class="projects-detail-title-group">
+                                                <h3 id="projects-detail-title" class="projects-detail-title" data-i18n="projects.defaultProjectName">项目</h3>
+                                                <span id="projects-detail-status" class="projects-status-pill projects-status-pill--active" data-i18n="projects.statusActive">进行中</span>
+                                            </div>
+                                            <div class="projects-detail-stats" id="projects-detail-stats">
+                                                <span class="projects-stat-chip projects-stat-chip--facts" id="project-stat-facts">0 条事实</span>
+                                                <span class="projects-stat-chip projects-stat-chip--vulns" id="project-stat-vulns">0 个漏洞</span>
+                                                <span class="projects-stat-chip projects-stat-chip--conversations" id="project-stat-conversations">0 个对话</span>
+                                                <span class="projects-stat-chip projects-stat-chip--warn" id="project-stat-sparse" hidden>0 待补全</span>
+                                            </div>
                                         </div>
                                         <p id="projects-detail-meta" class="projects-detail-meta"></p>
                                         <p id="projects-detail-desc" class="projects-detail-desc" hidden></p>
-                                        <div class="projects-detail-stats" id="projects-detail-stats">
-                                            <span class="projects-stat-chip" id="project-stat-facts">0 条事实</span>
-                                            <span class="projects-stat-chip" id="project-stat-vulns">0 个漏洞</span>
-                                            <span class="projects-stat-chip" id="project-stat-conversations">0 个对话</span>
-                                            <span class="projects-stat-chip projects-stat-chip--warn" id="project-stat-sparse" hidden>0 待补全</span>
-                                        </div>
                                     </div>
                                     <div class="projects-detail-header-actions">
                                         <button type="button" class="btn-secondary btn-small" onclick="openVulnerabilitiesForProject()" data-i18n="projects.vulnerabilityManagement">漏洞管理</button>
