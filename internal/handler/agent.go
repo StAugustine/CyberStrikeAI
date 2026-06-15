@@ -1185,6 +1185,8 @@ func (h *AgentHandler) createProgressCallback(runCtx context.Context, cancelRun 
 				}
 			}
 			flushResponsePlan()
+			// 助手正文开始前，推理流通常已结束；落库以便刷新后「渗透测试详情」可回放
+			flushThinkingStreams()
 			respPlan.meta = nil
 			if dataMap, ok := data.(map[string]interface{}); ok {
 				respPlan.meta = make(map[string]interface{}, len(dataMap))
@@ -1220,6 +1222,19 @@ func (h *AgentHandler) createProgressCallback(runCtx context.Context, cancelRun 
 		}
 		if eventType == "response" {
 			flushResponsePlan()
+			flushThinkingStreams()
+			return
+		}
+		if eventType == "done" {
+			flushResponsePlan()
+			flushThinkingStreams()
+			return
+		}
+
+		// 流式思考/推理结束：聚合落库（与 eino_agent_reply_stream_end 同理）
+		if eventType == "thinking_stream_end" || eventType == "reasoning_chain_stream_end" {
+			flushResponsePlan()
+			flushThinkingStreams()
 			return
 		}
 
