@@ -2817,6 +2817,13 @@
                                             <button type="button" class="btn-primary" id="robot-wechat-bind-btn" onclick="startWechatRobotBind()" data-i18n="settings.robots.wechat.bindButton">生成二维码并绑定</button>
                                             <p class="robot-wechat-hint" id="robot-wechat-bind-hint" data-i18n="settings.robots.wechat.bindHint">用微信扫码确认后会自动保存并启用。</p>
                                         </div>
+                                        <div id="robot-wechat-bound-flash" class="robot-wechat-bound-flash" hidden role="status">
+                                            <span class="robot-wechat-bound-flash-icon" aria-hidden="true">
+                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                            </span>
+                                            <span id="robot-wechat-bound-flash-text" data-i18n="settings.robots.wechat.boundSuccess">绑定成功，微信机器人已启用。</span>
+                                        </div>
+                                        <p id="robot-wechat-bound-summary" class="robot-wechat-bound-summary" hidden></p>
                                         <div id="robot-wechat-qr-wrap" class="robot-wechat-panel" hidden>
                                             <div id="robot-wechat-bound-panel" class="robot-wechat-bound-panel" hidden>
                                                 <div class="robot-wechat-bound-icon" aria-hidden="true">

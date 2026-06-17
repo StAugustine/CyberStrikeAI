@@ -1071,6 +1071,7 @@
         "botAgent": "Bot Agent",
         "ilinkBotId": "iLink Bot ID（绑定后自动填充）",
         "boundSuccess": "绑定成功，微信机器人已启用。",
+        "alreadyBound": "该微信已绑定过，无需重复绑定。",
         "openLink": "无法显示二维码？点击用手机微信打开链接"
       },
       "wecom": {

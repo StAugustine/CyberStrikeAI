@@ -22734,6 +22734,58 @@ button.chat-files-dropdown-item:hover:not(:disabled) {
     display: none;
 }
 
+.robot-wechat-bound-flash {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0 0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(40, 167, 69, 0.1);
+    border: 1px solid rgba(40, 167, 69, 0.35);
+    color: var(--success-color);
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.45;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.robot-wechat-bound-flash[hidden] {
+    display: none !important;
+}
+
+.robot-wechat-bound-flash.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.robot-wechat-bound-flash-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.robot-wechat-bound-summary {
+    margin: 10px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+.robot-wechat-bound-summary code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
 .robot-wechat-panel {
     margin-top: 16px;
     padding: 20px;
@@ -22749,6 +22801,11 @@ button.chat-files-dropdown-item:hover:not(:disabled) {
     text-align: center;
     padding: 12px 8px;
     gap: 10px;
+}
+
+/* display:flex 会覆盖 [hidden] 默认 display:none，须显式隐藏 */
+.robot-wechat-bound-panel[hidden] {
+    display: none !important;
 }
 
 .robot-wechat-bound-icon {
