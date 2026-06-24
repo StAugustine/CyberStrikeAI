@@ -6,6 +6,7 @@ import (
 	"cyberstrike-ai/internal/agents"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/project"
+	"cyberstrike-ai/internal/projectprompt"
 )
 
 // DefaultPlanExecuteOrchestratorInstruction 当未配置 plan_execute 专用 Markdown / YAML 时的内置主代理（规划/重规划侧）提示。
@@ -122,7 +123,9 @@ func DefaultPlanExecuteOrchestratorInstruction() string {
 
 ## 表达
 
-在调用工具或给出计划变更前，用 2～5 句中文说明当前决策依据与期望证据形态；最终对用户交付结构化结论（发现摘要、证据、风险、下一步）。`
+在调用工具或给出计划变更前，用 2～5 句中文说明当前决策依据与期望证据形态；最终对用户交付结构化结论（发现摘要、证据、风险、下一步）。
+
+` + projectprompt.ShellExecExecuteGuidanceSection()
 }
 
 // DefaultSupervisorOrchestratorInstruction 当未配置 supervisor 专用 Markdown / YAML 时的内置监督者提示（transfer / exit 说明仍由运行时在末尾追加）。

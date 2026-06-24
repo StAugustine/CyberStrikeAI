@@ -9,6 +9,7 @@ import (
 
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/einomcp"
+	"cyberstrike-ai/internal/security"
 
 	localbk "github.com/cloudwego/eino-ext/adk/backend/local"
 	"github.com/cloudwego/eino/adk"
@@ -93,7 +94,7 @@ func subAgentFilesystemMiddleware(
 	return filesystem.New(ctx, &filesystem.MiddlewareConfig{
 		Backend: loc,
 		StreamingShell: &einoStreamingShellWrap{
-			inner:                   loc,
+			inner:                   security.NewEinoStreamingShell(),
 			invokeNotify:            invokeNotify,
 			einoAgentName:           strings.TrimSpace(einoAgentName),
 			outputChunk:             outputChunk,

@@ -18,6 +18,7 @@ import (
 	"cyberstrike-ai/internal/einomcp"
 	"cyberstrike-ai/internal/einoobserve"
 	"cyberstrike-ai/internal/openai"
+	"cyberstrike-ai/internal/security"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
@@ -354,10 +355,9 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 			// Eino execute / MCP 桥在工具返回时 Fire；若 ADK schema.Tool 事件迟迟不到，此处立即推送
 			// tool_result 解除 UI「执行中」。tryEmitToolResultProgress 经 toolResultSent 去重，ADK 晚到不重复。
 			isErr := !success || invokeErr != nil
-			body := content
-			if strings.HasPrefix(body, einomcp.ToolErrorPrefix) {
+			body := einoToolResultBody(content)
+			if einoToolResultIsError(toolName, content) {
 				isErr = true
-				body = strings.TrimPrefix(body, einomcp.ToolErrorPrefix)
 			}
 			if tail := friendlyEinoExecuteInvokeTail(invokeErr); tail != "" {
 				if body == "" {
@@ -718,11 +718,8 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 		if mv.IsStreaming && mv.MessageStream != nil && mv.Role == schema.Tool {
 			toolName := strings.TrimSpace(mv.ToolName)
 			content, streamToolCallID, toolStreamRecvErr := recvSchemaMessageStream(ctx, mv.MessageStream)
-			isErr := false
-			if strings.HasPrefix(content, einomcp.ToolErrorPrefix) {
-				isErr = true
-				content = strings.TrimPrefix(content, einomcp.ToolErrorPrefix)
-			}
+			isErr := einoToolResultIsError(toolName, content)
+			content = einoToolResultBody(content)
 			if streamToolCallID != "" {
 				opts := []schema.ToolMessageOption{schema.WithToolName(toolName)}
 				runAccumulatedMsgs = append(runAccumulatedMsgs, schema.ToolMessage(content, streamToolCallID, opts...))
@@ -1094,11 +1091,8 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 			}
 
 			content := msg.Content
-			isErr := false
-			if strings.HasPrefix(content, einomcp.ToolErrorPrefix) {
-				isErr = true
-				content = strings.TrimPrefix(content, einomcp.ToolErrorPrefix)
-			}
+			isErr := einoToolResultIsError(toolName, content)
+			content = einoToolResultBody(content)
 
 			toolCallID := strings.TrimSpace(msg.ToolCallID)
 			tryEmitToolResultProgress(toolName, content, toolCallID, isErr, ev.AgentName)
@@ -1131,15 +1125,45 @@ func einoPartialRunLastOutputHint() string {
 		"[Run ended abnormally; continue from the trace above without repeating completed steps.]"
 }
 
-// friendlyEinoExecuteInvokeTail 将 Eino execute 等非 MCP 路径的结尾错误转成简短提示；其它情况保留原 error 文本。
+// friendlyEinoExecuteInvokeTail 将 Eino execute 超时/中断/流异常转为简短提示。
+// 命令非零退出（ExecuteExitError）已有 exec 对齐的正文，不再追加「执行未正常结束」。
 func friendlyEinoExecuteInvokeTail(invokeErr error) string {
 	if invokeErr == nil {
+		return ""
+	}
+	var exitErr *ExecuteExitError
+	if errors.As(invokeErr, &exitErr) {
 		return ""
 	}
 	if errors.Is(invokeErr, context.DeadlineExceeded) {
 		return einoExecuteTimeoutUserHint()
 	}
+	if errors.Is(invokeErr, context.Canceled) {
+		return ""
+	}
+	if strings.Contains(invokeErr.Error(), "shell inactivity timeout") {
+		return ""
+	}
 	return "[执行未正常结束] " + invokeErr.Error()
+}
+
+// einoToolResultIsError 统一判断 Eino 工具结果是否应标记为错误（与 MCP exec 的 IsError 对齐）。
+func einoToolResultIsError(toolName, content string) bool {
+	if strings.HasPrefix(content, einomcp.ToolErrorPrefix) {
+		return true
+	}
+	if strings.TrimSpace(toolName) == "execute" && security.IsCommandFailureResult(content) {
+		return true
+	}
+	return false
+}
+
+// einoToolResultBody 去掉工具错误前缀，返回展示/持久化正文。
+func einoToolResultBody(content string) string {
+	if strings.HasPrefix(content, einomcp.ToolErrorPrefix) {
+		return strings.TrimPrefix(content, einomcp.ToolErrorPrefix)
+	}
+	return content
 }
 
 // nextAgentEventWithContext 在 ctx 取消时不再无限阻塞于 iter.Next()（工具执行/模型推理期间常见）。

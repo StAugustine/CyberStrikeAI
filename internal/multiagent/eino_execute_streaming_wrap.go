@@ -251,9 +251,13 @@ func (w *einoStreamingShellWrap) ExecuteStreaming(ctx context.Context, input *fi
 					if resp.ExitCode != nil {
 						hasExitCode = true
 						exitCode = *resp.ExitCode
+						continue
 					}
 					var appended string
 					if resp.Output != "" {
+						if security.IsLegacyShellExitNoise(resp.Output) {
+							continue
+						}
 						if idleWatch != nil {
 							idleWatch.Bump()
 						}
@@ -274,7 +278,7 @@ func (w *einoStreamingShellWrap) ExecuteStreaming(ctx context.Context, input *fi
 
 		if success && hasExitCode && exitCode != 0 {
 			success = false
-			invokeErr = fmt.Errorf("execute exited with code %d", exitCode)
+			invokeErr = &ExecuteExitError{Code: exitCode}
 		}
 		// WithTimeout 触发后，子进程常被信号结束，local 侧多报 exit -1 / canceled，错误链里不一定带 DeadlineExceeded。
 		// 用执行所用 ctx 归一化，便于 UI 展示「超时」而非含糊的 -1。
@@ -314,11 +318,21 @@ func (w *einoStreamingShellWrap) ExecuteStreaming(ctx context.Context, input *fi
 				_ = outW.Send(&filesystem.ExecuteResponse{Output: text + "\n"}, nil)
 			}
 		}
+		rawOutput := sb.String()
+		fireBody := rawOutput
+		if !success && hasExitCode && exitCode != 0 {
+			statusLine := security.ExecuteFailureStatusLine(exitCode)
+			if !strings.Contains(rawOutput, "命令执行失败:") {
+				_ = outW.Send(&filesystem.ExecuteResponse{Output: statusLine}, nil)
+				sb.WriteString(statusLine)
+			}
+			fireBody = einomcp.ToolErrorPrefix + security.FormatCommandFailureResult(exitCode, rawOutput)
+		}
 		if w.finishMonitor != nil {
 			w.finishMonitor(execID, toolCallID, command, sb.String(), success, invokeErr)
 		}
 		if w.invokeNotify != nil {
-			w.invokeNotify.Fire(toolCallID, "execute", agentTag, success, sb.String(), invokeErr)
+			w.invokeNotify.Fire(toolCallID, "execute", agentTag, success, fireBody, invokeErr)
 		}
 		outW.Close()
 	}(sr, userCmd, execCancel, timeoutCancel, execCtx, convID, execReg, toolRunReg, monitorExecID, tid, w.shellNoOutputTimeoutSec)
