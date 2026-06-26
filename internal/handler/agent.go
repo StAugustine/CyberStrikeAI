@@ -201,6 +201,7 @@ func (h *AgentHandler) CancelRunningTaskForConversation(conversationID string) {
 		return
 	}
 	h.cancelActiveMCPToolForConversation(conversationID)
+	h.tasks.AbortActiveEinoExecute(conversationID, "")
 	if ok, err := h.tasks.CancelTask(conversationID, ErrTaskCancelled); ok {
 		h.logger.Info("已取消会话运行中任务", zap.String("conversationId", conversationID))
 	} else if err != nil {
@@ -1421,6 +1422,7 @@ func (h *AgentHandler) CancelAgentLoop(c *gin.Context) {
 	var cause error = ErrTaskCancelled
 	msg := "已提交取消请求，任务将在当前步骤完成后停止。"
 	h.cancelActiveMCPToolForConversation(req.ConversationID)
+	h.tasks.AbortActiveEinoExecute(req.ConversationID, "")
 	ok, err := h.tasks.CancelTask(req.ConversationID, cause)
 	if err != nil {
 		h.logger.Error("取消任务失败", zap.Error(err))
