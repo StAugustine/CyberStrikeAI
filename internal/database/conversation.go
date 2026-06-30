@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1068,6 +1069,77 @@ type ProcessDetail struct {
 	Message        string    `json:"message"`
 	Data           string    `json:"data"` // JSON格式的数据
 	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// GetTurnUserMessage 返回锚点消息所在轮次中的用户原文（最近一条 user 消息，不含完整历史）。
+func (db *DB) GetTurnUserMessage(conversationID, anchorMessageID string) (string, error) {
+	conversationID = strings.TrimSpace(conversationID)
+	anchorMessageID = strings.TrimSpace(anchorMessageID)
+	if conversationID == "" || anchorMessageID == "" {
+		return "", nil
+	}
+	var content string
+	err := db.QueryRow(`
+SELECT m.content FROM messages m
+WHERE m.conversation_id = ? AND m.role = 'user'
+  AND m.created_at <= COALESCE((SELECT created_at FROM messages WHERE id = ? AND conversation_id = ?), m.created_at)
+ORDER BY m.created_at DESC, m.rowid DESC
+LIMIT 1`, conversationID, anchorMessageID, conversationID).Scan(&content)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("query turn user message: %w", err)
+	}
+	return content, nil
+}
+
+// AssistantCognitionTexts 单条助手消息上的思考/推理/规划文本。
+type AssistantCognitionTexts struct {
+	Thinking       string
+	ReasoningChain string
+	Planning       string
+}
+
+// GetAssistantCognitionTexts 聚合助手消息在 process_details 中的 thinking / reasoning_chain / planning。
+func (db *DB) GetAssistantCognitionTexts(assistantMessageID string) (AssistantCognitionTexts, error) {
+	assistantMessageID = strings.TrimSpace(assistantMessageID)
+	if assistantMessageID == "" {
+		return AssistantCognitionTexts{}, nil
+	}
+	rows, err := db.Query(`
+SELECT event_type, message FROM process_details
+WHERE message_id = ? AND event_type IN ('thinking', 'reasoning_chain', 'planning')
+ORDER BY created_at ASC, rowid ASC`, assistantMessageID)
+	if err != nil {
+		return AssistantCognitionTexts{}, fmt.Errorf("query assistant cognition: %w", err)
+	}
+	defer rows.Close()
+
+	var thinkingParts, reasoningParts, planningParts []string
+	for rows.Next() {
+		var eventType, message string
+		if err := rows.Scan(&eventType, &message); err != nil {
+			continue
+		}
+		msg := strings.TrimSpace(message)
+		if msg == "" {
+			continue
+		}
+		switch eventType {
+		case "thinking":
+			thinkingParts = append(thinkingParts, msg)
+		case "reasoning_chain":
+			reasoningParts = append(reasoningParts, msg)
+		case "planning":
+			planningParts = append(planningParts, msg)
+		}
+	}
+	return AssistantCognitionTexts{
+		Thinking:       strings.Join(thinkingParts, "\n\n"),
+		ReasoningChain: strings.Join(reasoningParts, "\n\n"),
+		Planning:       strings.Join(planningParts, "\n\n"),
+	}, nil
 }
 
 // AddProcessDetail 添加过程详情事件

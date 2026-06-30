@@ -640,10 +640,76 @@ type AgentConfig struct {
 }
 
 // HitlConfig 人机协同全局选项；与会话侧栏/API 中的白名单合并为并集后参与判定。
-// tool_whitelist 可在侧栏「应用」时合并写入 config.yaml 并立即生效；其他字段若仅改文件仍需重启。
+// tool_whitelist 可在侧栏「应用」时合并写入 config.yaml 并立即生效。
+// audit_agent_prompt / audit_agent_prompt_review_edit 可在人机协同页编辑并立即生效；空则使用内置默认。
 type HitlConfig struct {
-	// ToolWhitelist 全局免审批工具名（与每条会话配置的 sensitiveTools 语义相同：白名单内工具不触发 HITL）。
+	// ToolWhitelist 全局免审批工具名（与白名单内工具不触发 HITL 审批）。
 	ToolWhitelist []string `yaml:"tool_whitelist,omitempty" json:"tool_whitelist,omitempty"`
+	// AuditAgentPrompt 审批模式（approval）下审计 Agent 系统提示词。
+	AuditAgentPrompt string `yaml:"audit_agent_prompt,omitempty" json:"audit_agent_prompt,omitempty"`
+	// AuditAgentPromptReviewEdit 审查编辑模式（review_edit）下审计 Agent 系统提示词。
+	AuditAgentPromptReviewEdit string `yaml:"audit_agent_prompt_review_edit,omitempty" json:"audit_agent_prompt_review_edit,omitempty"`
+}
+
+const hitlAuditAgentPromptBase = `你是 CyberStrikeAI 人机协同审计 Agent。审查 Agent 即将执行的工具调用是否在授权渗透测试范围内、风险可接受。
+
+你会收到 JSON，包含 hitlMode、toolName、arguments/argumentsObj、userMessage、thinking、reasoningChain、planning 等字段。
+
+共享原则：
+- 与用户授权、当前任务目标一致且风险可控 → approve
+- 越权扫描、破坏性操作、与任务无关或风险过高 → reject
+- 信息不足时保守 reject`
+
+const hitlAuditAgentPromptApprovalOutput = `
+仅输出一行 JSON，不要 markdown 代码块：
+{"decision":"approve"|"reject","comment":"简要理由"}`
+
+const hitlAuditAgentPromptReviewEditOutput = `
+仅输出一行 JSON，不要 markdown 代码块：
+{"decision":"approve"|"reject","comment":"简要理由","editedArguments":{...}}
+
+editedArguments 规则（仅 approve 且需要改参时填写，否则省略该字段）：
+- 提供完整替换后的工具参数对象，键名与 argumentsObj 一致
+- 只做最小必要修改以收窄范围、消除风险（如限制 path、去掉危险 flag）
+- 禁止扩大攻击面：不得扩大目标范围、提升权限或引入破坏性参数
+- 无法安全改参时应 reject，不要勉强 approve`
+
+// DefaultHitlAuditAgentPrompt 内置审批模式审计 Agent 提示词。
+func DefaultHitlAuditAgentPrompt() string {
+	return hitlAuditAgentPromptBase + hitlAuditAgentPromptApprovalOutput
+}
+
+// DefaultHitlAuditAgentPromptReviewEdit 内置审查编辑模式审计 Agent 提示词。
+func DefaultHitlAuditAgentPromptReviewEdit() string {
+	return hitlAuditAgentPromptBase + hitlAuditAgentPromptReviewEditOutput
+}
+
+// EffectiveAuditAgentPrompt 返回审批模式生效的审计 Agent 提示词。
+func (c HitlConfig) EffectiveAuditAgentPrompt() string {
+	return c.EffectiveAuditAgentPromptForMode("approval")
+}
+
+// EffectiveAuditAgentPromptForMode 按 HITL 模式返回生效的审计 Agent 提示词。
+func (c HitlConfig) EffectiveAuditAgentPromptForMode(mode string) string {
+	if normalizeHitlModeForPrompt(mode) == "review_edit" {
+		if s := strings.TrimSpace(c.AuditAgentPromptReviewEdit); s != "" {
+			return s
+		}
+		return DefaultHitlAuditAgentPromptReviewEdit()
+	}
+	if s := strings.TrimSpace(c.AuditAgentPrompt); s != "" {
+		return s
+	}
+	return DefaultHitlAuditAgentPrompt()
+}
+
+func normalizeHitlModeForPrompt(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "review_edit":
+		return "review_edit"
+	default:
+		return "approval"
+	}
 }
 
 type AuthConfig struct {
