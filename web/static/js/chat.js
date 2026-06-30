@@ -6623,13 +6623,11 @@ function goConversationsPage(page) {
     const totalPages = Math.max(1, Math.ceil((conversationsPagination.total || 0) / conversationsPagination.pageSize) || 1);
     const next = Math.min(Math.max(1, page), totalPages);
     const lastRendered = conversationsPagination.lastRenderedPage;
-    const alreadyOnPage = next === conversationsPagination.page
-        && (lastRendered == null || next === lastRendered);
-    if (alreadyOnPage) {
+    if (lastRendered != null && next === lastRendered) {
         return;
     }
     const fromPage = typeof lastRendered === 'number' ? lastRendered : conversationsPagination.page;
-    conversationsPagination.skipEmptyDirection = next < fromPage ? -1 : 1;
+    conversationsPagination.skipEmptyDirection = next > fromPage ? 1 : (next < fromPage ? -1 : 0);
     conversationsPagination._emptySkipCount = 0;
     conversationsPagination.page = next;
     loadConversationsWithGroups(conversationsSearchQuery);
@@ -6807,18 +6805,21 @@ async function loadConversationsWithGroups(searchQuery = '') {
             uniqueConversations.push(conv);
         });
 
+        const hasSearchQuery = searchQuery && searchQuery.trim();
+        const hasProjectFilter = !!getConversationProjectFilter();
+        // 与请求参数 exclude_grouped 一致：后端已排除分组内对话，勿再用 mapping 缓存二次过滤（易导致 2→1 等页被滤空）
+        const listUsesUngroupedApi = !hasSearchQuery && !hasProjectFilter;
+
         if (uniqueConversations.length === 0) {
             listContainer.innerHTML = emptyStateHtml;
             if (typeof window.applyTranslations === 'function') window.applyTranslations(listContainer);
             renderConversationsPagination(0);
             return;
         }
-        
+
         // 分离置顶和普通对话
         const pinnedConvs = [];
         const normalConvs = [];
-        const hasSearchQuery = searchQuery && searchQuery.trim();
-        const hasProjectFilter = !!getConversationProjectFilter();
 
         uniqueConversations.forEach(conv => {
             // 如果有搜索关键词，显示所有匹配的对话（全局搜索，包括分组中的）
@@ -6842,11 +6843,8 @@ async function loadConversationsWithGroups(searchQuery = '') {
                 return;
             }
 
-            // 如果没有搜索关键词，使用原有逻辑
-            // "最近对话"列表应该只显示不在任何分组中的对话
-            // 无论是否在分组详情页，都不应该在"最近对话"中显示分组中的对话
-            if (conversationGroupMappingCache[conv.id]) {
-                // 对话在某个分组中，不应该显示在"最近对话"列表中
+            // 未走 exclude_grouped 接口时，才用 mapping 缓存过滤分组内对话
+            if (!listUsesUngroupedApi && conversationGroupMappingCache[conv.id]) {
                 return;
             }
 
