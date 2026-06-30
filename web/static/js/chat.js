@@ -6437,8 +6437,17 @@ function getConversationsPageSize() {
     return 50;
 }
 
-let conversationsPagination = { page: 1, pageSize: getConversationsPageSize(), total: 0 };
+let conversationsPagination = {
+    page: 1,
+    pageSize: getConversationsPageSize(),
+    total: 0,
+    lastRenderedPage: null,
+    /** 用户翻页方向：-1 上一页，1 下一页；0 表示后台刷新等非导航加载 */
+    skipEmptyDirection: 0,
+    _emptySkipCount: 0,
+};
 let conversationsSearchQuery = '';
+const CONVERSATIONS_EMPTY_PAGE_SKIP_MAX = 20;
 
 function parseListTotalValue(raw, itemsLength) {
     if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return raw;
@@ -6527,10 +6536,46 @@ function getConversationListEmptyHtml() {
     return '<div class="conversations-list-empty" data-i18n="chat.noHistoryConversations"></div>';
 }
 
+function clearConversationsPageNavigationState() {
+    conversationsPagination.skipEmptyDirection = 0;
+    conversationsPagination._emptySkipCount = 0;
+}
+
+/** 服务端分页 + 客户端分组过滤可能导致当前页无可见项；仅在用户主动翻页时沿翻页方向跳过空页 */
+function trySkipEmptyFilteredConversationsPage(searchQuery, parsed, pageSize, visibleCount, hasSearchQuery) {
+    if (hasSearchQuery || visibleCount > 0 || !parsed.items.length) {
+        return false;
+    }
+    const dir = conversationsPagination.skipEmptyDirection;
+    if (!dir) {
+        return false;
+    }
+    const totalPages = Math.max(1, Math.ceil(conversationsPagination.total / pageSize));
+    const skipCount = conversationsPagination._emptySkipCount || 0;
+    if (skipCount >= CONVERSATIONS_EMPTY_PAGE_SKIP_MAX) {
+        return false;
+    }
+    if (dir < 0 && conversationsPagination.page > 1) {
+        conversationsPagination.page -= 1;
+        conversationsPagination._emptySkipCount = skipCount + 1;
+        loadConversationsWithGroups(searchQuery);
+        return true;
+    }
+    if (dir > 0 && conversationsPagination.page < totalPages) {
+        conversationsPagination.page += 1;
+        conversationsPagination._emptySkipCount = skipCount + 1;
+        loadConversationsWithGroups(searchQuery);
+        return true;
+    }
+    return false;
+}
+
 function renderConversationsPagination(visibleCount) {
     const el = document.getElementById('conversations-pagination');
     if (!el) return;
     const { page, pageSize, total } = conversationsPagination;
+    conversationsPagination.lastRenderedPage = page;
+    clearConversationsPageNavigationState();
     const count = typeof visibleCount === 'number' ? visibleCount : (conversationsPagination.visibleCount || 0);
     conversationsPagination.visibleCount = count;
 
@@ -6577,7 +6622,15 @@ function renderConversationsPagination(visibleCount) {
 function goConversationsPage(page) {
     const totalPages = Math.max(1, Math.ceil((conversationsPagination.total || 0) / conversationsPagination.pageSize) || 1);
     const next = Math.min(Math.max(1, page), totalPages);
-    if (next === conversationsPagination.page) return;
+    const lastRendered = conversationsPagination.lastRenderedPage;
+    const alreadyOnPage = next === conversationsPagination.page
+        && (lastRendered == null || next === lastRendered);
+    if (alreadyOnPage) {
+        return;
+    }
+    const fromPage = typeof lastRendered === 'number' ? lastRendered : conversationsPagination.page;
+    conversationsPagination.skipEmptyDirection = next < fromPage ? -1 : 1;
+    conversationsPagination._emptySkipCount = 0;
     conversationsPagination.page = next;
     loadConversationsWithGroups(conversationsSearchQuery);
 }
@@ -6878,13 +6931,8 @@ async function loadConversationsWithGroups(searchQuery = '') {
         const visibleCount = pinnedConvs.length + Object.values(groups).reduce((n, arr) => n + (arr ? arr.length : 0), 0);
         conversationsPagination.visibleCount = visibleCount;
 
-        if (!hasSearchQuery && visibleCount === 0 && parsed.items.length > 0) {
-            const totalPages = Math.max(1, Math.ceil(parsed.total / pageSize));
-            if (conversationsPagination.page < totalPages) {
-                conversationsPagination.page += 1;
-                loadConversationsWithGroups(searchQuery);
-                return;
-            }
+        if (trySkipEmptyFilteredConversationsPage(searchQuery, parsed, pageSize, visibleCount, hasSearchQuery)) {
+            return;
         }
 
         if (fragment.children.length === 0) {
