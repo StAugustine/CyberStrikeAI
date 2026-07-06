@@ -357,6 +357,24 @@ robots:
     app_secret: ""
     verify_token: ""
     allow_chat_id_fallback: false
+  telegram: # Telegram
+    enabled: false
+    bot_token: ""
+    bot_username: ""
+    allow_group_messages: false
+  slack: # Slack
+    enabled: false
+    bot_token: ""
+    app_token: ""
+  discord: # Discord
+    enabled: false
+    bot_token: ""
+    allow_guild_messages: false
+  qq: # QQ 机器人
+    enabled: false
+    app_id: ""
+    client_secret: ""
+    sandbox: true
 # ============================================
 # Skills 相关配置
 # ============================================
