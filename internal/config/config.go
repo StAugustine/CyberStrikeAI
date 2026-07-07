@@ -455,15 +455,15 @@ type MultiAgentAPIUpdate struct {
 
 // RobotsConfig 机器人配置（企业微信、钉钉、飞书、微信 iLink、Telegram、Slack、Discord、QQ 等）
 type RobotsConfig struct {
-	Session  RobotSessionConfig  `yaml:"session,omitempty" json:"session,omitempty"`     // 机器人会话隔离策略
-	Wechat   RobotWechatConfig   `yaml:"wechat,omitempty" json:"wechat,omitempty"`       // 微信（iLink 扫码绑定）
-	Wecom    RobotWecomConfig    `yaml:"wecom,omitempty" json:"wecom,omitempty"`         // 企业微信
-	Dingtalk RobotDingtalkConfig `yaml:"dingtalk,omitempty" json:"dingtalk,omitempty"`   // 钉钉
-	Lark     RobotLarkConfig     `yaml:"lark,omitempty" json:"lark,omitempty"`           // 飞书
-	Telegram RobotTelegramConfig `yaml:"telegram,omitempty" json:"telegram,omitempty"`   // Telegram
-	Slack    RobotSlackConfig    `yaml:"slack,omitempty" json:"slack,omitempty"`         // Slack
-	Discord  RobotDiscordConfig  `yaml:"discord,omitempty" json:"discord,omitempty"`     // Discord
-	QQ       RobotQQConfig       `yaml:"qq,omitempty" json:"qq,omitempty"`               // QQ 机器人
+	Session  RobotSessionConfig  `yaml:"session,omitempty" json:"session,omitempty"`   // 机器人会话隔离策略
+	Wechat   RobotWechatConfig   `yaml:"wechat,omitempty" json:"wechat,omitempty"`     // 微信（iLink 扫码绑定）
+	Wecom    RobotWecomConfig    `yaml:"wecom,omitempty" json:"wecom,omitempty"`       // 企业微信
+	Dingtalk RobotDingtalkConfig `yaml:"dingtalk,omitempty" json:"dingtalk,omitempty"` // 钉钉
+	Lark     RobotLarkConfig     `yaml:"lark,omitempty" json:"lark,omitempty"`         // 飞书
+	Telegram RobotTelegramConfig `yaml:"telegram,omitempty" json:"telegram,omitempty"` // Telegram
+	Slack    RobotSlackConfig    `yaml:"slack,omitempty" json:"slack,omitempty"`       // Slack
+	Discord  RobotDiscordConfig  `yaml:"discord,omitempty" json:"discord,omitempty"`   // Discord
+	QQ       RobotQQConfig       `yaml:"qq,omitempty" json:"qq,omitempty"`             // QQ 机器人
 }
 
 // RobotWechatConfig 微信 iLink 机器人配置（个人微信 ClawBot / iLink 协议）
@@ -540,9 +540,9 @@ type RobotTelegramConfig struct {
 
 // RobotSlackConfig Slack 机器人配置（Socket Mode，无需公网回调）
 type RobotSlackConfig struct {
-	Enabled   bool   `yaml:"enabled" json:"enabled"`
-	BotToken  string `yaml:"bot_token" json:"bot_token"`   // xoxb-
-	AppToken  string `yaml:"app_token" json:"app_token"`   // xapp-（connections:write）
+	Enabled  bool   `yaml:"enabled" json:"enabled"`
+	BotToken string `yaml:"bot_token" json:"bot_token"` // xoxb-
+	AppToken string `yaml:"app_token" json:"app_token"` // xapp-（connections:write）
 }
 
 // RobotDiscordConfig Discord 机器人配置（Gateway WebSocket）
@@ -1074,11 +1074,11 @@ func PersistAuthPassword(path, password string) error {
 		if strings.HasPrefix(strings.TrimSpace(line), "password:") {
 			prefix := line[:len(line)-len(strings.TrimLeft(line, " "))]
 			comment := ""
-			if idx := strings.Index(line, "#"); idx >= 0 {
+			if idx := yamlLineCommentIndex(line); idx >= 0 {
 				comment = strings.TrimRight(line[idx:], " ")
 			}
 
-			newLine := fmt.Sprintf("%spassword: %s", prefix, password)
+			newLine := fmt.Sprintf("%spassword: %s", prefix, quoteYAMLString(password))
 			if comment != "" {
 				if !strings.HasPrefix(comment, " ") {
 					newLine += " "
@@ -1091,6 +1091,65 @@ func PersistAuthPassword(path, password string) error {
 	}
 
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
+}
+
+func quoteYAMLString(value string) string {
+	node := yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
+		Style: yaml.DoubleQuotedStyle,
+		Value: value,
+	}
+	data, err := yaml.Marshal(&node)
+	if err != nil {
+		return strconv.Quote(value)
+	}
+	return strings.TrimSuffix(string(data), "\n")
+}
+
+func yamlLineCommentIndex(line string) int {
+	inSingleQuote := false
+	inDoubleQuote := false
+	escaped := false
+
+	for i, r := range line {
+		if inDoubleQuote {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if r == '\\' {
+				escaped = true
+				continue
+			}
+			if r == '"' {
+				inDoubleQuote = false
+			}
+			continue
+		}
+		if inSingleQuote {
+			if r == '\'' {
+				inSingleQuote = false
+			}
+			continue
+		}
+
+		switch r {
+		case '"':
+			inDoubleQuote = true
+		case '\'':
+			inSingleQuote = true
+		case '#':
+			if i == 0 || isYAMLWhitespace(line[i-1]) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func isYAMLWhitespace(b byte) bool {
+	return b == ' ' || b == '\t'
 }
 
 func PrintGeneratedPasswordWarning(password string, persisted bool, persistErr string) {
