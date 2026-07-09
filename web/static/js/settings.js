@@ -708,6 +708,31 @@ async function loadConfig(loadTools = true) {
             maRobotMode.value = mode;
             syncRobotAgentModeSelectOptions(ma.enabled === true);
         }
+        const userLedgerMaxEl = document.getElementById('summarization-user-ledger-max-runes');
+        if (userLedgerMaxEl) {
+            const v = ma.summarization_user_intent_ledger_max_runes;
+            userLedgerMaxEl.value = (v !== undefined && v !== null && !Number.isNaN(Number(v))) ? String(Number(v)) : '96000';
+        }
+        const userLedgerEntryMaxEl = document.getElementById('summarization-user-ledger-entry-max-runes');
+        if (userLedgerEntryMaxEl) {
+            const v = ma.summarization_user_intent_ledger_entry_max_runes;
+            userLedgerEntryMaxEl.value = (v !== undefined && v !== null && !Number.isNaN(Number(v))) ? String(Number(v)) : '16000';
+        }
+        const latestUserMaxEl = document.getElementById('latest-user-message-max-runes');
+        if (latestUserMaxEl) {
+            const v = ma.latest_user_message_max_runes;
+            latestUserMaxEl.value = (v !== undefined && v !== null && !Number.isNaN(Number(v))) ? String(Number(v)) : '48000';
+        }
+        const latestUserHeadEl = document.getElementById('latest-user-message-head-runes');
+        if (latestUserHeadEl) {
+            const v = ma.latest_user_message_head_runes;
+            latestUserHeadEl.value = (v !== undefined && v !== null && !Number.isNaN(Number(v))) ? String(Number(v)) : '24000';
+        }
+        const latestUserTailEl = document.getElementById('latest-user-message-tail-runes');
+        if (latestUserTailEl) {
+            const v = ma.latest_user_message_tail_runes;
+            latestUserTailEl.value = (v !== undefined && v !== null && !Number.isNaN(Number(v))) ? String(Number(v)) : '24000';
+        }
         
         // 填充知识库配置
         const knowledgeEnabledCheckbox = document.getElementById('knowledge-enabled');
@@ -1808,6 +1833,21 @@ async function applySettings() {
                 const peRaw = document.getElementById('multi-agent-pe-loop')?.value;
                 const peParsed = parseInt(peRaw, 10);
                 const peLoop = Number.isNaN(peParsed) ? 0 : Math.max(0, peParsed);
+                const ledgerRaw = document.getElementById('summarization-user-ledger-max-runes')?.value;
+                const ledgerParsed = parseInt(ledgerRaw, 10);
+                const ledgerMax = Number.isNaN(ledgerParsed) ? 0 : Math.max(0, ledgerParsed);
+                const ledgerEntryRaw = document.getElementById('summarization-user-ledger-entry-max-runes')?.value;
+                const ledgerEntryParsed = parseInt(ledgerEntryRaw, 10);
+                const ledgerEntryMax = Number.isNaN(ledgerEntryParsed) ? 0 : Math.max(0, ledgerEntryParsed);
+                const latestRaw = document.getElementById('latest-user-message-max-runes')?.value;
+                const latestParsed = parseInt(latestRaw, 10);
+                const latestMax = Number.isNaN(latestParsed) ? 0 : Math.max(0, latestParsed);
+                const latestHeadRaw = document.getElementById('latest-user-message-head-runes')?.value;
+                const latestHeadParsed = parseInt(latestHeadRaw, 10);
+                const latestHead = Number.isNaN(latestHeadParsed) ? 0 : Math.max(0, latestHeadParsed);
+                const latestTailRaw = document.getElementById('latest-user-message-tail-runes')?.value;
+                const latestTailParsed = parseInt(latestTailRaw, 10);
+                const latestTail = Number.isNaN(latestTailParsed) ? 0 : Math.max(0, latestTailParsed);
                 const maEnabled = document.getElementById('multi-agent-enabled')?.checked === true;
                 let robotMode = document.getElementById('multi-agent-robot-mode')?.value || 'eino_single';
                 if (!maEnabled && ['deep', 'plan_execute', 'supervisor'].indexOf(robotMode) >= 0) {
@@ -1817,7 +1857,12 @@ async function applySettings() {
                     enabled: maEnabled,
                     robot_default_agent_mode: robotMode,
                     batch_use_multi_agent: currentConfig?.multi_agent?.batch_use_multi_agent === true,
-                    plan_execute_loop_max_iterations: peLoop
+                    plan_execute_loop_max_iterations: peLoop,
+                    summarization_user_intent_ledger_max_runes: ledgerMax,
+                    summarization_user_intent_ledger_entry_max_runes: ledgerEntryMax,
+                    latest_user_message_max_runes: latestMax,
+                    latest_user_message_head_runes: latestHead,
+                    latest_user_message_tail_runes: latestTail
                 };
             })(),
             knowledge: knowledgeConfig,

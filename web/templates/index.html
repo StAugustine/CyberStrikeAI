@@ -3053,6 +3053,36 @@
                                             </select>
                                             <small class="form-hint" data-i18n="settingsBasic.multiAgentRobotModeHint">企业微信 / 钉钉 / 飞书机器人每条消息使用的执行模式；Deep / Plan-Execute / Supervisor 需启用多代理。</small>
                                         </div>
+                                        <details class="settings-advanced-block">
+                                            <summary data-i18n="settingsBasic.agentAdvanced">高级设置</summary>
+                                            <div class="settings-form" style="margin-top: 0.75rem;">
+                                                <div class="form-group">
+                                                    <label for="summarization-user-ledger-max-runes" data-i18n="settingsBasic.userLedgerMaxRunes">用户原文账本总字符上限</label>
+                                                    <input type="number" id="summarization-user-ledger-max-runes" min="0" step="1000" placeholder="96000" />
+                                                    <small class="form-hint" data-i18n="settingsBasic.userLedgerMaxRunesHint">压缩后注入模型上下文的原始用户输入账本总上限；0 使用后端默认值。DB 原始消息不裁剪。</small>
+                                                </div>
+                                                <div class="form-group">
+                                                    <label for="summarization-user-ledger-entry-max-runes" data-i18n="settingsBasic.userLedgerEntryMaxRunes">单条用户原文字符上限</label>
+                                                    <input type="number" id="summarization-user-ledger-entry-max-runes" min="0" step="1000" placeholder="16000" />
+                                                    <small class="form-hint" data-i18n="settingsBasic.userLedgerEntryMaxRunesHint">账本中单条用户消息的模型可见上限；0 使用后端默认值，不影响 DB 原文。</small>
+                                                </div>
+                                                <div class="form-group">
+                                                    <label for="latest-user-message-max-runes" data-i18n="settingsBasic.latestUserMaxRunes">最新用户输入字符上限</label>
+                                                    <input type="number" id="latest-user-message-max-runes" min="0" step="1000" placeholder="48000" />
+                                                    <small class="form-hint" data-i18n="settingsBasic.latestUserMaxRunesHint">本轮最新 user 进入模型上下文的上限；超出时全文落盘，只注入预览。0 使用后端默认值。</small>
+                                                </div>
+                                                <div class="form-group">
+                                                    <label for="latest-user-message-head-runes" data-i18n="settingsBasic.latestUserHeadRunes">最新用户输入头部预览</label>
+                                                    <input type="number" id="latest-user-message-head-runes" min="0" step="1000" placeholder="24000" />
+                                                    <small class="form-hint" data-i18n="settingsBasic.latestUserHeadRunesHint">超长最新 user 保留给模型看的头部字符数。</small>
+                                                </div>
+                                                <div class="form-group">
+                                                    <label for="latest-user-message-tail-runes" data-i18n="settingsBasic.latestUserTailRunes">最新用户输入尾部预览</label>
+                                                    <input type="number" id="latest-user-message-tail-runes" min="0" step="1000" placeholder="24000" />
+                                                    <small class="form-hint" data-i18n="settingsBasic.latestUserTailRunesHint">超长最新 user 保留给模型看的尾部字符数。</small>
+                                                </div>
+                                            </div>
+                                        </details>
                                     </div>
                                 </div>
 

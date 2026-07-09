@@ -5719,6 +5719,20 @@ html[data-theme="dark"] .openapi-doc-btn:hover {
     margin-bottom: 16px;
 }
 
+.settings-advanced-block {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-color);
+}
+
+.settings-advanced-block summary {
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--accent-color);
+}
+
 .robot-manager {
     margin-bottom: 24px;
 }
