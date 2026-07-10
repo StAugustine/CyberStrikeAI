@@ -91,15 +91,15 @@ func NewAgent(cfg *config.OpenAIConfig, agentCfg *config.AgentConfig, mcpServer 
 	llmClient := openai.NewClient(cfg, httpClient, logger)
 
 	return &Agent{
-		openAIClient:         llmClient,
-		config:               cfg,
-		agentConfig:          agentCfg,
-		mcpServer:            mcpServer,
-		externalMCPMgr:       externalMCPMgr,
-		logger:               logger,
-		maxIterations:        maxIterations,
-		toolNameMapping:      make(map[string]string), // 初始化工具名称映射
-		toolDescriptionMode:  "short",
+		openAIClient:        llmClient,
+		config:              cfg,
+		agentConfig:         agentCfg,
+		mcpServer:           mcpServer,
+		externalMCPMgr:      externalMCPMgr,
+		logger:              logger,
+		maxIterations:       maxIterations,
+		toolNameMapping:     make(map[string]string), // 初始化工具名称映射
+		toolDescriptionMode: "short",
 	}
 }
 
@@ -120,6 +120,9 @@ type ChatMessage struct {
 	ToolName string `json:"tool_name,omitempty"`
 	// ReasoningContent 对应 OpenAI/DeepSeek 的 reasoning_content；思考模式 + 工具调用后续跑须回传（见 DeepSeek 文档）。
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// ModelFacingTrace is runtime-only metadata: true means Content was already the exact
+	// payload seen at the model boundary and must be restored byte-for-byte.
+	ModelFacingTrace bool `json:"-"`
 }
 
 // MarshalJSON 自定义JSON序列化，将tool_calls中的arguments转换为JSON字符串
