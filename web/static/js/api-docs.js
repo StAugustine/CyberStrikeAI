@@ -96,12 +96,9 @@ async function loadToken() {
 // 加载OpenAPI规范
 async function loadAPISpec() {
     try {
-        let url = '/api/openapi/spec';
-        if (currentToken) {
-            url += '?token=' + encodeURIComponent(currentToken);
-        }
-        
-        const response = await fetch(url);
+        const url = '/api/openapi/spec';
+        const headers = currentToken ? { 'Authorization': `Bearer ${currentToken}` } : {};
+        const response = await fetch(url, { headers });
         if (!response.ok) {
             if (response.status === 401) {
                 showError(_t('apiDocs.errorLoginRequired'));

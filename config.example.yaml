@@ -272,10 +272,11 @@ security:
 # MCP (Model Context Protocol) 用于工具注册和调用
 mcp:
   enabled: false # 是否启用 MCP 服务器（http模式）
-  host: 0.0.0.0 # MCP 服务器监听地址
+  host: 127.0.0.1 # MCP 服务器监听地址；需要远程访问时再显式修改并配置网络层访问控制
   port: 8081 # MCP 服务器端口
-  auth_header: "X-MCP-Token" # 鉴权：请求需携带该 header 且值与 auth_header_value 一致方可调用。留空表示不鉴权
-  auth_header_value: "" # 鉴权密钥值（与 auth_header 配合使用，建议使用随机字符串）
+  auth_header: "X-MCP-Token" # 可选的全局服务凭证 Header；普通调用请使用用户 Authorization: Bearer Token
+  auth_header_value: "" # 全局服务凭证值，仅 allow_global_access=true 时生效
+  allow_global_access: false # 高风险兼容模式：静态密钥映射为全局服务身份；默认请使用用户 Bearer Token
 # 外部 MCP 配置
 external_mcp:
   servers: {}

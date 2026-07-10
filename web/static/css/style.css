@@ -4375,15 +4375,6 @@ html[data-theme="dark"] .user-menu-dropdown {
     border-bottom: 1px solid var(--border-color);
 }
 
-.login-brand-logo {
-    width: 56px;
-    height: 56px;
-    margin: 0 auto 16px;
-    border-radius: 14px;
-    box-shadow: 0 6px 20px rgba(0, 102, 255, 0.2);
-    object-fit: cover;
-}
-
 .login-title {
     margin: 0;
     display: flex;
