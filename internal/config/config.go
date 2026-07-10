@@ -650,11 +650,12 @@ type LogConfig struct {
 }
 
 type MCPConfig struct {
-	Enabled         bool   `yaml:"enabled"`
-	Host            string `yaml:"host"`
-	Port            int    `yaml:"port"`
-	AuthHeader      string `yaml:"auth_header,omitempty"`       // 鉴权 header 名，留空表示不鉴权
-	AuthHeaderValue string `yaml:"auth_header_value,omitempty"` // 鉴权 header 值，需与请求中该 header 一致
+	Enabled           bool   `yaml:"enabled"`
+	Host              string `yaml:"host"`
+	Port              int    `yaml:"port"`
+	AuthHeader        string `yaml:"auth_header,omitempty"`         // 可选的全局服务凭证 header；普通调用优先使用用户 Bearer Token
+	AuthHeaderValue   string `yaml:"auth_header_value,omitempty"`   // 全局服务凭证，仅 allow_global_access=true 时接受
+	AllowGlobalAccess bool   `yaml:"allow_global_access,omitempty"` // 静态服务密钥是否映射为全局服务身份（默认关闭）
 }
 
 type OpenAIConfig struct {
@@ -1396,9 +1397,10 @@ func persistMCPAuth(path string, mcp *MCPConfig) error {
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
 }
 
-// EnsureMCPAuth 在 MCP 启用且 auth_header_value 为空时，自动生成随机密钥并写回配置
+// EnsureMCPAuth only provisions the privileged static service credential when
+// global service access was explicitly enabled.
 func EnsureMCPAuth(path string, cfg *Config) error {
-	if !cfg.MCP.Enabled || strings.TrimSpace(cfg.MCP.AuthHeaderValue) != "" {
+	if !cfg.MCP.Enabled || !cfg.MCP.AllowGlobalAccess || strings.TrimSpace(cfg.MCP.AuthHeaderValue) != "" {
 		return nil
 	}
 	token, err := generateRandomToken()
@@ -1422,8 +1424,9 @@ func PrintMCPConfigJSON(mcp MCPConfig) {
 		hostForURL = "localhost"
 	}
 	url := fmt.Sprintf("http://%s:%d/mcp", hostForURL, mcp.Port)
-	headers := map[string]string{}
-	if mcp.AuthHeader != "" {
+	headers := map[string]string{"Authorization": "Bearer <USER_SESSION_TOKEN>"}
+	if mcp.AllowGlobalAccess && mcp.AuthHeader != "" {
+		delete(headers, "Authorization")
 		headers[mcp.AuthHeader] = mcp.AuthHeaderValue
 	}
 	serverEntry := map[string]interface{}{
@@ -1683,8 +1686,8 @@ func Default() *Config {
 			Output: "stdout",
 		},
 		MCP: MCPConfig{
-			Enabled: true,
-			Host:    "0.0.0.0",
+			Enabled: false,
+			Host:    "127.0.0.1",
 			Port:    8081,
 		},
 		OpenAI: OpenAIConfig{

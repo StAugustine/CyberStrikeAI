@@ -783,25 +783,25 @@ func (a *Agent) ExecuteMCPToolForConversation(ctx context.Context, conversationI
 }
 
 // BeginLocalToolExecution 在非 CallTool 路径工具开始时写入 running 状态，供 MCP 监控页展示「执行中」。
-func (a *Agent) BeginLocalToolExecution(toolName string, args map[string]interface{}) string {
+func (a *Agent) BeginLocalToolExecution(ctx context.Context, toolName string, args map[string]interface{}) string {
 	if a == nil || a.mcpServer == nil {
 		return ""
 	}
-	return a.mcpServer.BeginToolExecution(toolName, args)
+	return a.mcpServer.BeginToolExecution(ctx, toolName, args)
 }
 
 // FinishLocalToolExecution 完成 BeginLocalToolExecution 创建的记录；executionID 为空时一次性写入已完成记录。
-func (a *Agent) FinishLocalToolExecution(executionID, toolName string, args map[string]interface{}, resultText string, invokeErr error) string {
+func (a *Agent) FinishLocalToolExecution(ctx context.Context, executionID, toolName string, args map[string]interface{}, resultText string, invokeErr error) string {
 	if a == nil || a.mcpServer == nil {
 		return ""
 	}
-	return a.mcpServer.FinishToolExecution(executionID, toolName, args, resultText, invokeErr)
+	return a.mcpServer.FinishToolExecution(ctx, executionID, toolName, args, resultText, invokeErr)
 }
 
 // RecordLocalToolExecution 将非 CallTool 路径完成的工具调用写入 MCP 监控库（与 CallTool 落库一致），返回 executionId。
 // 用于 Eino filesystem execute 等场景，使助手气泡「渗透测试详情」与常规 MCP 一致可点进监控。
-func (a *Agent) RecordLocalToolExecution(toolName string, args map[string]interface{}, resultText string, invokeErr error) string {
-	return a.FinishLocalToolExecution("", toolName, args, resultText, invokeErr)
+func (a *Agent) RecordLocalToolExecution(ctx context.Context, toolName string, args map[string]interface{}, resultText string, invokeErr error) string {
+	return a.FinishLocalToolExecution(ctx, "", toolName, args, resultText, invokeErr)
 }
 
 // UpdateMCPExecutionDisplayResult 将监控库中的工具结果更新为送入模型的展示正文（reduction 后）。
