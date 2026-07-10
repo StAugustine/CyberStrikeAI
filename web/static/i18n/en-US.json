@@ -2658,14 +2658,19 @@
   },
   "settingsRobotsExtra": {
     "botCommandsTitle": "Bot command instructions",
-    "botCommandsEntryDesc": "View the Chinese and English commands available in robot chats, including common conversation, role, and project actions.",
+    "botCommandsEntryDesc": "View robot commands for identity, authorization, conversations, roles, and projects.",
     "viewAllCommands": "View all commands",
     "botCommandsDesc": "You can send the following commands in chat (Chinese and English supported):",
     "botCmdCategoryGeneral": "General",
+    "botCmdCategoryIdentity": "Identity and authorization",
     "botCmdCategoryConversation": "Conversation",
     "botCmdCategoryRole": "Role",
     "botCmdCategoryProject": "Project",
     "botCmdHelp": "Show this help",
+    "botCmdIdentity": "Show the platform sender, authorization mode, and effective RBAC identity",
+    "botCmdBindUser": "Bind this platform identity to an RBAC user (user-binding mode only)",
+    "botCmdUnbindUser": "Remove this platform identity binding (user-binding mode only)",
+    "botAuthHint": "Service-account mode does not accept bind or unbind commands; only configured allowlisted senders are accepted.",
     "botCmdList": "List conversations",
     "botCmdSwitch": "Switch to conversation",
     "botCmdNew": "Start new conversation",
@@ -2680,7 +2685,7 @@
     "botCmdNewProject": "Create project and bind current conversation",
     "botCmdBindProject": "Bind current conversation to a project",
     "botCmdUnbindProject": "Unbind project from current conversation",
-    "botCommandsFooter": "Otherwise, send any text for AI penetration testing / security analysis."
+    "botCommandsFooter": "Otherwise, text is sent to AI under the bound user or service account's current RBAC permissions."
   },
   "mcpDetailModal": {
     "title": "Tool call details",

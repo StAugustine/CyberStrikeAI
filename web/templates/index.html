@@ -148,6 +148,13 @@
                                     </div>
                                 </div>
                                 <div class="user-menu-divider" role="separator"></div>
+                                <div class="user-menu-item" role="menuitem" tabindex="0" onclick="openRobotAccountBinding()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openRobotAccountBinding();}">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                    </svg>
+                                    <span>绑定机器人账号</span>
+                                </div>
                                 <div class="user-menu-item" role="menuitem" tabindex="0" onclick="logout()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();logout();}">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -3616,6 +3623,32 @@
                                     <p data-i18n="settings.robots.emptyDesc">从上方列表点击已有平台，或点击“新建机器人”按类型创建。</p>
                                 </div>
 
+                                <div id="robot-auth-policy-panel" class="settings-subsection" hidden>
+                                    <h4>业务鉴权策略</h4>
+                                    <div class="settings-form">
+                                        <div class="form-group">
+                                            <label for="robot-auth-mode">鉴权模式</label>
+                                            <select id="robot-auth-mode" class="form-select" onchange="onRobotAuthModeChange()">
+                                                <option value="user_binding">逐用户绑定（多人机器人推荐）</option>
+                                                <option value="service_account">专用服务账号（仅白名单发送者）</option>
+                                            </select>
+                                            <small class="form-hint">平台验签负责确认消息来源；这里决定消息最终使用哪个 RBAC 身份。</small>
+                                        </div>
+                                        <div id="robot-service-account-fields" hidden>
+                                            <div class="form-group">
+                                                <label for="robot-service-user-id">服务账号 RBAC User ID</label>
+                                                <input type="text" id="robot-service-user-id" placeholder="例如 admin 或专用服务账号 User ID" autocomplete="off" oninput="updateRobotServiceAccountWarning()" />
+                                                <small id="robot-service-admin-warning" class="form-hint robot-service-admin-warning" hidden>当前使用 admin：白名单发送者将拥有完整平台权限，请仅添加你完全信任的账号。</small>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="robot-allowed-external-users">允许的平台发送者 ID</label>
+                                                <textarea id="robot-allowed-external-users" rows="4" placeholder="每行一个；在机器人中发送“身份”或 whoami 获取"></textarea>
+                                                <small class="form-hint">不支持 * 通配符。服务账号模式只有这里列出的真实发送者可以执行。</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <!-- 微信 / iLink -->
                                 <div class="settings-subsection robot-editor-panel robot-wechat-card" id="robot-wechat-subsection" data-robot-editor="wechat" hidden>
                                     <div class="robot-wechat-header">
@@ -3943,6 +3976,14 @@
                                                 <li><code>版本</code> <code>version</code> — <span data-i18n="settingsRobotsExtra.botCmdVersion">显示当前版本号 | Show version</span></li>
                                             </ul>
 
+                                            <p class="robot-cmd-category" data-i18n="settingsRobotsExtra.botCmdCategoryIdentity">身份与鉴权</p>
+                                            <ul class="robot-cmd-list">
+                                                <li><code>身份</code> <code>whoami</code> — <span data-i18n="settingsRobotsExtra.botCmdIdentity">显示平台发送者、鉴权模式及当前实际 RBAC 身份 | Show effective identity</span></li>
+                                                <li><code>绑定 &lt;绑定码&gt;</code> <code>bind &lt;code&gt;</code> — <span data-i18n="settingsRobotsExtra.botCmdBindUser">绑定当前平台账号到 RBAC 用户（仅逐用户绑定模式） | Bind RBAC user</span></li>
+                                                <li><code>解绑</code> <code>unbind</code> — <span data-i18n="settingsRobotsExtra.botCmdUnbindUser">解除当前平台账号绑定（仅逐用户绑定模式） | Unbind RBAC user</span></li>
+                                            </ul>
+                                            <p class="settings-description" data-i18n="settingsRobotsExtra.botAuthHint">专用服务账号模式不接受“绑定/解绑”命令，仅允许机器人配置中白名单内的发送者。</p>
+
                                             <p class="robot-cmd-category" data-i18n="settingsRobotsExtra.botCmdCategoryConversation">对话</p>
                                             <ul class="robot-cmd-list">
                                                 <li><code>列表</code> <code>list</code> — <span data-i18n="settingsRobotsExtra.botCmdList">列出所有对话标题与 ID | List conversations</span></li>
@@ -3968,7 +4009,7 @@
                                                 <li><code>解除项目</code> <code>unbind project</code> — <span data-i18n="settingsRobotsExtra.botCmdUnbindProject">解除当前对话的项目绑定 | Unbind project</span></li>
                                             </ul>
 
-                                            <p class="settings-description robot-cmd-footer" data-i18n="settingsRobotsExtra.botCommandsFooter">除以上命令外，直接输入内容将发送给 AI 进行渗透测试/安全分析。Otherwise, send any text for AI penetration testing / security analysis.</p>
+                                            <p class="settings-description robot-cmd-footer" data-i18n="settingsRobotsExtra.botCommandsFooter">除以上命令外，直接输入内容将按绑定用户或服务账号的实时 RBAC 权限发送给 AI。Otherwise, text is sent to AI under the effective RBAC identity.</p>
                                         </div>
                                     </div>
                                 </div>
@@ -3976,7 +4017,7 @@
                                 <div class="settings-subsection robot-command-entry">
                                     <div class="robot-command-entry-copy">
                                         <h4 data-i18n="settingsRobotsExtra.botCommandsTitle">机器人命令说明</h4>
-                                        <p class="settings-description" data-i18n="settingsRobotsExtra.botCommandsEntryDesc">查看机器人对话中可用的中英文命令，包括对话、角色、项目等常用操作。</p>
+                                        <p class="settings-description" data-i18n="settingsRobotsExtra.botCommandsEntryDesc">查看机器人对话中可用的中英文命令，包括身份鉴权、对话、角色和项目操作。</p>
                                     </div>
                                     <button type="button" class="btn-secondary" onclick="openRobotCommandsModal()" data-i18n="settingsRobotsExtra.viewAllCommands">查看全部命令</button>
                                 </div>
@@ -5691,6 +5732,75 @@
                     <button class="btn-secondary" type="button" onclick="closeFactDetailModal()" data-i18n="common.close">关闭</button>
                     <button class="btn-primary" type="button" id="fact-detail-edit-btn" onclick="editFactFromDetail()" data-i18n="common.edit">编辑</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="robot-account-binding-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="robot-account-binding-title">
+        <div class="modal-content robot-account-binding-content">
+            <div class="modal-header robot-binding-header">
+                <div class="robot-binding-heading">
+                    <span class="robot-binding-heading-icon" aria-hidden="true">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                    </span>
+                    <div>
+                        <h2 id="robot-account-binding-title">绑定机器人账号</h2>
+                        <p>将 IM 平台身份安全关联到当前 RBAC 用户</p>
+                    </div>
+                </div>
+                <button type="button" class="modal-close" onclick="closeRobotAccountBinding()" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body robot-binding-body">
+                <div class="robot-binding-guide">
+                    <span class="robot-binding-guide-number">1</span><span>生成一次性绑定码</span>
+                    <span class="robot-binding-guide-arrow">→</span>
+                    <span class="robot-binding-guide-number">2</span><span>在机器人中发送绑定命令</span>
+                    <span class="robot-binding-guide-arrow">→</span>
+                    <span class="robot-binding-guide-number">3</span><span>立即继承当前用户权限</span>
+                </div>
+
+                <section id="robot-binding-code-card" class="robot-binding-code-card is-empty">
+                    <div class="robot-binding-code-meta">
+                        <span class="robot-binding-one-time-badge">一次性安全码</span>
+                        <span id="robot-binding-code-state" class="robot-binding-state">等待生成</span>
+                    </div>
+                    <div class="robot-binding-code-row">
+                        <code id="robot-binding-code">••••-••••</code>
+                        <div class="robot-binding-code-actions">
+                            <button type="button" class="btn-primary" id="robot-binding-generate-btn" onclick="generateRobotBindingCode()">生成绑定码</button>
+                            <button type="button" class="btn-secondary robot-binding-copy-btn" id="robot-binding-copy-btn" onclick="copyRobotBindingCode()" disabled>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg>
+                                <span>复制命令</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="robot-binding-timer" class="robot-binding-timer" hidden>
+                        <div class="robot-binding-timer-copy">
+                            <span id="robot-binding-expiry">请在机器人中发送绑定命令</span>
+                            <strong id="robot-binding-countdown">05:00</strong>
+                        </div>
+                        <div class="robot-binding-progress" aria-hidden="true"><span id="robot-binding-progress-bar"></span></div>
+                    </div>
+                    <p class="robot-binding-security-note">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" stroke="currentColor" stroke-width="2"/><path d="m9 12 2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                        绑定码仅保存哈希、只能使用一次，新码会使旧码立即失效
+                    </p>
+                </section>
+
+                <section class="robot-binding-list-section">
+                    <div class="robot-binding-section-heading">
+                        <div>
+                            <h3>已绑定平台账号</h3>
+                            <p>这些平台身份可使用当前用户的实时 RBAC 权限</p>
+                        </div>
+                        <button type="button" class="btn-secondary btn-small" onclick="loadRobotAccountBindings()">刷新</button>
+                    </div>
+                    <div id="robot-account-binding-list" class="robot-account-binding-list"><div class="robot-binding-list-loading">正在加载绑定信息…</div></div>
+                </section>
+            </div>
+            <div class="modal-footer robot-binding-footer">
+                <span>如需配置专用服务账号，请前往“系统设置 → 机器人设置”。</span>
+                <button type="button" class="btn-secondary" onclick="closeRobotAccountBinding()">关闭</button>
             </div>
         </div>
     </div>

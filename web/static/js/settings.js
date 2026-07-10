@@ -7,6 +7,7 @@ let alwaysVisibleBuiltinToolNames = new Set();
 // key: 唯一工具标识符（toolKey），value: { enabled: boolean, is_external: boolean, external_mcp: string }
 let toolStateMap = new Map();
 let activeRobotEditor = '';
+let robotAuthDrafts = {};
 
 function settingsT(key, fallback) {
     if (typeof window.t === 'function') {
@@ -258,6 +259,9 @@ function refreshRobotManager() {
 }
 
 function openRobotEditor(type) {
+	if (activeRobotEditor && activeRobotEditor !== type) {
+		robotAuthDrafts[activeRobotEditor] = readRobotAuthPolicyEditor();
+	}
     activeRobotEditor = type;
     const empty = document.getElementById('robot-editor-empty');
     if (empty) empty.hidden = true;
@@ -269,6 +273,53 @@ function openRobotEditor(type) {
     if (panel) {
         panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+    loadRobotAuthPolicyEditor(type);
+}
+
+function loadRobotAuthPolicyEditor(type) {
+    const panel = document.getElementById('robot-auth-policy-panel');
+    if (!panel) return;
+    panel.hidden = !type;
+    const auth = robotAuthDrafts[type] || (currentConfig?.robots?.[type]?.auth) || {};
+    const mode = auth.mode === 'service_account' ? 'service_account' : 'user_binding';
+    const modeInput = document.getElementById('robot-auth-mode');
+    const serviceUserInput = document.getElementById('robot-service-user-id');
+    const allowlistInput = document.getElementById('robot-allowed-external-users');
+    if (modeInput) modeInput.value = mode;
+    if (serviceUserInput) serviceUserInput.value = auth.service_user_id || '';
+    if (allowlistInput) allowlistInput.value = Array.isArray(auth.allowed_external_users) ? auth.allowed_external_users.join('\n') : '';
+    onRobotAuthModeChange();
+}
+
+function onRobotAuthModeChange() {
+    const serviceFields = document.getElementById('robot-service-account-fields');
+    if (serviceFields) serviceFields.hidden = document.getElementById('robot-auth-mode')?.value !== 'service_account';
+    updateRobotServiceAccountWarning();
+}
+
+function updateRobotServiceAccountWarning() {
+    const warning = document.getElementById('robot-service-admin-warning');
+    if (!warning) return;
+    const isServiceMode = document.getElementById('robot-auth-mode')?.value === 'service_account';
+    const userID = document.getElementById('robot-service-user-id')?.value.trim().toLowerCase() || '';
+    warning.hidden = !(isServiceMode && userID === 'admin');
+}
+
+function readRobotAuthPolicyEditor() {
+    const mode = document.getElementById('robot-auth-mode')?.value === 'service_account' ? 'service_account' : 'user_binding';
+    if (mode === 'user_binding') return { mode };
+    const allowed = (document.getElementById('robot-allowed-external-users')?.value || '')
+        .split(/[\n,，]/).map(value => value.trim()).filter(Boolean);
+    return {
+        mode,
+        service_user_id: document.getElementById('robot-service-user-id')?.value.trim() || '',
+        allowed_external_users: Array.from(new Set(allowed))
+    };
+}
+
+function robotAuthPayload(type, prevRobots) {
+    if (type === activeRobotEditor) return readRobotAuthPolicyEditor();
+    return robotAuthDrafts[type] || (prevRobots[type] && prevRobots[type].auth) || { mode: 'user_binding' };
 }
 
 function openRobotCreateModal() {
@@ -904,6 +955,7 @@ async function loadConfig(loadTools = true, options = {}) {
         syncC2NavFromConfig(currentConfig);
 
         // 填充机器人配置
+        robotAuthDrafts = {};
         const robots = currentConfig.robots || {};
         const wechat = robots.wechat || {};
         const wecom = robots.wecom || {};
@@ -1894,6 +1946,7 @@ async function applySettings() {
                 ...(prevRobots.session && typeof prevRobots.session === 'object' ? { session: prevRobots.session } : {}),
                 wechat: {
                     enabled: document.getElementById('robot-wechat-enabled')?.checked === true,
+                    auth: robotAuthPayload('wechat', prevRobots),
                     base_url: document.getElementById('robot-wechat-base-url')?.value.trim() || 'https://ilinkai.weixin.qq.com',
                     bot_type: document.getElementById('robot-wechat-bot-type')?.value.trim() || '3',
                     bot_agent: document.getElementById('robot-wechat-bot-agent')?.value.trim() || 'CyberStrikeAI/1.0',
@@ -1906,6 +1959,7 @@ async function applySettings() {
                 },
                 wecom: {
                     enabled: document.getElementById('robot-wecom-enabled')?.checked === true,
+                    auth: robotAuthPayload('wecom', prevRobots),
                     token: document.getElementById('robot-wecom-token')?.value.trim() || '',
                     encoding_aes_key: document.getElementById('robot-wecom-encoding-aes-key')?.value.trim() || '',
                     corp_id: document.getElementById('robot-wecom-corp-id')?.value.trim() || '',
@@ -1914,12 +1968,14 @@ async function applySettings() {
                 },
                 dingtalk: {
                     enabled: document.getElementById('robot-dingtalk-enabled')?.checked === true,
+                    auth: robotAuthPayload('dingtalk', prevRobots),
                     client_id: document.getElementById('robot-dingtalk-client-id')?.value.trim() || '',
                     client_secret: document.getElementById('robot-dingtalk-client-secret')?.value.trim() || '',
                     allow_conversation_id_fallback: !!(prevRobots.dingtalk && prevRobots.dingtalk.allow_conversation_id_fallback)
                 },
                 lark: {
                     enabled: document.getElementById('robot-lark-enabled')?.checked === true,
+                    auth: robotAuthPayload('lark', prevRobots),
                     app_id: document.getElementById('robot-lark-app-id')?.value.trim() || '',
                     app_secret: document.getElementById('robot-lark-app-secret')?.value.trim() || '',
                     verify_token: document.getElementById('robot-lark-verify-token')?.value.trim() || '',
@@ -1927,6 +1983,7 @@ async function applySettings() {
                 },
                 telegram: {
                     enabled: document.getElementById('robot-telegram-enabled')?.checked === true,
+                    auth: robotAuthPayload('telegram', prevRobots),
                     bot_token: document.getElementById('robot-telegram-bot-token')?.value.trim() || '',
                     bot_username: document.getElementById('robot-telegram-bot-username')?.value.trim() || '',
                     allow_group_messages: document.getElementById('robot-telegram-allow-group')?.checked === true,
@@ -1936,16 +1993,19 @@ async function applySettings() {
                 },
                 slack: {
                     enabled: document.getElementById('robot-slack-enabled')?.checked === true,
+                    auth: robotAuthPayload('slack', prevRobots),
                     bot_token: document.getElementById('robot-slack-bot-token')?.value.trim() || '',
                     app_token: document.getElementById('robot-slack-app-token')?.value.trim() || ''
                 },
                 discord: {
                     enabled: document.getElementById('robot-discord-enabled')?.checked === true,
+                    auth: robotAuthPayload('discord', prevRobots),
                     bot_token: document.getElementById('robot-discord-bot-token')?.value.trim() || '',
                     allow_guild_messages: document.getElementById('robot-discord-allow-guild')?.checked === true
                 },
                 qq: {
                     enabled: document.getElementById('robot-qq-enabled')?.checked === true,
+                    auth: robotAuthPayload('qq', prevRobots),
                     app_id: document.getElementById('robot-qq-app-id')?.value.trim() || '',
                     client_secret: document.getElementById('robot-qq-client-secret')?.value.trim() || '',
                     sandbox: document.getElementById('robot-qq-sandbox')?.checked === true

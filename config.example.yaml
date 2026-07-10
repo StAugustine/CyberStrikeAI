@@ -345,6 +345,11 @@ knowledge:
 robots:
   wechat: # 微信 iLink（个人微信 ClawBot，扫码绑定）
     enabled: false
+    # 鉴权默认 user_binding；专用机器人可改 service_account，并必须限制真实发送者
+    auth:
+      mode: user_binding # user_binding | service_account
+      # service_user_id: "admin 或专用服务账号的 RBAC user ID"
+      # allowed_external_users: ["t:tenant|u:sender"]
     bot_token: ""
     ilink_bot_id: ""
     ilink_user_id: ""
@@ -353,6 +358,8 @@ robots:
     bot_agent: CyberStrikeAI/1.0
   wecom: # 企业微信
     enabled: false
+    auth:
+      mode: user_binding
     token: ""
     encoding_aes_key: ""
     corp_id: ""
@@ -360,30 +367,42 @@ robots:
     agent_id: 0
   dingtalk: # 钉钉
     enabled: false
+    auth:
+      mode: user_binding
     client_id: ""
     client_secret: ""
     allow_conversation_id_fallback: false
   lark: # 飞书
     enabled: false
+    auth:
+      mode: user_binding
     app_id: ""
     app_secret: ""
     verify_token: ""
     allow_chat_id_fallback: false
   telegram: # Telegram
     enabled: false
+    auth:
+      mode: user_binding
     bot_token: ""
     bot_username: ""
     allow_group_messages: false
   slack: # Slack
     enabled: false
+    auth:
+      mode: user_binding
     bot_token: ""
     app_token: ""
   discord: # Discord
     enabled: false
+    auth:
+      mode: user_binding
     bot_token: ""
     allow_guild_messages: false
   qq: # QQ 机器人
     enabled: false
+    auth:
+      mode: user_binding
     app_id: ""
     client_secret: ""
     sandbox: true

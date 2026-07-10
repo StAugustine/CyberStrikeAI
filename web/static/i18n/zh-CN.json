@@ -2646,14 +2646,19 @@
   },
   "settingsRobotsExtra": {
     "botCommandsTitle": "机器人命令说明",
-    "botCommandsEntryDesc": "查看机器人对话中可用的中英文命令，包括对话、角色、项目等常用操作。",
+    "botCommandsEntryDesc": "查看机器人对话中可用的中英文命令，包括身份鉴权、对话、角色和项目操作。",
     "viewAllCommands": "查看全部命令",
     "botCommandsDesc": "在对话中可发送以下命令（支持中英文）：",
     "botCmdCategoryGeneral": "通用",
+    "botCmdCategoryIdentity": "身份与鉴权",
     "botCmdCategoryConversation": "对话",
     "botCmdCategoryRole": "角色",
     "botCmdCategoryProject": "项目",
     "botCmdHelp": "显示本帮助 | Show this help",
+    "botCmdIdentity": "显示平台发送者、鉴权模式及当前实际 RBAC 身份 | Show effective identity",
+    "botCmdBindUser": "绑定当前平台账号到 RBAC 用户（仅逐用户绑定模式） | Bind RBAC user",
+    "botCmdUnbindUser": "解除当前平台账号绑定（仅逐用户绑定模式） | Unbind RBAC user",
+    "botAuthHint": "专用服务账号模式不接受“绑定/解绑”命令，仅允许机器人配置中白名单内的发送者。",
     "botCmdList": "列出所有对话标题与 ID | List conversations",
     "botCmdSwitch": "指定对话继续 | Switch to conversation",
     "botCmdNew": "开启新对话 | Start new conversation",
@@ -2668,7 +2673,7 @@
     "botCmdNewProject": "创建项目并绑定当前对话 | Create & bind project",
     "botCmdBindProject": "将当前对话绑定到项目 | Bind conversation",
     "botCmdUnbindProject": "解除当前对话的项目绑定 | Unbind project",
-    "botCommandsFooter": "除以上命令外，直接输入内容将发送给 AI 进行渗透测试/安全分析。Otherwise, send any text for AI penetration testing / security analysis."
+    "botCommandsFooter": "除以上命令外，直接输入内容将按绑定用户或服务账号的实时 RBAC 权限发送给 AI。Otherwise, text is sent to AI under the effective RBAC identity."
   },
   "mcpDetailModal": {
     "title": "工具调用详情",
