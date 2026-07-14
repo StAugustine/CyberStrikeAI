@@ -37068,6 +37068,80 @@ html[data-theme="dark"] .workflow-status-toggle.is-disabled {
     transform: translateX(16px);
 }
 
+.workflow-dry-run-modal-content {
+    width: min(420px, calc(100vw - 32px));
+    max-width: 420px;
+    height: auto !important;
+    margin: 14vh auto auto;
+    border-radius: 14px;
+}
+
+.workflow-dry-run-modal-content .workflow-dry-run-modal-header {
+    padding: 14px 18px;
+    box-shadow: none;
+}
+
+.workflow-dry-run-modal-title-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.workflow-dry-run-modal-icon {
+    width: 30px;
+    height: 30px;
+    display: inline-grid;
+    flex: 0 0 30px;
+    place-items: center;
+    color: var(--accent-color);
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-primary));
+}
+
+.workflow-dry-run-modal-content .workflow-dry-run-modal-header h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.workflow-dry-run-modal-content .workflow-dry-run-modal-body {
+    padding: 18px;
+    overflow: visible;
+}
+
+.workflow-dry-run-modal-field.form-group {
+    gap: 7px;
+    margin: 0;
+}
+
+.workflow-dry-run-modal-field label {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.workflow-dry-run-modal-field .form-input {
+    height: 38px;
+    box-sizing: border-box;
+}
+
+.workflow-dry-run-modal-field .form-hint {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+.workflow-dry-run-modal-content .workflow-dry-run-modal-footer {
+    gap: 8px;
+    padding: 12px 18px;
+}
+
+html[data-theme="dark"] .workflow-dry-run-modal-icon {
+    color: #bfdbfe;
+    background: rgba(59, 130, 246, 0.14);
+}
+
 .form-required {
     color: #ef4444;
 }

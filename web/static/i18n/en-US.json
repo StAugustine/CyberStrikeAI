@@ -3322,6 +3322,7 @@
     "loadFailed": "Failed to load workflows",
     "saveFailed": "Failed to save workflow",
     "dryRunPrompt": "Input message for dry-run",
+    "dryRunPromptHint": "This message is passed to the Start node as the message input.",
     "dryRunFailed": "Dry-run failed",
     "dryRunDone": "Dry-run completed",
     "dryRunTrace": "Dry-run trace",

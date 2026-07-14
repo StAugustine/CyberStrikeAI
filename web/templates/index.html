@@ -4920,6 +4920,30 @@
             </div>
         </div>
     </div>
+    <div id="workflow-dry-run-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="workflow-dry-run-modal-title" onclick="if(event.target===this)closeWorkflowDryRunModal()" onkeydown="if(event.key==='Escape')closeWorkflowDryRunModal()">
+        <form class="modal-content workflow-dry-run-modal-content" onsubmit="event.preventDefault(); submitWorkflowDryRun()" onclick="event.stopPropagation()">
+            <div class="modal-header workflow-dry-run-modal-header">
+                <div class="workflow-dry-run-modal-title-group">
+                    <span class="workflow-dry-run-modal-icon" aria-hidden="true">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.4v13.2a1 1 0 0 0 1.55.84l9.2-6.6a1 1 0 0 0 0-1.68l-9.2-6.6A1 1 0 0 0 8 5.4Z"/></svg>
+                    </span>
+                    <h2 id="workflow-dry-run-modal-title" data-i18n="workflows.dryRun">试运行</h2>
+                </div>
+                <button type="button" class="modal-close" onclick="closeWorkflowDryRunModal()" data-i18n="common.close" data-i18n-attr="aria-label" data-i18n-skip-text="true" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body workflow-dry-run-modal-body">
+                <div class="form-group workflow-dry-run-modal-field">
+                    <label for="workflow-dry-run-message" data-i18n="workflows.dryRunPrompt">输入试运行消息</label>
+                    <input type="text" id="workflow-dry-run-message" class="form-input" value="ping" autocomplete="off" spellcheck="false">
+                    <small class="form-hint" data-i18n="workflows.dryRunPromptHint">该消息将作为开始节点的 message 输入。</small>
+                </div>
+            </div>
+            <div class="modal-footer workflow-dry-run-modal-footer">
+                <button type="button" class="btn-secondary btn-small" onclick="closeWorkflowDryRunModal()" data-i18n="common.cancel">取消</button>
+                <button type="submit" class="btn-primary btn-small" data-i18n="workflows.dryRun">试运行</button>
+            </div>
+        </form>
+    </div>
     <div id="workflow-package-import-modal" class="modal workflow-package-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="workflow-package-import-title">
         <div class="modal-content workflow-package-modal-content">
             <div class="modal-header workflow-package-modal-header">

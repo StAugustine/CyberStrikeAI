@@ -3310,6 +3310,7 @@
     "loadFailed": "加载工作流失败",
     "saveFailed": "保存工作流失败",
     "dryRunPrompt": "输入试运行消息",
+    "dryRunPromptHint": "该消息将作为开始节点的 message 输入。",
     "dryRunFailed": "试运行失败",
     "dryRunDone": "试运行完成",
     "dryRunTrace": "试运行轨迹",

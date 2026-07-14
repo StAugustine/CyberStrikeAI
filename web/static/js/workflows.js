@@ -1678,7 +1678,7 @@
         }
     };
 
-    window.dryRunWorkflowDraft = async function () {
+    window.dryRunWorkflowDraft = function () {
         initCy();
         const graph = elementsToGraph();
         const errors = validateWorkflowGraph(graph);
@@ -1686,8 +1686,29 @@
             showNotification(errors.slice(0, 4).join('；'), 'error');
             return;
         }
-        const message = window.prompt(_t('workflows.dryRunPrompt') || 'Input message for dry-run', 'ping');
-        if (message === null) return;
+        const input = document.getElementById('workflow-dry-run-message');
+        if (input) input.value = 'ping';
+        if (typeof openAppModal === 'function') {
+            openAppModal('workflow-dry-run-modal', { focusEl: input });
+            if (input) requestAnimationFrame(function () { input.select(); });
+        }
+    };
+
+    window.closeWorkflowDryRunModal = function () {
+        if (typeof closeAppModal === 'function') closeAppModal('workflow-dry-run-modal');
+    };
+
+    window.submitWorkflowDryRun = async function () {
+        initCy();
+        const graph = elementsToGraph();
+        const errors = validateWorkflowGraph(graph);
+        if (errors.length) {
+            showNotification(errors.slice(0, 4).join('；'), 'error');
+            return;
+        }
+        const input = document.getElementById('workflow-dry-run-message');
+        const message = input && input.value.trim() ? input.value.trim() : 'ping';
+        closeWorkflowDryRunModal();
         try {
             const response = await apiFetch('/api/workflows/dry-run', {
                 method: 'POST',
@@ -2437,7 +2458,7 @@
         if (page && typeof window.applyTranslations === 'function') {
             window.applyTranslations(page);
         }
-        ['workflow-package-import-modal', 'workflow-package-overwrite-modal'].forEach(function (id) {
+        ['workflow-dry-run-modal', 'workflow-package-import-modal', 'workflow-package-overwrite-modal'].forEach(function (id) {
             const modal = document.getElementById(id);
             if (modal && typeof window.applyTranslations === 'function') window.applyTranslations(modal);
         });
