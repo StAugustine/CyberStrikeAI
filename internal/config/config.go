@@ -49,6 +49,10 @@ type EnsureLocalConfigResult struct {
 }
 
 const (
+	DefaultMaxCompletionTokens                        = 16384
+	DefaultMaxToolArgumentsBytes                      = 65536
+	DefaultMaxShellCommandBytes                       = 65536
+	DefaultModelOutputRepairMaxAttempts               = 1
 	DefaultSummarizationUserIntentLedgerMaxRunes      = 96000
 	DefaultSummarizationUserIntentLedgerEntryMaxRunes = 16000
 	DefaultLatestUserMessageMaxRunes                  = 48000
@@ -248,6 +252,12 @@ func (c MultiAgentEinoCallbacksConfig) EinoCallbacksMaxOutputSummaryRunes() int 
 
 // MultiAgentEinoMiddlewareConfig optional Eino ADK middleware and Deep / supervisor tuning.
 type MultiAgentEinoMiddlewareConfig struct {
+	// MaxToolArgumentsBytes hard-rejects oversized model-generated tool arguments before execution.
+	MaxToolArgumentsBytes int `yaml:"max_tool_arguments_bytes,omitempty" json:"max_tool_arguments_bytes,omitempty"`
+	// MaxShellCommandBytes applies a stricter limit to exec/execute command strings.
+	MaxShellCommandBytes int `yaml:"max_shell_command_bytes,omitempty" json:"max_shell_command_bytes,omitempty"`
+	// ModelOutputRepairMaxAttempts limits consecutive model-output repair attempts.
+	ModelOutputRepairMaxAttempts int `yaml:"model_output_repair_max_attempts,omitempty" json:"model_output_repair_max_attempts,omitempty"`
 	// PatchToolCalls inserts placeholder tool results for dangling assistant tool_calls (nil = enabled).
 	PatchToolCalls *bool `yaml:"patch_tool_calls,omitempty" json:"patch_tool_calls,omitempty"`
 	// ToolSearch enables dynamictool/toolsearch: hide tail tools until model calls tool_search (reduces prompt tools).
@@ -299,7 +309,7 @@ type MultiAgentEinoMiddlewareConfig struct {
 	DeepOutputKey string `yaml:"deep_output_key,omitempty" json:"deep_output_key,omitempty"`
 	// DeepModelRetryMaxRetries 已废弃：临时错误统一由 run loop 内 isEinoTransientRunError + run_retry_max_attempts 处理。
 	DeepModelRetryMaxRetries int `yaml:"deep_model_retry_max_retries,omitempty" json:"deep_model_retry_max_retries,omitempty"`
-	// RunRetryMaxAttempts > 0：429/5xx/网络抖动时可退避重试次数（run loop 与 summarization 共用）；0=默认 10。
+	// RunRetryMaxAttempts > 0：408/409/425/429/5xx/网络抖动时可退避重试次数（run loop 与 summarization 共用）；0=默认 4。
 	RunRetryMaxAttempts int `yaml:"run_retry_max_attempts,omitempty" json:"run_retry_max_attempts,omitempty"`
 	// RunRetryMaxBackoffSec 单次退避上限秒数；0=默认 30。
 	RunRetryMaxBackoffSec int `yaml:"run_retry_max_backoff_sec,omitempty" json:"run_retry_max_backoff_sec,omitempty"`
@@ -307,6 +317,27 @@ type MultiAgentEinoMiddlewareConfig struct {
 	EmptyResponseContinueMaxAttempts int `yaml:"empty_response_continue_max_attempts,omitempty" json:"empty_response_continue_max_attempts,omitempty"`
 	// TaskToolDescriptionPrefix when non-empty sets deep.Config TaskToolDescriptionGenerator (sub-agent names appended).
 	TaskToolDescriptionPrefix string `yaml:"task_tool_description_prefix,omitempty" json:"task_tool_description_prefix,omitempty"`
+}
+
+func (c MultiAgentEinoMiddlewareConfig) MaxToolArgumentsBytesEffective() int {
+	if c.MaxToolArgumentsBytes > 0 {
+		return c.MaxToolArgumentsBytes
+	}
+	return DefaultMaxToolArgumentsBytes
+}
+
+func (c MultiAgentEinoMiddlewareConfig) MaxShellCommandBytesEffective() int {
+	if c.MaxShellCommandBytes > 0 {
+		return c.MaxShellCommandBytes
+	}
+	return DefaultMaxShellCommandBytes
+}
+
+func (c MultiAgentEinoMiddlewareConfig) ModelOutputRepairMaxAttemptsEffective() int {
+	if c.ModelOutputRepairMaxAttempts > 0 {
+		return c.ModelOutputRepairMaxAttempts
+	}
+	return DefaultModelOutputRepairMaxAttempts
 }
 
 func (c MultiAgentEinoMiddlewareConfig) SummarizationTriggerRatioEffective() float64 {
@@ -796,13 +827,21 @@ type MCPConfig struct {
 }
 
 type OpenAIConfig struct {
-	Provider       string `yaml:"provider,omitempty" json:"provider,omitempty"` // API 提供商: "openai"(默认) 或 "claude"，claude 时自动桥接为 Anthropic Messages API
-	APIKey         string `yaml:"api_key" json:"api_key"`
-	BaseURL        string `yaml:"base_url" json:"base_url"`
-	Model          string `yaml:"model" json:"model"`
-	MaxTotalTokens int    `yaml:"max_total_tokens,omitempty" json:"max_total_tokens,omitempty"`
+	Provider            string `yaml:"provider,omitempty" json:"provider,omitempty"` // API 提供商: "openai"(默认) 或 "claude"，claude 时自动桥接为 Anthropic Messages API
+	APIKey              string `yaml:"api_key" json:"api_key"`
+	BaseURL             string `yaml:"base_url" json:"base_url"`
+	Model               string `yaml:"model" json:"model"`
+	MaxTotalTokens      int    `yaml:"max_total_tokens,omitempty" json:"max_total_tokens,omitempty"`
+	MaxCompletionTokens int    `yaml:"max_completion_tokens,omitempty" json:"max_completion_tokens,omitempty"`
 	// Reasoning 控制 Eino ChatModel 的 thinking / reasoning_effort / output_config 等（Eino 单/多代理路径生效）。
 	Reasoning OpenAIReasoningConfig `yaml:"reasoning,omitempty" json:"reasoning,omitempty"`
+}
+
+func (c OpenAIConfig) MaxCompletionTokensEffective() int {
+	if c.MaxCompletionTokens > 0 {
+		return c.MaxCompletionTokens
+	}
+	return DefaultMaxCompletionTokens
 }
 
 // OpenAIReasoningConfig 全局默认与网关 profile（对话页可通过 ChatRequest.reasoning 覆盖，受 AllowClientReasoning 约束）。
@@ -931,6 +970,9 @@ func (h HitlConfig) AuditModelEffective(main OpenAIConfig) OpenAIConfig {
 	}
 	if am.MaxTotalTokens > 0 {
 		out.MaxTotalTokens = am.MaxTotalTokens
+	}
+	if am.MaxCompletionTokens > 0 {
+		out.MaxCompletionTokens = am.MaxCompletionTokens
 	}
 	return out
 }
@@ -1168,6 +1210,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Audit.MaxDetailBytes <= 0 {
 		cfg.Audit.MaxDetailBytes = 8192
 	}
+	if err := validateModelOutputLimits(cfg.OpenAI, cfg.MultiAgent.EinoMiddleware); err != nil {
+		return nil, err
+	}
 	// 如果配置了工具目录，从目录加载工具配置
 	if cfg.Security.ToolsDir != "" {
 		inlineTools := append([]ToolConfig(nil), cfg.Security.Tools...)
@@ -1228,6 +1273,25 @@ func Load(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func validateModelOutputLimits(openAI OpenAIConfig, mw MultiAgentEinoMiddlewareConfig) error {
+	if openAI.MaxCompletionTokens < 0 {
+		return fmt.Errorf("openai.max_completion_tokens 必须为正数")
+	}
+	if mw.MaxToolArgumentsBytes < 0 {
+		return fmt.Errorf("multi_agent.eino_middleware.max_tool_arguments_bytes 必须为正数")
+	}
+	if mw.MaxShellCommandBytes < 0 {
+		return fmt.Errorf("multi_agent.eino_middleware.max_shell_command_bytes 必须为正数")
+	}
+	if mw.ModelOutputRepairMaxAttempts < 0 {
+		return fmt.Errorf("multi_agent.eino_middleware.model_output_repair_max_attempts 必须为正数")
+	}
+	if mw.MaxShellCommandBytesEffective() > mw.MaxToolArgumentsBytesEffective() {
+		return fmt.Errorf("multi_agent.eino_middleware.max_shell_command_bytes 不能大于 max_tool_arguments_bytes")
+	}
+	return nil
 }
 
 func EnsureLocalConfig(path string) (EnsureLocalConfigResult, error) {
@@ -1643,9 +1707,10 @@ func Default() *Config {
 			Port:    8081,
 		},
 		OpenAI: OpenAIConfig{
-			BaseURL:        "https://api.openai.com/v1",
-			Model:          "gpt-4",
-			MaxTotalTokens: 120000,
+			BaseURL:             "https://api.openai.com/v1",
+			Model:               "gpt-4",
+			MaxTotalTokens:      120000,
+			MaxCompletionTokens: DefaultMaxCompletionTokens,
 		},
 		Agent: AgentConfig{
 			MaxIterations:               30,  // 默认最大迭代次数
