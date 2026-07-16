@@ -127,6 +127,80 @@ args:
         return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, query, fragment))
 
 
+    def path_has_dot_segments(path: str) -> bool:
+        """True when path contains '.' / '..' segments that httpx would RFC-normalize away."""
+        if not path:
+            return False
+        for segment in path.split("/"):
+            if segment in {".", ".."}:
+                return True
+        return False
+
+
+    def split_origin_and_target(url: str) -> Tuple[str, bytes]:
+        """Split URL into origin (scheme://netloc) and raw request-target bytes."""
+        parts = urllib.parse.urlsplit(url)
+        origin = urllib.parse.urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+        if not origin.endswith("/"):
+            # httpx needs a valid URL string; path is supplied separately via raw target
+            pass
+        target = parts.path or "/"
+        if parts.query:
+            target = f"{target}?{parts.query}"
+        return origin.rstrip("/") + "/", target.encode("utf-8", errors="surrogateescape")
+
+
+    class RawPathURL:
+        """Wrap httpx.URL but keep literal request-target (preserves ../ for LFI tests)."""
+
+        def __init__(self, base: "httpx.URL", raw_path: bytes):
+            self._base = base
+            self.raw_path = raw_path
+
+        def __getattr__(self, name):
+            return getattr(self._base, name)
+
+        def __str__(self):
+            host = self._base.host
+            scheme = self._base.scheme
+            port = self._base.port
+            default_port = 443 if scheme == "https" else 80
+            netloc = host if port in (None, default_port) else f"{host}:{port}"
+            return f"{scheme}://{netloc}{self.raw_path.decode('utf-8', errors='replace')}"
+
+
+    def prepare_request_url(url: str):
+        """
+        Return (display_url, request_url, wire_target).
+        When path has '.'/'..' segments, request_url is a RawPathURL so httpx/httpcore
+        send the literal path instead of collapsing to e.g. /etc/passwd.
+        """
+        try:
+            parts = urllib.parse.urlsplit(url)
+        except ValueError:
+            return url, url, None
+        if not path_has_dot_segments(parts.path or ""):
+            return url, url, None
+        origin, raw_target = split_origin_and_target(url)
+        base = httpx.URL(origin)
+        wrapped = RawPathURL(base, raw_target)
+        return str(wrapped), wrapped, raw_target
+
+
+    def explain_request_error(exc: BaseException) -> str:
+        text = str(exc)
+        lowered = text.lower()
+        hints = []
+        if "unexpected_eof" in lowered or "eof occurred in violation of protocol" in lowered:
+            hints.append(
+                "服务器在 TLS 层直接断开（常见于 WAF/反代拒绝异常路径、URI 过长或敏感路径探测）。"
+                "可尝试：缩短 ../ 层数、改用 %2e%2e 编码、加 --allow-insecure、或经代理观察原始响应。"
+            )
+        if hints:
+            return text + "\nHint: " + " ".join(hints)
+        return text
+
+
     def quote_form_component_preserving_pct(value: str) -> str:
         normalized = urllib.parse.unquote(value)
         return urllib.parse.quote_plus(normalized, safe="")
@@ -431,11 +505,23 @@ args:
         return min(values), total / count, max(values)
 
 
-    def render_request_overview(method: str, url: str, headers: httpx.Headers, body_meta: Dict[str, str]):
+    def render_request_overview(
+        method: str,
+        url: str,
+        headers: httpx.Headers,
+        body_meta: Dict[str, str],
+        wire_target: bytes = None,
+        input_url: str = None,
+    ):
         items = list(headers.items())
         print("\n===== Prepared Request =====")
         print(f"Method: {method}")
         print(f"URL: {url}")
+        if input_url and input_url != url:
+            print(f"Input URL: {input_url}")
+        if wire_target is not None:
+            print(f"Wire request-target: {wire_target.decode('utf-8', errors='replace')}")
+            print("Note: preserved '.'/'..' path segments (httpx would otherwise normalize them away).")
         print(f"Headers ({len(items)} total):")
         for key, value in items:
             print(f"  {key}: {value}")
@@ -739,7 +825,8 @@ args:
         except ValueError:
             delay_between = 0.0
 
-        prepared_url = smart_encode_url(args.url) if args.auto_encode_url else args.url
+        encoded_url = smart_encode_url(args.url) if args.auto_encode_url else args.url
+        prepared_url, request_url, wire_target = prepare_request_url(encoded_url)
         method = (args.method or "GET").upper()
 
         # 处理 headers：支持字典（JSON字符串）和字符串格式
@@ -823,7 +910,14 @@ args:
             client_kwargs["trust_env"] = str_to_bool(additional_options["trust_env"])
 
         if args.show_command:
-            render_request_overview(method, prepared_url, headers, body_meta)
+            render_request_overview(
+                method,
+                prepared_url,
+                headers,
+                body_meta,
+                wire_target=wire_target,
+                input_url=args.url if args.url != prepared_url else None,
+            )
 
         aggregate = None
         if args.show_summary:
@@ -842,7 +936,7 @@ args:
                     time.sleep(delay_between)
 
                 metrics = {key: None for key in METRIC_KEYS}
-                probe_metrics = probe_connection(prepared_url, timeout_value or 60.0, verify_tls, skip_probe)
+                probe_metrics = probe_connection(encoded_url, timeout_value or 60.0, verify_tls, skip_probe)
                 metrics.update(probe_metrics)
 
                 start = time.perf_counter()
@@ -850,15 +944,28 @@ args:
                 body_buffer = bytearray()
 
                 try:
-                    stream_kwargs = {
-                        "method": method,
-                        "url": prepared_url,
-                        "headers": headers,
-                    }
+                    if wire_target is not None:
+                        origin, _ = split_origin_and_target(encoded_url)
+                        build_kwargs = {
+                            "method": method,
+                            "url": origin,
+                            "headers": headers,
+                        }
+                    else:
+                        build_kwargs = {
+                            "method": method,
+                            "url": request_url,
+                            "headers": headers,
+                        }
                     if body_bytes is not None:
-                        stream_kwargs["content"] = body_bytes
+                        build_kwargs["content"] = body_bytes
 
-                    with client.stream(**stream_kwargs) as response:
+                    request = client.build_request(**build_kwargs)
+                    if wire_target is not None:
+                        request.url = RawPathURL(request.url, wire_target)
+
+                    response = client.send(request, stream=True)
+                    try:
                         status_code = response.status_code
                         metrics["http_code"] = status_code
                         metrics["redirects"] = len(response.history)
@@ -960,12 +1067,16 @@ args:
                                 for key, value in probe_metrics.items():
                                     print(f"  Probe {key}: {value:.6f}s")
                             print(f"  History length: {len(response.history)}")
+                            if wire_target is not None:
+                                print(f"  Wire request-target: {wire_target.decode('utf-8', errors='replace')}")
+                    finally:
+                        response.close()
 
                 except httpx.HTTPError as exc:
                     exit_code = 1
                     elapsed = time.perf_counter() - start
                     print(f"\n===== Response #{run_index + 1} =====")
-                    print(f"Request failed after {elapsed:.6f}s: {exc}")
+                    print(f"Request failed after {elapsed:.6f}s: {explain_request_error(exc)}")
                     continue
 
             if aggregate and repeat > 1:
@@ -1005,6 +1116,7 @@ description: |
 
   **亮点：**
   - 纯 Python 实现：httpx 会话重用、HTTP/2/代理/certs 直接在脚本内配置，无外部二进制依赖
+  - 路径穿越保真：自动保留 URL 中的 `.`/`..` 段（避免 httpx RFC 规范化把 LFI payload 折叠成 `/etc/passwd`）
   - 智能 Body 编码：支持 application/x-www-form-urlencoded 规范化编码、JSON/文本 charset 推断、
     `@file`/`@-` 注入二进制、可视化调试
   - 连接探针：在无代理场景下额外进行 DNS/TCP/TLS 探测，粗粒度复刻 curl -w 指标
