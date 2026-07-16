@@ -13,6 +13,7 @@ args:
     import sys
     import time
     import urllib.parse
+    import urllib.request
     from typing import Dict, List, Tuple
 
     try:
@@ -150,39 +151,29 @@ args:
 
 
     def resolve_forward_proxy(explicit_proxy: str, trust_env: bool, url: str) -> str:
-        """Effective forward-proxy URL for absolute-form decisions (explicit > env)."""
+        """Return the proxy that the custom transport must actually use."""
         if explicit_proxy:
             return explicit_proxy
         if not trust_env:
             return ""
-        scheme = (urllib.parse.urlsplit(url).scheme or "").lower()
-        if scheme == "https":
-            return (
-                os.environ.get("HTTPS_PROXY")
-                or os.environ.get("https_proxy")
-                or os.environ.get("ALL_PROXY")
-                or os.environ.get("all_proxy")
-                or ""
-            )
-        return (
-            os.environ.get("HTTP_PROXY")
-            or os.environ.get("http_proxy")
-            or os.environ.get("ALL_PROXY")
-            or os.environ.get("all_proxy")
-            or ""
-        )
+        parsed = urllib.parse.urlsplit(url)
+        host = parsed.hostname or ""
+        # urllib handles NO_PROXY/no_proxy matching, including suffixes and '*'.
+        if host and urllib.request.proxy_bypass(host):
+            return ""
+        proxies = urllib.request.getproxies()
+        scheme = (parsed.scheme or "").lower()
+        return proxies.get(scheme) or proxies.get("all") or ""
 
 
     def needs_http_absolute_form(proxy: str, url: str) -> bool:
-        """HTTP(S) forward proxy expects absolute-form target for plaintext HTTP."""
-        if not proxy:
-            return False
-        try:
-            proxy_scheme = urllib.parse.urlsplit(proxy).scheme.lower()
-            url_scheme = urllib.parse.urlsplit(url).scheme.lower()
-        except ValueError:
-            return False
-        return url_scheme == "http" and proxy_scheme in {"http", "https"}
+        """
+        Keep the custom raw target in origin-form.
+
+        httpcore adds the scheme/authority itself when an HTTP forward proxy needs
+        absolute-form. Supplying an absolute raw_path here would duplicate the URL.
+        """
+        return False
 
 
     def display_url_for_target(url: str, wire_target: bytes) -> str:
@@ -375,9 +366,31 @@ args:
         )
 
 
-    def explain_request_error(exc: BaseException) -> str:
+    def explain_request_error(exc: BaseException, url: str = "", proxy: str = "") -> str:
         text = str(exc)
         lowered = text.lower()
+        if any(
+            marker in lowered
+            for marker in (
+                "temporary failure in name resolution",
+                "name or service not known",
+                "nodename nor servname provided",
+                "getaddrinfo failed",
+            )
+        ):
+            target_host = urllib.parse.urlsplit(url).hostname or "目标主机"
+            if proxy:
+                proxy_host = urllib.parse.urlsplit(proxy).hostname or "代理服务器"
+                return (
+                    text
+                    + f"\nHint: DNS 解析失败。当前请求经环境/显式代理 {proxy_host} 转发；"
+                    "请确认代理进程可达，并检查代理地址本身能否解析。"
+                )
+            return (
+                text
+                + f"\nHint: DNS 暂时无法解析 {target_host}。请检查域名、容器/主机 DNS 与网络；"
+                "若运行环境要求代理，请设置 HTTPS_PROXY/HTTP_PROXY，或通过 proxy 参数显式传入。"
+            )
         if "unexpected_eof" in lowered or "eof occurred in violation of protocol" in lowered:
             return (
                 text
@@ -1114,8 +1127,11 @@ args:
         }
         if cert:
             transport_kwargs["cert"] = cert
-        if explicit_proxy:
-            transport_kwargs["proxy"] = explicit_proxy
+        # Supplying a custom transport makes httpx.Client stop installing proxies
+        # from the environment. Pass the resolved env/explicit proxy directly so
+        # trust_env=true retains its documented behavior.
+        if forward_proxy:
+            transport_kwargs["proxy"] = forward_proxy
 
         # Always path-as-is (security-testing default; matches curl --path-as-is)
         initial_absolute = needs_http_absolute_form(forward_proxy, encoded_url)
@@ -1148,7 +1164,7 @@ args:
 
         exit_code = 0
         verify_tls = verify_option if isinstance(verify_option, bool) else True
-        skip_probe = bool(explicit_proxy)
+        skip_probe = bool(forward_proxy)
 
         client = httpx.Client(**client_kwargs)
         try:
@@ -1292,7 +1308,10 @@ args:
                     exit_code = 1
                     elapsed = time.perf_counter() - start
                     print(f"\n===== Response #{run_index + 1} =====")
-                    print(f"Request failed after {elapsed:.6f}s: {explain_request_error(exc)}")
+                    print(
+                        f"Request failed after {elapsed:.6f}s: "
+                        f"{explain_request_error(exc, encoded_url, forward_proxy)}"
+                    )
                     continue
 
             if aggregate and repeat > 1:
