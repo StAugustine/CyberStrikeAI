@@ -10,10 +10,9 @@ args:
     import os
 
     # ==================== FOFA配置 ====================
-    # 请在此处配置您的FOFA账号信息
-    # 您也可以在环境变量中设置：FOFA_EMAIL 和 FOFA_API_KEY
+    # 请在此处配置您的 FOFA API Key
+    # 您也可以在环境变量中设置：FOFA_API_KEY
     # enable 默认为 false，需开启才能调用该MCP
-    FOFA_EMAIL = ""  # 请填写您的FOFA账号邮箱
     FOFA_API_KEY = ""  # 请填写您的FOFA API密钥
     # ==================================================
 
@@ -37,7 +36,7 @@ args:
                 pass
 
         # 传统位置参数方式（向后兼容）
-        # 注意：email 和 api_key 已从参数中移除，现在从配置中读取
+        # 注意：api_key 不作为调用参数传入，而是从配置或环境变量读取
         # 参数位置：query=2, size=3, page=4, fields=5, full=6
         # 但在 sys.argv 中，由于 python3 -c "code" 的格式，实际位置需要调整
         # sys.argv[0] 是 '-c'，sys.argv[1] 开始是实际参数
@@ -77,26 +76,15 @@ args:
             print(json.dumps(error_result, ensure_ascii=False, indent=2))
             sys.exit(1)
 
-        # 从配置或环境变量获取email和api_key
-        email = os.getenv('FOFA_EMAIL', FOFA_EMAIL).strip()
+        # 从配置或环境变量获取 api_key
         api_key = os.getenv('FOFA_API_KEY', FOFA_API_KEY).strip()
         query = config.get('query', '').strip()
-
-        if not email:
-            error_result = {
-                "status": "error",
-                "message": "缺少FOFA配置: email（FOFA账号邮箱）",
-                "required_config": ["email", "api_key"],
-                "note": "请在YAML文件的FOFA_EMAIL配置项中填写您的FOFA账号邮箱，或在环境变量FOFA_EMAIL中设置"
-            }
-            print(json.dumps(error_result, ensure_ascii=False, indent=2))
-            sys.exit(1)
 
         if not api_key:
             error_result = {
                 "status": "error",
                 "message": "缺少FOFA配置: api_key（FOFA API密钥）",
-                "required_config": ["email", "api_key"],
+                "required_config": ["api_key"],
                 "note": "请在YAML文件的FOFA_API_KEY配置项中填写您的API密钥，或在环境变量FOFA_API_KEY中设置。API密钥可在FOFA个人中心获取: https://fofa.info/userInfo"
             }
             print(json.dumps(error_result, ensure_ascii=False, indent=2))
@@ -122,7 +110,6 @@ args:
 
         # 构建请求参数
         params = {
-            'email': email,
             'key': api_key,
             'qbase64': base64.b64encode(query.encode('utf-8')).decode('utf-8')
         }
@@ -277,7 +264,6 @@ description: |
   - 查询结果数量受账户权限限制
   - full参数需要高级权限
 parameters:
-
   - name: "query"
     type: "string"
     description: |
