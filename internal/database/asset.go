@@ -31,6 +31,11 @@ type Asset struct {
 	Country                string     `json:"country"`
 	Province               string     `json:"province"`
 	City                   string     `json:"city"`
+	ResponsiblePerson      string     `json:"responsible_person"`
+	Department             string     `json:"department"`
+	BusinessSystem         string     `json:"business_system"`
+	Environment            string     `json:"environment"`
+	Criticality            string     `json:"criticality"`
 	Source                 string     `json:"source"`
 	SourceQuery            string     `json:"source_query"`
 	Status                 string     `json:"status"`
@@ -49,23 +54,37 @@ type Asset struct {
 }
 
 type AssetListFilter struct {
-	Search         string
-	Status         string
-	Protocol       string
-	ProjectID      string
-	Source         string
-	Tag            string
-	Host           string
-	IP             string
-	Domain         string
-	Port           *int
-	ScanState      string
-	LastScanBefore *time.Time
-	LastScanAfter  *time.Time
-	LastSeenBefore *time.Time
-	LastSeenAfter  *time.Time
-	SortBy         string
-	SortOrder      string
+	Search             string
+	Status             string
+	Protocol           string
+	ProjectID          string
+	Source             string
+	Tag                string
+	Host               string
+	IP                 string
+	Domain             string
+	Port               *int
+	RiskLevel          string
+	MinVulnerabilities *int
+	MaxVulnerabilities *int
+	Country            string
+	Province           string
+	City               string
+	ResponsiblePerson  string
+	Department         string
+	BusinessSystem     string
+	Environment        string
+	Criticality        string
+	ScanState          string
+	ScanOverdueDays    *int
+	LastScanBefore     *time.Time
+	LastScanAfter      *time.Time
+	FirstSeenBefore    *time.Time
+	FirstSeenAfter     *time.Time
+	LastSeenBefore     *time.Time
+	LastSeenAfter      *time.Time
+	SortBy             string
+	SortOrder          string
 }
 
 type AssetImportResult struct {
@@ -84,6 +103,11 @@ func normalizeAsset(a *Asset) {
 	a.Country = strings.TrimSpace(a.Country)
 	a.Province = strings.TrimSpace(a.Province)
 	a.City = strings.TrimSpace(a.City)
+	a.ResponsiblePerson = strings.TrimSpace(a.ResponsiblePerson)
+	a.Department = strings.TrimSpace(a.Department)
+	a.BusinessSystem = strings.TrimSpace(a.BusinessSystem)
+	a.Environment = strings.ToLower(strings.TrimSpace(a.Environment))
+	a.Criticality = strings.ToLower(strings.TrimSpace(a.Criticality))
 	a.Source = strings.TrimSpace(a.Source)
 	a.SourceQuery = strings.TrimSpace(a.SourceQuery)
 	a.ProjectID = strings.TrimSpace(a.ProjectID)
@@ -192,6 +216,7 @@ func validateAsset(a *Asset) error {
 	for name, value := range map[string]string{
 		"Host": a.Host, "域名": a.Domain, "协议": a.Protocol, "页面标题": a.Title,
 		"服务指纹": a.Server, "国家/地区": a.Country, "省份/州": a.Province, "城市": a.City,
+		"负责人": a.ResponsiblePerson, "部门": a.Department, "业务系统": a.BusinessSystem,
 	} {
 		limit := 255
 		if name == "Host" || name == "页面标题" {
@@ -200,6 +225,12 @@ func validateAsset(a *Asset) error {
 		if utf8.RuneCountInString(value) > limit {
 			return assetValidationErrorf("%s不能超过 %d 个字符", name, limit)
 		}
+	}
+	if !oneOfAssetValue(a.Environment, "", "production", "staging", "testing", "development", "other") {
+		return assetValidationErrorf("环境必须为 production、staging、testing、development 或 other")
+	}
+	if !oneOfAssetValue(a.Criticality, "", "critical", "high", "medium", "low") {
+		return assetValidationErrorf("重要性必须为 critical、high、medium 或 low")
 	}
 	if len(a.Tags) > 30 {
 		return assetValidationErrorf("标签不能超过 30 个")
@@ -210,6 +241,15 @@ func validateAsset(a *Asset) error {
 		}
 	}
 	return nil
+}
+
+func oneOfAssetValue(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func validAssetDomain(domain string) bool {
@@ -290,10 +330,12 @@ func (db *DB) UpsertAssets(assets []*Asset, ownerUserID string, allowGlobal ...b
 			asset.FirstSeenAt, asset.LastSeenAt, asset.CreatedAt, asset.UpdatedAt = now, now, now, now
 			_, err = tx.Exec(`INSERT INTO assets (
 				id,dedup_key,project_id,host,ip,port,domain,protocol,title,server,country,province,city,source,source_query,status,tags_json,
+				responsible_person,department,business_system,environment,criticality,
 				first_seen_at,last_seen_at,created_at,updated_at,owner_user_id
-			) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 				asset.ID, key, nullIfEmpty(asset.ProjectID), asset.Host, asset.IP, asset.Port, asset.Domain, asset.Protocol, asset.Title, asset.Server,
 				asset.Country, asset.Province, asset.City, asset.Source, asset.SourceQuery, asset.Status, string(tagsJSON),
+				asset.ResponsiblePerson, asset.Department, asset.BusinessSystem, asset.Environment, asset.Criticality,
 				now, now, now, now, nullIfEmpty(ownerUserID))
 			if err != nil {
 				return result, fmt.Errorf("创建资产失败: %w", err)
@@ -322,11 +364,18 @@ func (db *DB) UpsertAssets(assets []*Asset, ownerUserID string, allowGlobal ...b
 			country=CASE WHEN ?<>'' THEN ? ELSE country END, province=CASE WHEN ?<>'' THEN ? ELSE province END,
 			city=CASE WHEN ?<>'' THEN ? ELSE city END, source=CASE WHEN ?<>'' THEN ? ELSE source END,
 			source_query=CASE WHEN ?<>'' THEN ? ELSE source_query END, project_id=CASE WHEN ?<>'' THEN ? ELSE project_id END,
+			responsible_person=CASE WHEN ?<>'' THEN ? ELSE responsible_person END,
+			department=CASE WHEN ?<>'' THEN ? ELSE department END,
+			business_system=CASE WHEN ?<>'' THEN ? ELSE business_system END,
+			environment=CASE WHEN ?<>'' THEN ? ELSE environment END,
+			criticality=CASE WHEN ?<>'' THEN ? ELSE criticality END,
 			tags_json=CASE WHEN ?<>'[]' THEN ? ELSE tags_json END,
 			last_seen_at=?, updated_at=? WHERE id=?`,
 			asset.Host, asset.Host, asset.IP, asset.IP, asset.Domain, asset.Domain, asset.Protocol, asset.Protocol,
 			asset.Title, asset.Title, asset.Server, asset.Server, asset.Country, asset.Country, asset.Province, asset.Province,
-			asset.City, asset.City, asset.Source, asset.Source, asset.SourceQuery, asset.SourceQuery, asset.ProjectID, nullIfEmpty(asset.ProjectID), string(tagsJSON), string(tagsJSON),
+			asset.City, asset.City, asset.Source, asset.Source, asset.SourceQuery, asset.SourceQuery, asset.ProjectID, nullIfEmpty(asset.ProjectID),
+			asset.ResponsiblePerson, asset.ResponsiblePerson, asset.Department, asset.Department, asset.BusinessSystem, asset.BusinessSystem,
+			asset.Environment, asset.Environment, asset.Criticality, asset.Criticality, string(tagsJSON), string(tagsJSON),
 			now, now, existingID)
 		if err != nil {
 			return result, fmt.Errorf("更新资产失败: %w", err)
@@ -349,18 +398,19 @@ func assetWhere(filter AssetListFilter, access RBACListAccess) (string, []interf
 	args := []interface{}{}
 	if q := strings.TrimSpace(filter.Search); q != "" {
 		pattern := "%" + escapeAssetLike(strings.ToLower(q)) + "%"
-		query += ` AND (LOWER(host) LIKE ? ESCAPE '\' OR LOWER(ip) LIKE ? ESCAPE '\' OR LOWER(domain) LIKE ? ESCAPE '\'
-			OR LOWER(title) LIKE ? ESCAPE '\' OR LOWER(server) LIKE ? ESCAPE '\' OR LOWER(tags_json) LIKE ? ESCAPE '\')`
-		for i := 0; i < 6; i++ {
+		query += ` AND (LOWER(assets.host) LIKE ? ESCAPE '\' OR LOWER(assets.ip) LIKE ? ESCAPE '\' OR LOWER(assets.domain) LIKE ? ESCAPE '\'
+			OR LOWER(assets.title) LIKE ? ESCAPE '\' OR LOWER(assets.server) LIKE ? ESCAPE '\' OR LOWER(assets.tags_json) LIKE ? ESCAPE '\'
+			OR LOWER(assets.responsible_person) LIKE ? ESCAPE '\' OR LOWER(assets.department) LIKE ? ESCAPE '\' OR LOWER(assets.business_system) LIKE ? ESCAPE '\')`
+		for i := 0; i < 9; i++ {
 			args = append(args, pattern)
 		}
 	}
 	if filter.Status != "" {
-		query += " AND status = ?"
+		query += " AND assets.status = ?"
 		args = append(args, filter.Status)
 	}
 	if filter.Protocol != "" {
-		query += " AND protocol = ?"
+		query += " AND assets.protocol = ?"
 		args = append(args, filter.Protocol)
 	}
 	if filter.ProjectID != "" {
@@ -392,11 +442,40 @@ func assetWhere(filter AssetListFilter, access RBACListAccess) (string, []interf
 		query += " AND assets.port = ?"
 		args = append(args, *filter.Port)
 	}
+	if filter.RiskLevel != "" {
+		query += " AND " + assetRiskLevelExpr + " = ?"
+		args = append(args, strings.ToLower(strings.TrimSpace(filter.RiskLevel)))
+	}
+	if filter.MinVulnerabilities != nil {
+		query += " AND " + assetVulnerabilityCountExpr + " >= ?"
+		args = append(args, *filter.MinVulnerabilities)
+	}
+	if filter.MaxVulnerabilities != nil {
+		query += " AND " + assetVulnerabilityCountExpr + " <= ?"
+		args = append(args, *filter.MaxVulnerabilities)
+	}
+	for _, item := range []struct {
+		column string
+		value  string
+	}{
+		{"assets.country", filter.Country}, {"assets.province", filter.Province}, {"assets.city", filter.City},
+		{"assets.responsible_person", filter.ResponsiblePerson}, {"assets.department", filter.Department},
+		{"assets.business_system", filter.BusinessSystem}, {"assets.environment", filter.Environment}, {"assets.criticality", filter.Criticality},
+	} {
+		if strings.TrimSpace(item.value) != "" {
+			query += " AND LOWER(" + item.column + ") = LOWER(?)"
+			args = append(args, strings.TrimSpace(item.value))
+		}
+	}
 	switch strings.ToLower(strings.TrimSpace(filter.ScanState)) {
 	case "never":
 		query += " AND " + assetEffectiveLastScanExpr + " IS NULL"
 	case "scanned":
 		query += " AND " + assetEffectiveLastScanExpr + " IS NOT NULL"
+	}
+	if filter.ScanOverdueDays != nil {
+		query += " AND (" + assetEffectiveLastScanExpr + " IS NULL OR datetime(" + assetEffectiveLastScanExpr + ") < datetime('now', ?))"
+		args = append(args, fmt.Sprintf("-%d days", *filter.ScanOverdueDays))
 	}
 	if filter.LastScanBefore != nil {
 		query += " AND " + assetEffectiveLastScanExpr + " < ?"
@@ -405,6 +484,14 @@ func assetWhere(filter AssetListFilter, access RBACListAccess) (string, []interf
 	if filter.LastScanAfter != nil {
 		query += " AND " + assetEffectiveLastScanExpr + " > ?"
 		args = append(args, *filter.LastScanAfter)
+	}
+	if filter.FirstSeenBefore != nil {
+		query += " AND assets.first_seen_at < ?"
+		args = append(args, *filter.FirstSeenBefore)
+	}
+	if filter.FirstSeenAfter != nil {
+		query += " AND assets.first_seen_at > ?"
+		args = append(args, *filter.FirstSeenAfter)
 	}
 	if filter.LastSeenBefore != nil {
 		query += " AND assets.last_seen_at < ?"
@@ -428,7 +515,8 @@ func scanAsset(scanner interface{ Scan(...interface{}) error }) (*Asset, error) 
 	var tags string
 	var lastScanAt interface{}
 	err := scanner.Scan(&a.ID, &a.ProjectID, &a.ProjectName, &a.Host, &a.IP, &a.Port, &a.Domain, &a.Protocol, &a.Title, &a.Server, &a.Country,
-		&a.Province, &a.City, &a.Source, &a.SourceQuery, &a.Status, &tags, &a.FirstSeenAt, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt,
+		&a.Province, &a.City, &a.ResponsiblePerson, &a.Department, &a.BusinessSystem, &a.Environment, &a.Criticality,
+		&a.Source, &a.SourceQuery, &a.Status, &tags, &a.FirstSeenAt, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt,
 		&lastScanAt, &a.LastScanConversationID, &a.LastScanQueueID, &a.LastScanTaskID, &a.VulnerabilityCount, &a.RiskLevel)
 	if err != nil {
 		return nil, err
@@ -476,20 +564,29 @@ const assetEffectiveLastScanExpr = `COALESCE(
 		assets.last_scan_at
 	)`
 
+const assetVulnerabilityMatchExpr = `(
+	(COALESCE(assets.last_scan_conversation_id,'')<>'' AND v.conversation_id=assets.last_scan_conversation_id)
+	OR (COALESCE(assets.last_scan_task_id,'')<>'' AND EXISTS (
+		SELECT 1 FROM batch_tasks bt WHERE bt.id=assets.last_scan_task_id AND bt.conversation_id=v.conversation_id
+	))
+)`
+
+const assetVulnerabilityCountExpr = `(SELECT COUNT(DISTINCT v.id) FROM vulnerabilities v WHERE ` + assetVulnerabilityMatchExpr + `)`
+
+const assetRiskScoreExpr = `COALESCE((
+	SELECT MAX(CASE LOWER(COALESCE(v.severity,'')) WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3 WHEN 'low' THEN 2 WHEN 'info' THEN 1 ELSE 0 END)
+	FROM vulnerabilities v
+	WHERE LOWER(COALESCE(v.status,'open')) NOT IN ('fixed','false_positive','ignored') AND ` + assetVulnerabilityMatchExpr + `
+),0)`
+
+const assetRiskLevelExpr = `(CASE WHEN ` + assetEffectiveLastScanExpr + ` IS NULL THEN 'unassessed' ELSE CASE ` + assetRiskScoreExpr + `
+	WHEN 5 THEN 'critical' WHEN 4 THEN 'high' WHEN 3 THEN 'medium' WHEN 2 THEN 'low' WHEN 1 THEN 'info' ELSE 'normal' END END)`
+
 const assetSelectColumns = `assets.id,COALESCE(assets.project_id,''),COALESCE(p.name,''),assets.host,assets.ip,assets.port,assets.domain,assets.protocol,assets.title,assets.server,assets.country,
-	assets.province,assets.city,assets.source,assets.source_query,assets.status,assets.tags_json,assets.first_seen_at,assets.last_seen_at,assets.created_at,assets.updated_at,
+	assets.province,assets.city,assets.responsible_person,assets.department,assets.business_system,assets.environment,assets.criticality,
+	assets.source,assets.source_query,assets.status,assets.tags_json,assets.first_seen_at,assets.last_seen_at,assets.created_at,assets.updated_at,
 	` + assetEffectiveLastScanExpr + `,COALESCE(assets.last_scan_conversation_id,''),COALESCE(assets.last_scan_queue_id,''),COALESCE(assets.last_scan_task_id,''),
-	(SELECT COUNT(DISTINCT v.id) FROM vulnerabilities v WHERE
-		(COALESCE(assets.last_scan_conversation_id,'')<>'' AND v.conversation_id=assets.last_scan_conversation_id)
-		OR (COALESCE(assets.last_scan_task_id,'')<>'' AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.id=assets.last_scan_task_id AND bt.conversation_id=v.conversation_id))),
-	CASE WHEN assets.last_scan_at IS NULL THEN 'unassessed' ELSE CASE COALESCE((
-		SELECT MAX(CASE LOWER(COALESCE(v.severity,'')) WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3 WHEN 'low' THEN 2 WHEN 'info' THEN 1 ELSE 0 END)
-		FROM vulnerabilities v WHERE
-			LOWER(COALESCE(v.status,'open')) NOT IN ('fixed','false_positive','ignored') AND (
-			(COALESCE(assets.last_scan_conversation_id,'')<>'' AND v.conversation_id=assets.last_scan_conversation_id)
-			OR (COALESCE(assets.last_scan_task_id,'')<>'' AND EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.id=assets.last_scan_task_id AND bt.conversation_id=v.conversation_id))
-			)
-	),0) WHEN 5 THEN 'critical' WHEN 4 THEN 'high' WHEN 3 THEN 'medium' WHEN 2 THEN 'low' WHEN 1 THEN 'info' ELSE 'normal' END END`
+	` + assetVulnerabilityCountExpr + `,` + assetRiskLevelExpr
 
 // MarkAssetScanned links an asset to the conversation or batch subtask created from it.
 // The link lets the asset list show the latest scan time and vulnerabilities produced by that scan.
@@ -573,6 +670,36 @@ func (db *DB) ListAssets(limit, offset int, filter AssetListFilter, access RBACL
 	return items, total, rows.Err()
 }
 
+// ListAssetsForOperation resolves the complete filtered selection used by
+// cross-page bulk actions. The caller supplies a strict upper bound.
+func (db *DB) ListAssetsForOperation(limit int, filter AssetListFilter, access RBACListAccess) ([]*Asset, int, error) {
+	if limit < 1 || limit > 10000 {
+		limit = 10000
+	}
+	where, args := assetWhere(filter, access)
+	var total int
+	if err := db.QueryRow("SELECT COUNT(*) FROM assets"+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if total > limit {
+		return nil, total, fmt.Errorf("匹配资产超过 %d 条，请缩小筛选范围", limit)
+	}
+	rows, err := db.Query("SELECT "+assetSelectColumns+" FROM assets LEFT JOIN projects p ON p.id=assets.project_id"+where+" ORDER BY "+assetOrderBy(filter.SortBy, filter.SortOrder), args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	items := make([]*Asset, 0, total)
+	for rows.Next() {
+		item, err := scanAsset(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
 func assetOrderBy(sortBy, sortOrder string) string {
 	direction := "DESC"
 	if strings.EqualFold(strings.TrimSpace(sortOrder), "asc") {
@@ -598,6 +725,10 @@ func assetOrderBy(sortBy, sortOrder string) string {
 		expression = "LOWER(assets.host)"
 	case "port":
 		expression = "assets.port"
+	case "vulnerability_count":
+		expression = assetVulnerabilityCountExpr
+	case "risk_level":
+		expression = assetRiskScoreExpr
 	default:
 		expression = "assets.last_seen_at"
 	}
@@ -620,8 +751,10 @@ func (db *DB) UpdateAsset(id string, a *Asset, access RBACListAccess) error {
 	}
 	tags, _ := json.Marshal(a.Tags)
 	where, args := appendAssetAccess(" WHERE id = ?", []interface{}{id}, access, "assets")
-	res, err := db.Exec(`UPDATE assets SET dedup_key=?,project_id=?,host=?,ip=?,port=?,domain=?,protocol=?,title=?,server=?,country=?,province=?,city=?,source=?,source_query=?,status=?,tags_json=?,updated_at=?`+where,
-		append([]interface{}{key, nullIfEmpty(a.ProjectID), a.Host, a.IP, a.Port, a.Domain, a.Protocol, a.Title, a.Server, a.Country, a.Province, a.City, a.Source, a.SourceQuery, a.Status, string(tags), time.Now()}, args...)...)
+	res, err := db.Exec(`UPDATE assets SET dedup_key=?,project_id=?,host=?,ip=?,port=?,domain=?,protocol=?,title=?,server=?,country=?,province=?,city=?,
+		responsible_person=?,department=?,business_system=?,environment=?,criticality=?,source=?,source_query=?,status=?,tags_json=?,updated_at=?`+where,
+		append([]interface{}{key, nullIfEmpty(a.ProjectID), a.Host, a.IP, a.Port, a.Domain, a.Protocol, a.Title, a.Server, a.Country, a.Province, a.City,
+			a.ResponsiblePerson, a.Department, a.BusinessSystem, a.Environment, a.Criticality, a.Source, a.SourceQuery, a.Status, string(tags), time.Now()}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -632,10 +765,18 @@ func (db *DB) UpdateAsset(id string, a *Asset, access RBACListAccess) error {
 	return nil
 }
 
-// UpdateAssetsProject atomically replaces the project binding for every asset.
-// It refuses the whole update when any requested asset is missing or outside
-// the caller's access scope, so a bulk action can never partially succeed.
-func (db *DB) UpdateAssetsProject(ids []string, projectID string, access RBACListAccess) (int, error) {
+type AssetBulkPatch struct {
+	Status            *string
+	ResponsiblePerson *string
+	Department        *string
+	BusinessSystem    *string
+	Environment       *string
+	Criticality       *string
+	AddTags           []string
+	RemoveTags        []string
+}
+
+func normalizeAssetIDs(ids []string) []string {
 	unique := make([]string, 0, len(ids))
 	seen := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
@@ -649,6 +790,253 @@ func (db *DB) UpdateAssetsProject(ids []string, projectID string, access RBACLis
 		seen[id] = struct{}{}
 		unique = append(unique, id)
 	}
+	return unique
+}
+
+func normalizeBulkTags(tags []string) ([]string, error) {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if utf8.RuneCountInString(tag) > 64 {
+			return nil, assetValidationErrorf("单个标签不能超过 64 个字符")
+		}
+		if _, exists := seen[tag]; exists {
+			continue
+		}
+		seen[tag] = struct{}{}
+		result = append(result, tag)
+	}
+	return result, nil
+}
+
+// UpdateAssetsBulk atomically applies operational metadata to a selected set.
+func (db *DB) UpdateAssetsBulk(ids []string, patch AssetBulkPatch, access RBACListAccess) (int, error) {
+	unique := normalizeAssetIDs(ids)
+	if len(unique) == 0 {
+		return 0, fmt.Errorf("资产列表不能为空")
+	}
+	if patch.Status != nil {
+		value := strings.ToLower(strings.TrimSpace(*patch.Status))
+		if value != "active" && value != "inactive" {
+			return 0, assetValidationErrorf("资产状态必须为 active 或 inactive")
+		}
+		patch.Status = &value
+	}
+	if patch.Environment != nil {
+		value := strings.ToLower(strings.TrimSpace(*patch.Environment))
+		if !oneOfAssetValue(value, "", "production", "staging", "testing", "development", "other") {
+			return 0, assetValidationErrorf("环境值无效")
+		}
+		patch.Environment = &value
+	}
+	if patch.Criticality != nil {
+		value := strings.ToLower(strings.TrimSpace(*patch.Criticality))
+		if !oneOfAssetValue(value, "", "critical", "high", "medium", "low") {
+			return 0, assetValidationErrorf("重要性值无效")
+		}
+		patch.Criticality = &value
+	}
+	var err error
+	if patch.AddTags, err = normalizeBulkTags(patch.AddTags); err != nil {
+		return 0, err
+	}
+	if patch.RemoveTags, err = normalizeBulkTags(patch.RemoveTags); err != nil {
+		return 0, err
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(unique)), ",")
+	idArgs := make([]interface{}, len(unique))
+	for i, id := range unique {
+		idArgs[i] = id
+	}
+	countQuery, countArgs := appendAssetAccess("SELECT COUNT(*) FROM assets WHERE id IN ("+placeholders+")", idArgs, access, "assets")
+	var accessible int
+	if err := tx.QueryRow(countQuery, countArgs...).Scan(&accessible); err != nil {
+		return 0, err
+	}
+	if accessible != len(unique) {
+		return 0, fmt.Errorf("部分资产不存在或无权更新")
+	}
+
+	for _, id := range unique {
+		var rawTags string
+		if err := tx.QueryRow("SELECT tags_json FROM assets WHERE id=?", id).Scan(&rawTags); err != nil {
+			return 0, err
+		}
+		tags := []string{}
+		_ = json.Unmarshal([]byte(rawTags), &tags)
+		remove := map[string]struct{}{}
+		for _, tag := range patch.RemoveTags {
+			remove[tag] = struct{}{}
+		}
+		merged := make([]string, 0, len(tags)+len(patch.AddTags))
+		seen := map[string]struct{}{}
+		for _, tag := range append(tags, patch.AddTags...) {
+			if _, removed := remove[tag]; removed {
+				continue
+			}
+			if _, exists := seen[tag]; exists {
+				continue
+			}
+			seen[tag] = struct{}{}
+			merged = append(merged, tag)
+		}
+		if len(merged) > 30 {
+			return 0, assetValidationErrorf("批量修改后标签不能超过 30 个")
+		}
+		tagsJSON, _ := json.Marshal(merged)
+		_, err := tx.Exec(`UPDATE assets SET
+			status=CASE WHEN ? THEN ? ELSE status END,
+			responsible_person=CASE WHEN ? THEN ? ELSE responsible_person END,
+			department=CASE WHEN ? THEN ? ELSE department END,
+			business_system=CASE WHEN ? THEN ? ELSE business_system END,
+			environment=CASE WHEN ? THEN ? ELSE environment END,
+			criticality=CASE WHEN ? THEN ? ELSE criticality END,
+			tags_json=?,updated_at=? WHERE id=?`,
+			patch.Status != nil, valueOrEmpty(patch.Status),
+			patch.ResponsiblePerson != nil, valueOrEmpty(patch.ResponsiblePerson),
+			patch.Department != nil, valueOrEmpty(patch.Department),
+			patch.BusinessSystem != nil, valueOrEmpty(patch.BusinessSystem),
+			patch.Environment != nil, valueOrEmpty(patch.Environment),
+			patch.Criticality != nil, valueOrEmpty(patch.Criticality),
+			string(tagsJSON), time.Now(), id)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(unique), nil
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func (db *DB) DeleteAssets(ids []string, access RBACListAccess) (int, error) {
+	unique := normalizeAssetIDs(ids)
+	if len(unique) == 0 {
+		return 0, fmt.Errorf("资产列表不能为空")
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(unique)), ",")
+	args := make([]interface{}, len(unique))
+	for i, id := range unique {
+		args[i] = id
+	}
+	countQuery, countArgs := appendAssetAccess("SELECT COUNT(*) FROM assets WHERE id IN ("+placeholders+")", args, access, "assets")
+	var accessible int
+	if err := tx.QueryRow(countQuery, countArgs...).Scan(&accessible); err != nil {
+		return 0, err
+	}
+	if accessible != len(unique) {
+		return 0, fmt.Errorf("部分资产不存在或无权删除")
+	}
+	deleteQuery, deleteArgs := appendAssetAccess("DELETE FROM assets WHERE id IN ("+placeholders+")", args, access, "assets")
+	result, err := tx.Exec(deleteQuery, deleteArgs...)
+	if err != nil {
+		return 0, err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil || int(deleted) != len(unique) {
+		return 0, fmt.Errorf("批量删除资产失败")
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
+// MergeAssets atomically updates the surviving asset and removes duplicates.
+// Separate access scopes preserve permission-specific RBAC boundaries.
+func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, deleteAccess RBACListAccess) (int, error) {
+	if primary == nil || strings.TrimSpace(primary.ID) == "" {
+		return 0, fmt.Errorf("主资产不能为空")
+	}
+	normalizeAsset(primary)
+	if err := validateAsset(primary); err != nil {
+		return 0, err
+	}
+	duplicates := normalizeAssetIDs(duplicateIDs)
+	filtered := duplicates[:0]
+	for _, id := range duplicates {
+		if id != primary.ID {
+			filtered = append(filtered, id)
+		}
+	}
+	duplicates = filtered
+	if len(duplicates) == 0 {
+		return 0, fmt.Errorf("重复资产列表不能为空")
+	}
+	key := assetDedupKey(primary)
+	tagsJSON, _ := json.Marshal(primary.Tags)
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	primaryQuery, primaryArgs := appendAssetAccess("SELECT COUNT(*) FROM assets WHERE id=?", []interface{}{primary.ID}, writeAccess, "assets")
+	var primaryCount int
+	if err := tx.QueryRow(primaryQuery, primaryArgs...).Scan(&primaryCount); err != nil || primaryCount != 1 {
+		return 0, fmt.Errorf("主资产不存在或无权更新")
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(duplicates)), ",")
+	deleteArgs := make([]interface{}, len(duplicates))
+	for i, id := range duplicates {
+		deleteArgs[i] = id
+	}
+	countQuery, countArgs := appendAssetAccess("SELECT COUNT(*) FROM assets WHERE id IN ("+placeholders+")", deleteArgs, deleteAccess, "assets")
+	var accessible int
+	if err := tx.QueryRow(countQuery, countArgs...).Scan(&accessible); err != nil || accessible != len(duplicates) {
+		return 0, fmt.Errorf("部分重复资产不存在或无权删除")
+	}
+	deleteQuery, scopedDeleteArgs := appendAssetAccess("DELETE FROM assets WHERE id IN ("+placeholders+")", deleteArgs, deleteAccess, "assets")
+	if result, err := tx.Exec(deleteQuery, scopedDeleteArgs...); err != nil {
+		return 0, err
+	} else if deleted, _ := result.RowsAffected(); int(deleted) != len(duplicates) {
+		return 0, fmt.Errorf("删除重复资产失败")
+	}
+	updateQuery, updateScopeArgs := appendAssetAccess(`UPDATE assets SET dedup_key=?,project_id=?,host=?,ip=?,port=?,domain=?,protocol=?,title=?,server=?,country=?,province=?,city=?,
+		responsible_person=?,department=?,business_system=?,environment=?,criticality=?,source=?,source_query=?,status=?,tags_json=?,updated_at=? WHERE id=?`,
+		[]interface{}{key, nullIfEmpty(primary.ProjectID), primary.Host, primary.IP, primary.Port, primary.Domain, primary.Protocol, primary.Title, primary.Server,
+			primary.Country, primary.Province, primary.City, primary.ResponsiblePerson, primary.Department, primary.BusinessSystem, primary.Environment,
+			primary.Criticality, primary.Source, primary.SourceQuery, primary.Status, string(tagsJSON), time.Now(), primary.ID}, writeAccess, "assets")
+	result, err := tx.Exec(updateQuery, updateScopeArgs...)
+	if err != nil {
+		return 0, err
+	}
+	if updated, _ := result.RowsAffected(); updated != 1 {
+		return 0, fmt.Errorf("更新主资产失败")
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(duplicates), nil
+}
+
+// UpdateAssetsProject atomically replaces the project binding for every asset.
+// It refuses the whole update when any requested asset is missing or outside
+// the caller's access scope, so a bulk action can never partially succeed.
+func (db *DB) UpdateAssetsProject(ids []string, projectID string, access RBACListAccess) (int, error) {
+	unique := normalizeAssetIDs(ids)
 	if len(unique) == 0 {
 		return 0, fmt.Errorf("资产列表不能为空")
 	}

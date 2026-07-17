@@ -2,6 +2,7 @@ package database
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -221,6 +222,133 @@ func TestUpdateAssetsProjectIsAtomicAndScoped(t *testing.T) {
 	updated, err = db.UpdateAssetsProject(ids, "", RBACListAccess{Scope: RBACScopeAll})
 	if err != nil || updated != 2 {
 		t.Fatalf("batch unbind: updated=%d err=%v", updated, err)
+	}
+}
+
+func TestAssetAdvancedFiltersAndBulkMetadata(t *testing.T) {
+	db, err := NewDB(filepath.Join(t.TempDir(), "asset-advanced.db"), zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	project, err := db.CreateProject(&Project{Name: "Production", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []*Asset{
+		{ProjectID: project.ID, Domain: "critical.example.com", Port: 443, Protocol: "https", Country: "CN", ResponsiblePerson: "Alice", Department: "Security", BusinessSystem: "Portal", Environment: "production", Criticality: "critical", Tags: []string{"internet"}},
+		{ProjectID: project.ID, Domain: "dev.example.com", Port: 8080, Protocol: "http", Country: "US", Environment: "development", Criticality: "low"},
+	}
+	if result, err := db.UpsertAssets(input, "", true); err != nil || result.Created != 2 {
+		t.Fatalf("create assets: result=%#v err=%v", result, err)
+	}
+	conversation, err := db.CreateConversation("critical scan", ConversationCreateMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkAssetScanned(input[0].ID, conversation.ID, "", "", RBACListAccess{Scope: RBACScopeAll}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreateVulnerability(&Vulnerability{ConversationID: conversation.ID, Title: "critical finding", Severity: "critical", Target: input[0].Domain}); err != nil {
+		t.Fatal(err)
+	}
+
+	minVulns := 1
+	items, total, err := db.ListAssets(20, 0, AssetListFilter{
+		Status: "active", RiskLevel: "critical", MinVulnerabilities: &minVulns,
+		Country: "cn", Environment: "production", Criticality: "critical",
+		SortBy: "vulnerability_count", SortOrder: "desc",
+	}, RBACListAccess{Scope: RBACScopeAll})
+	if err != nil || total != 1 || len(items) != 1 {
+		t.Fatalf("advanced query: total=%d items=%#v err=%v", total, items, err)
+	}
+	if items[0].ResponsiblePerson != "Alice" || items[0].BusinessSystem != "Portal" || items[0].VulnerabilityCount != 1 {
+		t.Fatalf("metadata did not round-trip: %#v", items[0])
+	}
+
+	status := "inactive"
+	owner := "Bob"
+	environment := "staging"
+	updated, err := db.UpdateAssetsBulk([]string{input[0].ID, input[1].ID}, AssetBulkPatch{
+		Status: &status, ResponsiblePerson: &owner, Environment: &environment,
+		AddTags: []string{"review"}, RemoveTags: []string{"internet"},
+	}, RBACListAccess{Scope: RBACScopeAll})
+	if err != nil || updated != 2 {
+		t.Fatalf("bulk update: updated=%d err=%v", updated, err)
+	}
+	for _, id := range []string{input[0].ID, input[1].ID} {
+		item, err := db.GetAsset(id, RBACListAccess{Scope: RBACScopeAll})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if item.Status != "inactive" || item.ResponsiblePerson != "Bob" || item.Environment != "staging" || len(item.Tags) != 1 || item.Tags[0] != "review" {
+			t.Fatalf("unexpected bulk metadata: %#v", item)
+		}
+	}
+}
+
+func TestListAssetsForOperationAndBatchDelete(t *testing.T) {
+	db, err := NewDB(filepath.Join(t.TempDir(), "asset-selection.db"), zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i := 1; i <= 3; i++ {
+		if _, err := db.UpsertAssets([]*Asset{{IP: "198.51.100." + strconv.Itoa(i), Port: 443, Protocol: "https", Tags: []string{"selected"}}}, "", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, total, err := db.ListAssetsForOperation(10, AssetListFilter{Tag: "selected"}, RBACListAccess{Scope: RBACScopeAll})
+	if err != nil || total != 3 || len(items) != 3 {
+		t.Fatalf("selection: total=%d len=%d err=%v", total, len(items), err)
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	deleted, err := db.DeleteAssets(ids, RBACListAccess{Scope: RBACScopeAll})
+	if err != nil || deleted != 3 {
+		t.Fatalf("batch delete: deleted=%d err=%v", deleted, err)
+	}
+}
+
+func TestMergeAssetsIsAtomic(t *testing.T) {
+	db, err := NewDB(filepath.Join(t.TempDir(), "asset-merge.db"), zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	input := []*Asset{
+		{Domain: "merge.example.com", Port: 80, Protocol: "http", Title: "Primary", Tags: []string{"one"}},
+		{Domain: "merge.example.com", Port: 443, Protocol: "https", ResponsiblePerson: "Alice", Tags: []string{"two"}},
+	}
+	if _, err := db.UpsertAssets(input, "", true); err != nil {
+		t.Fatal(err)
+	}
+	primary, err := db.GetAsset(input[0].ID, RBACListAccess{Scope: RBACScopeAll})
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary.ResponsiblePerson = "Alice"
+	primary.Tags = []string{"one", "two"}
+	merged, err := db.MergeAssets(primary, []string{input[1].ID}, RBACListAccess{Scope: RBACScopeAll}, RBACListAccess{Scope: RBACScopeAll})
+	if err != nil || merged != 1 {
+		t.Fatalf("merge: merged=%d err=%v", merged, err)
+	}
+	items, total, err := db.ListAssets(10, 0, AssetListFilter{}, RBACListAccess{Scope: RBACScopeAll})
+	if err != nil || total != 1 || len(items) != 1 || items[0].ResponsiblePerson != "Alice" || len(items[0].Tags) != 2 {
+		t.Fatalf("unexpected merged asset: total=%d items=%#v err=%v", total, items, err)
+	}
+
+	before := items[0].Title
+	items[0].Title = "Must roll back"
+	if _, err := db.MergeAssets(items[0], []string{"missing"}, RBACListAccess{Scope: RBACScopeAll}, RBACListAccess{Scope: RBACScopeAll}); err == nil {
+		t.Fatal("merge with missing duplicate unexpectedly succeeded")
+	}
+	after, err := db.GetAsset(items[0].ID, RBACListAccess{Scope: RBACScopeAll})
+	if err != nil || after.Title != before {
+		t.Fatalf("failed merge was not atomic: asset=%#v err=%v", after, err)
 	}
 }
 

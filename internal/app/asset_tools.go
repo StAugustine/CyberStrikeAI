@@ -193,7 +193,11 @@ func assetMutationProperties() map[string]interface{} {
 		"domain": map[string]interface{}{"type": "string"}, "protocol": map[string]interface{}{"type": "string"},
 		"title": map[string]interface{}{"type": "string"}, "server": map[string]interface{}{"type": "string"},
 		"country": map[string]interface{}{"type": "string"}, "province": map[string]interface{}{"type": "string"}, "city": map[string]interface{}{"type": "string"},
-		"source": map[string]interface{}{"type": "string"}, "source_query": map[string]interface{}{"type": "string"},
+		"responsible_person": map[string]interface{}{"type": "string"}, "department": map[string]interface{}{"type": "string"},
+		"business_system": map[string]interface{}{"type": "string"},
+		"environment":     map[string]interface{}{"type": "string", "enum": []string{"production", "staging", "testing", "development", "other"}},
+		"criticality":     map[string]interface{}{"type": "string", "enum": []string{"critical", "high", "medium", "low"}},
+		"source":          map[string]interface{}{"type": "string"}, "source_query": map[string]interface{}{"type": "string"},
 		"status": map[string]interface{}{"type": "string", "enum": []string{"active", "inactive"}},
 		"tags":   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "maxItems": 50},
 	}
@@ -205,16 +209,25 @@ func assetQuerySchema() map[string]interface{} {
 		"project_id": map[string]interface{}{"type": "string"}, "status": map[string]interface{}{"type": "string", "enum": []string{"active", "inactive"}},
 		"protocol": map[string]interface{}{"type": "string"}, "source": map[string]interface{}{"type": "string"}, "tag": map[string]interface{}{"type": "string"},
 		"host": map[string]interface{}{"type": "string"}, "ip": map[string]interface{}{"type": "string"}, "domain": map[string]interface{}{"type": "string"},
-		"port":             map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535},
-		"scan_state":       map[string]interface{}{"type": "string", "enum": []string{"never", "scanned"}, "description": "never=从未扫描，scanned=扫描过"},
-		"last_scan_before": map[string]interface{}{"type": "string", "description": "RFC3339 时间或 YYYY-MM-DD"},
-		"last_scan_after":  map[string]interface{}{"type": "string", "description": "RFC3339 时间或 YYYY-MM-DD"},
-		"last_seen_before": map[string]interface{}{"type": "string", "description": "RFC3339 时间或 YYYY-MM-DD"},
-		"last_seen_after":  map[string]interface{}{"type": "string", "description": "RFC3339 时间或 YYYY-MM-DD"},
-		"sort_by":          map[string]interface{}{"type": "string", "enum": []string{"last_seen_at", "last_scan_at", "first_seen_at", "created_at", "updated_at", "host", "port"}},
-		"sort_order":       map[string]interface{}{"type": "string", "enum": []string{"asc", "desc"}},
-		"page":             map[string]interface{}{"type": "integer", "minimum": 1},
-		"page_size":        map[string]interface{}{"type": "integer", "minimum": 1, "maximum": agentAssetPageSizeMax},
+		"port":                map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 65535},
+		"risk_level":          map[string]interface{}{"type": "string", "enum": []string{"unassessed", "critical", "high", "medium", "low", "info", "normal"}},
+		"min_vulnerabilities": map[string]interface{}{"type": "integer", "minimum": 0},
+		"max_vulnerabilities": map[string]interface{}{"type": "integer", "minimum": 0},
+		"country":             map[string]interface{}{"type": "string"}, "province": map[string]interface{}{"type": "string"}, "city": map[string]interface{}{"type": "string"},
+		"responsible_person": map[string]interface{}{"type": "string"}, "department": map[string]interface{}{"type": "string"},
+		"business_system": map[string]interface{}{"type": "string"}, "environment": map[string]interface{}{"type": "string"}, "criticality": map[string]interface{}{"type": "string"},
+		"scan_state":        map[string]interface{}{"type": "string", "enum": []string{"never", "scanned"}, "description": "never=从未扫描，scanned=扫描过"},
+		"scan_overdue_days": map[string]interface{}{"type": "integer", "minimum": 1},
+		"last_scan_before":  map[string]interface{}{"type": "string", "description": "RFC3339 时间或 YYYY-MM-DD"},
+		"last_scan_after":   map[string]interface{}{"type": "string", "description": "RFC3339 时间或 YYYY-MM-DD"},
+		"first_seen_before": map[string]interface{}{"type": "string", "description": "RFC3339 时间或 YYYY-MM-DD"},
+		"first_seen_after":  map[string]interface{}{"type": "string", "description": "RFC3339 时间或 YYYY-MM-DD"},
+		"last_seen_before":  map[string]interface{}{"type": "string", "description": "RFC3339 时间或 YYYY-MM-DD"},
+		"last_seen_after":   map[string]interface{}{"type": "string", "description": "RFC3339 时间或 YYYY-MM-DD"},
+		"sort_by":           map[string]interface{}{"type": "string", "enum": []string{"last_seen_at", "last_scan_at", "first_seen_at", "created_at", "updated_at", "host", "port", "risk_level", "vulnerability_count"}},
+		"sort_order":        map[string]interface{}{"type": "string", "enum": []string{"asc", "desc"}},
+		"page":              map[string]interface{}{"type": "integer", "minimum": 1},
+		"page_size":         map[string]interface{}{"type": "integer", "minimum": 1, "maximum": agentAssetPageSizeMax},
 	}
 	return map[string]interface{}{"type": "object", "properties": properties}
 }
@@ -246,6 +259,11 @@ func applyAssetPatch(asset *database.Asset, args map[string]interface{}) error {
 	setString("country", &asset.Country)
 	setString("province", &asset.Province)
 	setString("city", &asset.City)
+	setString("responsible_person", &asset.ResponsiblePerson)
+	setString("department", &asset.Department)
+	setString("business_system", &asset.BusinessSystem)
+	setString("environment", &asset.Environment)
+	setString("criticality", &asset.Criticality)
 	setString("source", &asset.Source)
 	setString("source_query", &asset.SourceQuery)
 	setString("status", &asset.Status)
@@ -273,6 +291,11 @@ func assetFilterFromToolArgs(args map[string]interface{}) (database.AssetListFil
 		Host: strings.TrimSpace(strArg(args, "host")), IP: strings.TrimSpace(strArg(args, "ip")), Domain: strings.TrimSpace(strArg(args, "domain")),
 		ScanState: strings.ToLower(strings.TrimSpace(strArg(args, "scan_state"))), SortBy: strings.ToLower(strings.TrimSpace(strArg(args, "sort_by"))),
 		SortOrder: strings.ToLower(strings.TrimSpace(strArg(args, "sort_order"))),
+		RiskLevel: strings.ToLower(strings.TrimSpace(strArg(args, "risk_level"))),
+		Country:   strings.TrimSpace(strArg(args, "country")), Province: strings.TrimSpace(strArg(args, "province")), City: strings.TrimSpace(strArg(args, "city")),
+		ResponsiblePerson: strings.TrimSpace(strArg(args, "responsible_person")), Department: strings.TrimSpace(strArg(args, "department")),
+		BusinessSystem: strings.TrimSpace(strArg(args, "business_system")), Environment: strings.ToLower(strings.TrimSpace(strArg(args, "environment"))),
+		Criticality: strings.ToLower(strings.TrimSpace(strArg(args, "criticality"))),
 	}
 	if !oneOfOrEmpty(filter.Status, "active", "inactive") {
 		return filter, 0, 0, fmt.Errorf("status 仅支持 active 或 inactive")
@@ -280,7 +303,7 @@ func assetFilterFromToolArgs(args map[string]interface{}) (database.AssetListFil
 	if !oneOfOrEmpty(filter.ScanState, "never", "scanned") {
 		return filter, 0, 0, fmt.Errorf("scan_state 仅支持 never 或 scanned")
 	}
-	if !oneOfOrEmpty(filter.SortBy, "last_seen_at", "last_scan_at", "first_seen_at", "created_at", "updated_at", "host", "port") {
+	if !oneOfOrEmpty(filter.SortBy, "last_seen_at", "last_scan_at", "first_seen_at", "created_at", "updated_at", "host", "port", "risk_level", "vulnerability_count") {
 		return filter, 0, 0, fmt.Errorf("sort_by 不受支持")
 	}
 	if !oneOfOrEmpty(filter.SortOrder, "asc", "desc") {
@@ -293,11 +316,38 @@ func assetFilterFromToolArgs(args map[string]interface{}) (database.AssetListFil
 		}
 		filter.Port = &port
 	}
+	if _, ok := args["min_vulnerabilities"]; ok {
+		value := intArg(args, "min_vulnerabilities", -1)
+		if value < 0 {
+			return filter, 0, 0, fmt.Errorf("min_vulnerabilities 不能小于 0")
+		}
+		filter.MinVulnerabilities = &value
+	}
+	if _, ok := args["max_vulnerabilities"]; ok {
+		value := intArg(args, "max_vulnerabilities", -1)
+		if value < 0 {
+			return filter, 0, 0, fmt.Errorf("max_vulnerabilities 不能小于 0")
+		}
+		filter.MaxVulnerabilities = &value
+	}
+	if _, ok := args["scan_overdue_days"]; ok {
+		value := intArg(args, "scan_overdue_days", 0)
+		if value < 1 {
+			return filter, 0, 0, fmt.Errorf("scan_overdue_days 必须大于 0")
+		}
+		filter.ScanOverdueDays = &value
+	}
 	var err error
 	if filter.LastScanBefore, err = parseAssetToolTime("last_scan_before", strArg(args, "last_scan_before")); err != nil {
 		return filter, 0, 0, err
 	}
 	if filter.LastScanAfter, err = parseAssetToolTime("last_scan_after", strArg(args, "last_scan_after")); err != nil {
+		return filter, 0, 0, err
+	}
+	if filter.FirstSeenBefore, err = parseAssetToolTime("first_seen_before", strArg(args, "first_seen_before")); err != nil {
+		return filter, 0, 0, err
+	}
+	if filter.FirstSeenAfter, err = parseAssetToolTime("first_seen_after", strArg(args, "first_seen_after")); err != nil {
 		return filter, 0, 0, err
 	}
 	if filter.LastSeenBefore, err = parseAssetToolTime("last_seen_before", strArg(args, "last_seen_before")); err != nil {
@@ -435,6 +485,8 @@ func assetToolDetail(asset *database.Asset) map[string]interface{} {
 		"domain": truncateRunes(asset.Domain, 255), "protocol": truncateRunes(asset.Protocol, 50),
 		"title": truncateRunes(asset.Title, 500), "server": truncateRunes(asset.Server, 500),
 		"country": truncateRunes(asset.Country, 100), "province": truncateRunes(asset.Province, 100), "city": truncateRunes(asset.City, 100),
+		"responsible_person": truncateRunes(asset.ResponsiblePerson, 255), "department": truncateRunes(asset.Department, 255),
+		"business_system": truncateRunes(asset.BusinessSystem, 255), "environment": asset.Environment, "criticality": asset.Criticality,
 		"source": truncateRunes(asset.Source, 100), "source_query": truncateRunes(asset.SourceQuery, 2000),
 		"status": truncateRunes(asset.Status, 50), "tags": tags,
 		"first_seen_at": asset.FirstSeenAt, "last_seen_at": asset.LastSeenAt, "created_at": asset.CreatedAt, "updated_at": asset.UpdatedAt,
