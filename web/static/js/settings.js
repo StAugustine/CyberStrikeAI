@@ -503,6 +503,8 @@ let toolsPagination = {
     total: 0,
     totalPages: 0
 };
+let toolsLoadController = null;
+let toolsLoadSequence = 0;
 
 let c2NavSyncedOnce = false;
 
@@ -705,10 +707,8 @@ async function loadConfig(loadTools = true, options = {}) {
 
         // 填充FOFA配置
         const fofa = currentConfig.fofa || {};
-        const fofaEmailEl = document.getElementById('fofa-email');
         const fofaKeyEl = document.getElementById('fofa-api-key');
         const fofaBaseUrlEl = document.getElementById('fofa-base-url');
-        if (fofaEmailEl) fofaEmailEl.value = fofa.email || '';
         if (fofaKeyEl) fofaKeyEl.value = fofa.api_key || '';
         if (fofaBaseUrlEl) fofaBaseUrlEl.value = fofa.base_url || '';
 
@@ -1080,17 +1080,28 @@ async function loadToolsList(page = 1, searchKeyword = '', options = {}) {
     // 等待 i18n 就绪，避免快速刷新时翻译函数未初始化导致显示占位符
     if (window.i18nReady) await window.i18nReady;
     const toolsList = document.getElementById('tools-list');
+    const requestSequence = ++toolsLoadSequence;
 
-    // 显示加载状态
+    // 新请求接管列表，取消仍在进行的旧请求，避免连续筛选/切页时旧响应覆盖新结果。
+    if (toolsLoadController) {
+        toolsLoadController.abort();
+    }
+    const controller = new AbortController();
+    toolsLoadController = controller;
+
+    // 清理 DOM 之前先保留用户尚未保存的勾选状态。
+    saveCurrentPageToolStates();
+
+    // 首次加载才显示占位；后续刷新保留旧列表，避免整块内容闪烁和布局跳动。
     if (toolsList) {
-        // 清空整个容器，包括可能存在的分页控件
-        toolsList.innerHTML = '<div class="tools-list-items"><div class="loading" style="padding: 20px; text-align: center; color: var(--text-muted);">⏳ ' + (typeof window.t === 'function' ? window.t('mcp.loadingTools') : '正在加载工具列表...') + '</div></div>';
+        toolsList.setAttribute('aria-busy', 'true');
+        if (!toolsList.querySelector('.tool-item')) {
+            toolsList.innerHTML = '<div class="tools-list-items"><div class="loading" style="padding: 20px; text-align: center; color: var(--text-muted);">⏳ ' + (typeof window.t === 'function' ? window.t('mcp.loadingTools') : '正在加载工具列表...') + '</div></div>';
+        }
     }
     
+    let timeoutId = null;
     try {
-        // 在加载新页面之前，先保存当前页的状态到全局映射
-        saveCurrentPageToolStates();
-        
         const pageSize = toolsPagination.pageSize;
         let url = `/api/config/tools?page=${page}&page_size=${pageSize}`;
         if (searchKeyword) {
@@ -1107,13 +1118,11 @@ async function loadToolsList(page = 1, searchKeyword = '', options = {}) {
         }
         
         // 使用较短的超时时间（10秒），避免长时间等待
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        timeoutId = setTimeout(() => controller.abort(), 10000);
         
         const response = await apiFetch(url, {
             signal: controller.signal
         });
-        clearTimeout(timeoutId);
         
         if (!response.ok) {
             if (typeof readApiError === 'function') {
@@ -1123,6 +1132,8 @@ async function loadToolsList(page = 1, searchKeyword = '', options = {}) {
         }
         
         const result = await response.json();
+        if (requestSequence !== toolsLoadSequence) return;
+
         allTools = result.tools || [];
         toolsPagination = {
             page: result.page || page,
@@ -1150,6 +1161,9 @@ async function loadToolsList(page = 1, searchKeyword = '', options = {}) {
         renderExternalMcpFilterChip();
         updateExternalMcpCardSelection();
     } catch (error) {
+        // 被后续请求替代属于正常控制流，不显示错误，也不覆盖新请求的界面。
+        if (controller.signal.aborted && requestSequence !== toolsLoadSequence) return;
+
         console.error('加载工具列表失败:', error);
         if (toolsList) {
             const isTimeout = error.name === 'AbortError' || error.message.includes('timeout');
@@ -1157,6 +1171,12 @@ async function loadToolsList(page = 1, searchKeyword = '', options = {}) {
                 ? (typeof window.t === 'function' ? window.t('mcp.loadToolsTimeout') : '加载工具列表超时，可能是外部MCP连接较慢。请点击"刷新"按钮重试，或检查外部MCP连接状态。')
                 : (typeof window.t === 'function' ? window.t('mcp.loadToolsFailed') : '加载工具列表失败') + ': ' + escapeHtml(error.message);
             toolsList.innerHTML = `<div class="error" style="padding: 20px; text-align: center;">${errorMsg}</div>`;
+        }
+    } finally {
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        if (requestSequence === toolsLoadSequence) {
+            if (toolsList) toolsList.removeAttribute('aria-busy');
+            if (toolsLoadController === controller) toolsLoadController = null;
         }
     }
 }
@@ -1287,13 +1307,13 @@ function renderToolsList() {
         const checkboxId = `tool-${escapeHtml(toolKey).replace(/::/g, '--')}`;
 
         toolItem.innerHTML = `
-            <input type="checkbox" id="${checkboxId}" ${toolState.enabled ? 'checked' : ''} ${toolState.is_external || tool.is_external ? 'data-external="true"' : ''} onchange="handleToolCheckboxChange('${escapeHtml(toolKey)}', this.checked)" />
+            <input type="checkbox" class="theme-checkbox" id="${checkboxId}" ${toolState.enabled ? 'checked' : ''} ${toolState.is_external || tool.is_external ? 'data-external="true"' : ''} onchange="handleToolCheckboxChange('${escapeHtml(toolKey)}', this.checked)" />
             <div class="tool-item-info">
                 <div class="tool-item-name">
                     ${escapeHtml(tool.name)}
                     ${externalBadge}
                     <label class="tool-resident-toggle" title="${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleHint') : '始终常驻在 Tool Search 可见列表'}" onclick="event.stopPropagation()">
-                        <input type="checkbox" ${alwaysVisibleChecked ? 'checked' : ''} ${alwaysVisibleLocked ? 'disabled' : ''} onchange="handleToolAlwaysVisibleChange('${escapeHtml(toolKey)}', this.checked)" />
+                        <input type="checkbox" class="theme-checkbox" ${alwaysVisibleChecked ? 'checked' : ''} ${alwaysVisibleLocked ? 'disabled' : ''} onchange="handleToolAlwaysVisibleChange('${escapeHtml(toolKey)}', this.checked)" />
                         <span>${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleLabel') : '常驻'}</span>
                     </label>
                     ${alwaysVisibleLocked ? `<span class="external-tool-badge" title="${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleBuiltinHint') : '后端内置工具默认常驻，不可关闭'}">${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleBuiltinLabel') : '内置默认'}</span>` : ''}
@@ -1883,7 +1903,6 @@ async function applySettings() {
             },
             vision: visionPayload,
             fofa: {
-                email: document.getElementById('fofa-email')?.value.trim() || '',
                 api_key: document.getElementById('fofa-api-key')?.value.trim() || '',
                 base_url: document.getElementById('fofa-base-url')?.value.trim() || ''
             },
@@ -3094,6 +3113,23 @@ async function fetchExternalMCPs() {
 // MCP 管理页定时刷新外部 MCP 状态（感知后台断连/自动重连）
 let externalMcpPollTimer = null;
 const EXTERNAL_MCP_POLL_INTERVAL_MS = 8000;
+let externalMcpRenderSignature = '';
+
+function renderExternalMCPData(data, forceRender = false) {
+    const servers = data.servers || {};
+    const stats = data.stats || {};
+    const signature = JSON.stringify({ servers, stats });
+
+    if (!forceRender && signature === externalMcpRenderSignature) {
+        updateExternalMcpCardSelection();
+        return false;
+    }
+
+    externalMcpRenderSignature = signature;
+    renderExternalMCPList(servers);
+    renderExternalMCPStats(stats);
+    return true;
+}
 
 function startExternalMcpPoll() {
     stopExternalMcpPoll();
@@ -3118,13 +3154,12 @@ function stopExternalMcpPoll() {
 }
 
 // 加载外部MCP列表并渲染
-async function loadExternalMCPs() {
+async function loadExternalMCPs(options = {}) {
     try {
         // 等待 i18n 就绪，避免快速刷新时翻译函数未初始化导致显示占位符
         if (window.i18nReady) await window.i18nReady;
         const data = await fetchExternalMCPs();
-        renderExternalMCPList(data.servers || {});
-        renderExternalMCPStats(data.stats || {});
+        renderExternalMCPData(data, options.forceRender === true);
     } catch (error) {
         console.error('加载外部MCP列表失败:', error);
         const list = document.getElementById('external-mcp-list');
@@ -3150,8 +3185,7 @@ async function pollExternalMCPToolCount(name, maxAttempts = 10) {
         await new Promise(r => setTimeout(r, pollIntervalMs));
         try {
             const data = await fetchExternalMCPs();
-            renderExternalMCPList(data.servers || {});
-            renderExternalMCPStats(data.stats || {});
+            renderExternalMCPData(data);
             if (name != null) {
                 const server = data.servers && data.servers[name];
                 if (server && server.tool_count > 0) break;
@@ -3742,7 +3776,7 @@ document.addEventListener('languagechange', function () {
         const mcpPage = document.getElementById('page-mcp-management');
         if (mcpPage && mcpPage.classList.contains('active')) {
             if (typeof loadExternalMCPs === 'function') {
-                loadExternalMCPs().catch(function () { /* ignore */ });
+                loadExternalMCPs({ forceRender: true }).catch(function () { /* ignore */ });
             }
             if (typeof updateToolsStats === 'function') {
                 updateToolsStats().catch(function () { /* ignore */ });

@@ -23,7 +23,7 @@
             }
         })();
     </script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260716-9">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260717-18">
     <link rel="stylesheet" href="/static/css/c2.css">
     <link rel="stylesheet" href="/static/vendor/xterm.css">
     <script src="/static/js/router.js"></script>
@@ -1780,32 +1780,126 @@
                         <div><h2 data-i18n="assets.libraryTitle">资产库</h2></div>
                         <div class="page-header-actions">
                             <button class="btn-secondary" type="button" onclick="loadAssets()" data-i18n="common.refresh">刷新</button>
+                            <button class="btn-secondary" data-require-permission="asset:write" type="button" onclick="openAssetImport()" data-i18n="assets.bulkImport">批量导入</button>
                             <button class="btn-primary" data-require-permission="asset:write" type="button" onclick="openAssetEditor()" data-i18n="assets.addAsset">+ 新增资产</button>
                         </div>
                     </div>
                     <div class="page-content asset-content">
                         <div class="asset-toolbar">
-                            <input id="asset-search" type="search" data-i18n="assets.searchPlaceholder" data-i18n-attr="placeholder" placeholder="搜索主机、IP、域名、标题、服务或标签" onkeydown="if(event.key==='Enter')loadAssets(1)">
-                            <select id="asset-status-filter" onchange="loadAssets(1)"><option value="" data-i18n="assets.allStatuses">全部状态</option><option value="active" data-i18n="assets.statusActive">活跃</option><option value="inactive" data-i18n="assets.statusInactive">停用</option></select>
-                            <select id="asset-project-filter" onchange="loadAssets(1)"><option value="" data-i18n="assets.allProjects">全部项目</option></select>
-                            <button class="btn-secondary" type="button" onclick="loadAssets(1)" data-i18n="common.search">搜索</button>
-                            <span id="asset-list-meta" class="muted"></span>
+                            <div class="asset-toolbar-main">
+                                <input id="asset-search" type="search" data-i18n="assets.searchPlaceholder" data-i18n-attr="placeholder" placeholder="搜索主机、IP、域名、标题、服务、责任人或标签" onkeydown="if(event.key==='Enter')loadAssets(1)">
+                                <select id="asset-status-filter" onchange="loadAssets(1)"><option value="" data-i18n="assets.allStatuses">全部状态</option><option value="active" data-i18n="assets.statusActive">活跃</option><option value="inactive" data-i18n="assets.statusInactive">停用</option></select>
+                                <select id="asset-project-filter" onchange="loadAssets(1)"><option value="" data-i18n="assets.allProjects">全部项目</option></select>
+                                <button class="btn-secondary" type="button" onclick="toggleAssetAdvancedFilters()" aria-expanded="false" id="asset-advanced-toggle" data-i18n="assets.advancedFilters">高级筛选</button>
+                                <button class="btn-primary" type="button" onclick="loadAssets(1)" data-i18n="common.search">搜索</button>
+                                <button class="btn-link" type="button" onclick="resetAssetFilters()" data-i18n="assets.resetFilters">重置</button>
+                                <span id="asset-list-meta" class="muted"></span>
+                            </div>
+                            <div id="asset-advanced-filters" class="asset-advanced-filters" hidden>
+                                <label><span data-i18n="assets.riskLevel">风险等级</span><select id="asset-risk-filter"><option value="" data-i18n="assets.allRisks">全部风险</option><option value="critical" data-i18n="assets.riskCritical">严重</option><option value="high" data-i18n="assets.riskHigh">高危</option><option value="medium" data-i18n="assets.riskMedium">中危</option><option value="low" data-i18n="assets.riskLow">低危</option><option value="info" data-i18n="assets.riskInfo">信息</option><option value="normal" data-i18n="assets.riskNormal">正常</option><option value="unassessed" data-i18n="assets.riskUnassessed">未评估</option></select></label>
+                                <label><span data-i18n="assets.minVulnerabilityCount">漏洞数量至少</span><input id="asset-vuln-min-filter" type="number" min="0" placeholder="0"></label>
+                                <label><span data-i18n="assets.protocol">协议</span><input id="asset-protocol-filter" type="text" placeholder="https"></label>
+                                <label><span>端口</span><input id="asset-port-filter" type="number" min="0" max="65535" placeholder="443"></label>
+                                <label><span data-i18n="assets.source">来源</span><input id="asset-source-filter" type="text" placeholder="fofa / manual"></label>
+                                <label><span data-i18n="assets.tagsLabel">标签</span><input id="asset-tag-filter" type="text" placeholder="公网"></label>
+                                <label><span data-i18n="assets.scanState">扫描状态</span><select id="asset-scan-filter"><option value="" data-i18n="assets.allScanStates">全部</option><option value="never" data-i18n="assets.neverScannedFilter">从未扫描</option><option value="30" data-i18n="assets.overdue30">30 天未扫描</option><option value="60" data-i18n="assets.overdue60">60 天未扫描</option><option value="90" data-i18n="assets.overdue90">90 天未扫描</option><option value="scanned" data-i18n="assets.scannedFilter">已扫描</option></select></label>
+                                <label><span data-i18n="assets.country">国家/地区</span><input id="asset-country-filter" type="text" placeholder="CN"></label>
+                                <label><span data-i18n="assets.province">省份/州</span><input id="asset-province-filter" type="text"></label>
+                                <label><span data-i18n="assets.city">城市</span><input id="asset-city-filter" type="text"></label>
+                                <label><span data-i18n="assets.responsiblePerson">负责人</span><input id="asset-responsible-filter" type="text"></label>
+                                <label><span data-i18n="assets.department">部门</span><input id="asset-department-filter" type="text"></label>
+                                <label><span data-i18n="assets.businessSystem">业务系统</span><input id="asset-business-filter" type="text"></label>
+                                <label><span data-i18n="assets.environment">环境</span><select id="asset-environment-filter"><option value="" data-i18n="assets.allEnvironments">全部环境</option><option value="production" data-i18n="assets.environmentProduction">生产</option><option value="staging" data-i18n="assets.environmentStaging">预发布</option><option value="testing" data-i18n="assets.environmentTesting">测试</option><option value="development" data-i18n="assets.environmentDevelopment">开发</option><option value="other" data-i18n="assets.environmentOther">其他</option></select></label>
+                                <label><span data-i18n="assets.criticality">重要性</span><select id="asset-criticality-filter"><option value="" data-i18n="assets.allCriticalities">全部级别</option><option value="critical" data-i18n="assets.criticalityCritical">核心</option><option value="high" data-i18n="assets.criticalityHigh">重要</option><option value="medium" data-i18n="assets.criticalityMedium">一般</option><option value="low" data-i18n="assets.criticalityLow">低</option></select></label>
+                                <label><span data-i18n="assets.firstSeenStart">首次发现开始</span><input id="asset-first-seen-after-filter" type="date"></label>
+                                <label><span data-i18n="assets.firstSeenEnd">首次发现结束</span><input id="asset-first-seen-before-filter" type="date"></label>
+                                <label><span data-i18n="assets.lastSeenStart">最近发现开始</span><input id="asset-last-seen-after-filter" type="date"></label>
+                                <label><span data-i18n="assets.lastSeenEnd">最近发现结束</span><input id="asset-last-seen-before-filter" type="date"></label>
+                                <label><span data-i18n="assets.sort">排序</span><select id="asset-sort-filter"><option value="last_seen_at:desc" data-i18n="assets.sortLastSeenDesc">最近发现（新到旧）</option><option value="last_scan_at:asc" data-i18n="assets.sortLastScanAsc">最久未扫描优先</option><option value="last_scan_at:desc" data-i18n="assets.sortLastScanDesc">最近扫描优先</option><option value="risk_level:desc" data-i18n="assets.sortRiskDesc">风险从高到低</option><option value="vulnerability_count:desc" data-i18n="assets.sortVulnerabilityDesc">漏洞数量从多到少</option><option value="first_seen_at:desc" data-i18n="assets.sortFirstSeenDesc">首次发现（新到旧）</option><option value="host:asc" data-i18n="assets.sortHostAsc">目标名称</option><option value="port:asc" data-i18n="assets.sortPortAsc">端口</option></select></label>
+                            </div>
+                            <div class="asset-saved-views">
+                                <select id="asset-saved-view-select" onchange="applyAssetSavedView(this.value)"><option value="" data-i18n="assets.savedViews">保存的筛选视图</option></select>
+                                <button class="btn-secondary" type="button" onclick="saveCurrentAssetView()" data-i18n="assets.saveCurrentView">保存当前视图</button>
+                                <button class="btn-link" type="button" onclick="deleteCurrentAssetView()" data-i18n="assets.deleteView">删除视图</button>
+                            </div>
                         </div>
                         <div id="asset-batch-actions" class="asset-batch-actions" hidden>
-                            <span id="asset-selected-count"></span>
-                            <button class="btn-secondary" type="button" onclick="clearAssetSelection()" data-i18n="assets.clearSelection">取消选择</button>
-                            <button class="btn-secondary" data-require-permission="asset:write" type="button" onclick="openAssetProjectModal()" data-i18n="assets.bindProject">绑定项目</button>
-                            <button class="btn-secondary" type="button" onclick="openAssetScanModal('chat')" data-i18n="assets.sendToChat">发送到对话</button>
-                            <button class="btn-primary" type="button" onclick="openAssetScanModal('task')" data-i18n="assets.createScanTask">创建扫描任务</button>
+                            <div class="asset-batch-selection" aria-live="polite">
+                                <span class="asset-batch-selection-mark" aria-hidden="true"></span>
+                                <strong id="asset-selected-count"></strong>
+                                <button class="asset-batch-text-action" type="button" onclick="clearAssetSelection()" data-i18n="assets.clearSelection">清除选择</button>
+                                <button id="asset-select-all-results" class="asset-batch-text-action asset-batch-select-all" type="button" onclick="selectAllMatchingAssets()" hidden>选择全部结果</button>
+                                <span id="asset-all-results-selected" class="asset-batch-all-selected" hidden></span>
+                            </div>
+                            <div class="asset-batch-primary-actions">
+                                <button class="btn-secondary" data-require-permission="asset:write" type="button" onclick="openAssetProjectModal()" data-i18n="assets.bindProject">绑定项目</button>
+                                <button class="btn-secondary" data-require-permission="asset:write" type="button" onclick="openAssetBulkEdit()" data-i18n="assets.bulkEdit">批量编辑</button>
+                                <button class="btn-primary" type="button" onclick="openAssetScanModal('task')" data-i18n="assets.createScanTask">创建扫描任务</button>
+                                <details id="asset-batch-more" class="asset-batch-more">
+                                    <summary class="btn-secondary" data-i18n="assets.moreActions">更多</summary>
+                                    <div class="asset-batch-menu" role="menu">
+                                        <button type="button" role="menuitem" onclick="closeAssetBatchMenu();openAssetScanModal('chat')" data-i18n="assets.sendToChat">发送到对话</button>
+                                        <div class="asset-batch-menu-separator" role="separator"></div>
+                                        <div class="asset-batch-menu-label" data-i18n="assets.export">导出</div>
+                                        <button type="button" role="menuitem" onclick="closeAssetBatchMenu();exportSelectedAssets('csv')" data-i18n="assets.exportCsv">导出 CSV</button>
+                                        <button type="button" role="menuitem" onclick="closeAssetBatchMenu();exportSelectedAssets('xlsx')" data-i18n="assets.exportXlsx">导出 XLSX</button>
+                                        <span class="asset-batch-permission-action" data-require-permission="asset:write"><button id="asset-merge-selected" type="button" role="menuitem" data-require-permission="asset:delete" onclick="closeAssetBatchMenu();mergeSelectedAssets()" data-i18n="assets.mergeDuplicates">合并重复资产</button></span>
+                                        <div class="asset-batch-menu-separator" role="separator"></div>
+                                        <button class="asset-batch-menu-danger" data-require-permission="asset:delete" type="button" role="menuitem" onclick="closeAssetBatchMenu();deleteSelectedAssets()" data-i18n="assets.batchDelete">批量删除…</button>
+                                    </div>
+                                </details>
+                            </div>
                         </div>
                         <div class="asset-list-card">
                             <div class="asset-table-wrap">
                                 <table class="asset-table">
-                                    <thead><tr><th class="asset-check-cell"><input id="asset-select-page" type="checkbox" onchange="toggleAssetPageSelection(this.checked)" data-i18n="assets.selectPage" data-i18n-attr="aria-label" aria-label="选择本页"></th><th data-i18n="assets.target">目标</th><th data-i18n="assets.service">服务</th><th data-i18n="assets.project">所属项目</th><th data-i18n="assets.lastScan">上次扫描</th><th data-i18n="assets.relatedVulnerabilities">相关漏洞</th><th data-i18n="assets.riskLevel">风险等级</th><th data-i18n="assets.status">状态</th><th data-i18n="infoCollect.actions">操作</th></tr></thead>
-                                    <tbody id="asset-table-body"><tr><td colspan="9" class="muted" data-i18n="common.noData">暂无数据</td></tr></tbody>
+                                    <thead><tr><th class="asset-check-cell"><input id="asset-select-page" class="theme-checkbox" type="checkbox" onchange="toggleAssetPageSelection(this.checked)" data-i18n="assets.selectPage" data-i18n-attr="aria-label" aria-label="选择本页"></th><th data-i18n="assets.target">目标</th><th data-i18n="assets.service">服务</th><th data-i18n="assets.project">所属项目</th><th data-i18n="assets.ownership">归属</th><th data-i18n="assets.lastScan">上次扫描</th><th data-i18n="assets.relatedVulnerabilities">相关漏洞</th><th data-i18n="assets.riskLevel">风险等级</th><th data-i18n="assets.status">状态</th><th data-i18n="infoCollect.actions">操作</th></tr></thead>
+                                    <tbody id="asset-table-body"><tr><td colspan="10" class="muted" data-i18n="common.noData">暂无数据</td></tr></tbody>
                                 </table>
                             </div>
                             <div id="asset-pagination" class="pagination-container pagination-fixed"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="asset-import-modal" class="modal asset-import-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="asset-import-title" onclick="if(event.target===this)closeAssetImport()">
+                    <div class="modal-content asset-import-content" onclick="event.stopPropagation()">
+                        <div class="modal-header">
+                            <div><h2 id="asset-import-title" data-i18n="assets.bulkImportTitle">批量导入资产</h2><p class="asset-page-subtitle" data-i18n="assets.bulkImportSubtitle">下载模板填写后上传，提交前会先校验并预览数据</p></div>
+                            <button type="button" class="modal-close" onclick="closeAssetImport()" data-i18n="common.close" data-i18n-attr="aria-label" aria-label="关闭"></button>
+                        </div>
+                        <div class="modal-body asset-import-body">
+                            <section class="asset-import-step">
+                                <div class="asset-import-step-heading"><span>1</span><div><strong data-i18n="assets.downloadTemplate">下载模板</strong><small data-i18n="assets.downloadTemplateHint">推荐 XLSX；CSV 适合从其他系统快速导出</small></div></div>
+                                <div class="asset-import-template-actions">
+                                    <button class="btn-secondary" type="button" onclick="downloadAssetTemplate('xlsx')" data-i18n="assets.downloadXlsx">下载 XLSX 模板</button>
+                                    <button class="btn-secondary" type="button" onclick="downloadAssetTemplate('csv')" data-i18n="assets.downloadCsv">下载 CSV 模板</button>
+                                </div>
+                            </section>
+                            <section class="asset-import-step">
+                                <div class="asset-import-step-heading"><span>2</span><div><strong data-i18n="assets.uploadFile">上传文件</strong><small data-i18n="assets.uploadFileHint">支持 .xlsx 和 .csv，最多 100000 行、100 MB</small></div></div>
+                                <input id="asset-import-file" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onchange="handleAssetImportFile(this.files && this.files[0])">
+                                <button id="asset-import-dropzone" class="asset-import-dropzone" type="button" onclick="document.getElementById('asset-import-file').click()">
+                                    <span class="asset-import-dropzone-icon" aria-hidden="true">⇧</span>
+                                    <strong id="asset-import-dropzone-title" data-i18n="assets.chooseOrDropFile">选择文件，或拖拽到此处</strong>
+                                    <small id="asset-import-file-name" data-i18n="assets.fileNotSelected">尚未选择文件</small>
+                                </button>
+                            </section>
+                            <section id="asset-import-preview-section" class="asset-import-step asset-import-preview-section" hidden>
+                                <div class="asset-import-step-heading"><span>3</span><div><strong data-i18n="assets.dataPreview">数据预览</strong><small id="asset-import-summary"></small></div></div>
+                                <div class="asset-import-preview-wrap">
+                                    <table class="asset-import-preview-table">
+                                        <thead><tr><th data-i18n="assets.rowNumber">行号</th><th data-i18n="assets.target">目标</th><th data-i18n="assets.project">所属项目</th><th data-i18n="assets.status">状态</th><th data-i18n="assets.validationResult">校验结果</th></tr></thead>
+                                        <tbody id="asset-import-preview-body"></tbody>
+                                    </table>
+                                </div>
+                                <p id="asset-import-preview-note" class="form-hint"></p>
+                            </section>
+                            <div id="asset-import-error" class="asset-form-error" role="alert" hidden></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn-secondary" onclick="closeAssetImport()" data-i18n="common.cancel">取消</button>
+                            <button id="asset-import-submit" type="button" class="btn-primary" data-require-permission="asset:write" onclick="submitAssetImport()" disabled data-i18n="assets.importValidRows">导入有效数据</button>
                         </div>
                     </div>
                 </div>
@@ -1818,6 +1912,23 @@
                             <p class="form-hint" data-i18n="assets.bindProjectHint">所选资产将统一绑定到该项目。</p>
                         </div>
                         <div class="modal-footer"><button type="button" class="btn-secondary" onclick="closeAssetProjectModal()" data-i18n="common.cancel">取消</button><button id="asset-project-submit" type="submit" class="btn-primary" data-require-permission="asset:write" data-i18n="assets.confirmBinding">确认绑定</button></div>
+                    </form>
+                </div>
+
+                <div id="asset-bulk-edit-modal" class="modal asset-project-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="asset-bulk-edit-title" onclick="if(event.target===this)closeAssetBulkEdit()">
+                    <form class="modal-content asset-bulk-edit-content" onsubmit="event.preventDefault();submitAssetBulkEdit()" onclick="event.stopPropagation()">
+                        <div class="modal-header"><div><h2 id="asset-bulk-edit-title">批量编辑资产</h2><p id="asset-bulk-edit-subtitle" class="asset-page-subtitle"></p></div><button type="button" class="modal-close" onclick="closeAssetBulkEdit()" aria-label="关闭"></button></div>
+                        <div class="modal-body asset-editor-grid">
+                            <label class="asset-editor-field"><span>状态（留空不修改）</span><select id="asset-bulk-status"><option value="">不修改</option><option value="active">活跃</option><option value="inactive">停用</option></select></label>
+                            <label class="asset-editor-field"><span>负责人</span><input id="asset-bulk-responsible" type="text" placeholder="留空不修改"></label>
+                            <label class="asset-editor-field"><span>部门</span><input id="asset-bulk-department" type="text" placeholder="留空不修改"></label>
+                            <label class="asset-editor-field"><span>业务系统</span><input id="asset-bulk-business" type="text" placeholder="留空不修改"></label>
+                            <label class="asset-editor-field"><span>环境（留空不修改）</span><select id="asset-bulk-environment"><option value="">不修改</option><option value="production">生产</option><option value="staging">预发布</option><option value="testing">测试</option><option value="development">开发</option><option value="other">其他</option></select></label>
+                            <label class="asset-editor-field"><span>重要性（留空不修改）</span><select id="asset-bulk-criticality"><option value="">不修改</option><option value="critical">核心</option><option value="high">重要</option><option value="medium">一般</option><option value="low">低</option></select></label>
+                            <label class="asset-editor-field"><span>增加标签</span><input id="asset-bulk-add-tags" type="text" placeholder="逗号分隔"></label>
+                            <label class="asset-editor-field"><span>移除标签</span><input id="asset-bulk-remove-tags" type="text" placeholder="逗号分隔"></label>
+                        </div>
+                        <div class="modal-footer"><button type="button" class="btn-secondary" onclick="closeAssetBulkEdit()">取消</button><button id="asset-bulk-edit-submit" type="submit" class="btn-primary" data-require-permission="asset:write">应用修改</button></div>
                     </form>
                 </div>
 
@@ -1877,6 +1988,16 @@
                                         <label class="asset-editor-field"><span data-i18n="assets.province">省份/州</span><input id="asset-edit-province" type="text" maxlength="100" placeholder="Beijing"></label>
                                         <label class="asset-editor-field"><span data-i18n="assets.city">城市</span><input id="asset-edit-city" type="text" maxlength="100" placeholder="Beijing"></label>
                                         <label class="asset-editor-field"><span data-i18n="assets.status">状态</span><select id="asset-edit-status"><option value="active" data-i18n="assets.statusActive">活跃</option><option value="inactive" data-i18n="assets.statusInactive">停用</option></select></label>
+                                    </div>
+                                </div>
+                                <div class="asset-editor-section-group">
+                                    <div class="asset-editor-group-heading"><h3 data-i18n="assets.responsibilityBusiness">责任与业务属性</h3><p data-i18n="assets.responsibilityBusinessHint">用于资产归属、运营分级与风险排序</p></div>
+                                    <div class="asset-editor-grid">
+                                        <label class="asset-editor-field"><span data-i18n="assets.responsiblePerson">负责人</span><input id="asset-edit-responsible" type="text" maxlength="255"></label>
+                                        <label class="asset-editor-field"><span data-i18n="assets.department">部门</span><input id="asset-edit-department" type="text" maxlength="255"></label>
+                                        <label class="asset-editor-field"><span data-i18n="assets.businessSystem">业务系统</span><input id="asset-edit-business" type="text" maxlength="255"></label>
+                                        <label class="asset-editor-field"><span data-i18n="assets.environment">环境</span><select id="asset-edit-environment"><option value="">未设置</option><option value="production" data-i18n="assets.environmentProduction">生产</option><option value="staging" data-i18n="assets.environmentStaging">预发布</option><option value="testing" data-i18n="assets.environmentTesting">测试</option><option value="development" data-i18n="assets.environmentDevelopment">开发</option><option value="other" data-i18n="assets.environmentOther">其他</option></select></label>
+                                        <label class="asset-editor-field"><span data-i18n="assets.criticality">重要性</span><select id="asset-edit-criticality"><option value="">未设置</option><option value="critical" data-i18n="assets.criticalityCritical">核心</option><option value="high" data-i18n="assets.criticalityHigh">重要</option><option value="medium" data-i18n="assets.criticalityMedium">一般</option><option value="low" data-i18n="assets.criticalityLow">低</option></select></label>
                                     </div>
                                 </div>
                             </section>
@@ -2222,12 +2343,13 @@
                                         </p>
                                         <span id="project-assets-count" class="projects-panel-count">0</span>
                                     </div>
-                                    <div class="projects-table-wrap">
+                                    <div class="projects-table-wrap projects-table-wrap--with-pagination">
                                         <table class="data-table data-table--projects">
                                             <thead><tr><th data-i18n="assets.target">目标</th><th data-i18n="assets.service">服务</th><th data-i18n="assets.title">标题/指纹</th><th data-i18n="assets.source">来源</th><th data-i18n="assets.lastSeen">最近发现</th><th data-i18n="assets.status">状态</th><th class="col-actions" data-i18n="common.actions">操作</th></tr></thead>
                                             <tbody id="project-assets-tbody"></tbody>
                                         </table>
                                     </div>
+                                    <div id="project-assets-pagination" class="pagination-container pagination-fixed projects-panel-pagination"></div>
                                 </div>
                                 <div id="project-panel-conversations" class="projects-panel" role="tabpanel" hidden>
                                     <div class="projects-panel-toolbar projects-panel-toolbar--hint">
@@ -3183,7 +3305,7 @@
                                     <span data-i18n="settings.nav.hitl">人机协同</span>
                                 </div>
                                 <div class="settings-nav-item" data-section="infocollect" onclick="switchSettingsSection('infocollect')">
-                                    <span data-i18n="settings.nav.infocollect">信息收集</span>
+                                    <span data-i18n="settings.nav.infocollect">资产管理</span>
                                 </div>
                                 <div class="settings-nav-item" data-section="knowledge" onclick="switchSettingsSection('knowledge')">
                                     <span data-i18n="settings.nav.knowledge">知识库</span>
@@ -3533,24 +3655,21 @@
                                 </div>
                             </div>
 
-                            <!-- 信息收集设置 -->
+                            <!-- 资产管理设置 -->
                             <div id="settings-section-infocollect" class="settings-section-content">
                                 <div class="settings-section-header">
-                                    <h3 data-i18n="settings.infocollect.title">信息收集</h3>
+                                    <h3 data-i18n="settings.infocollect.title">资产管理</h3>
                                 </div>
 
                                 <!-- FOFA配置 -->
                                 <div class="settings-subsection">
                                     <h4 data-i18n="settingsBasic.fofaConfig">FOFA 配置</h4>
+                                    <p class="form-hint" data-i18n="settingsBasic.fofaConfigHint">用于资产发现与导入，仅需配置 API Key。</p>
                                     <div class="settings-form">
                                         <div class="form-group">
                                             <label for="fofa-base-url">Base URL</label>
                                             <input type="text" id="fofa-base-url" data-i18n="settingsBasic.fofaBaseUrlPlaceholder" data-i18n-attr="placeholder" placeholder="https://fofa.info/api/v1/search/all（可选）" />
                                             <small class="form-hint" data-i18n="settingsBasic.fofaBaseUrlHint">留空则使用默认地址。</small>
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="fofa-email" data-i18n="settingsBasic.email">Email</label>
-                                            <input type="text" id="fofa-email" data-i18n="settingsBasic.fofaEmailPlaceholder" data-i18n-attr="placeholder" placeholder="输入 FOFA 账号邮箱" autocomplete="off" />
                                         </div>
                                         <div class="form-group">
                                             <label for="fofa-api-key">API Key</label>
@@ -5385,7 +5504,7 @@
                 <div class="batch-conversations-table">
                     <div class="batch-table-header">
                         <div class="batch-table-col-checkbox">
-                            <input type="checkbox" id="batch-select-all" onchange="toggleSelectAllBatch()" data-i18n="batchManageModal.selectAll" data-i18n-attr="title" title="全选" />
+                            <input type="checkbox" id="batch-select-all" class="theme-checkbox" onchange="toggleSelectAllBatch()" data-i18n="batchManageModal.selectAll" data-i18n-attr="title" title="全选" />
                         </div>
                         <div class="batch-table-col-name" data-i18n="batchManageModal.conversationName">对话名称</div>
                         <div class="batch-table-col-project" data-i18n="batchManageModal.project">项目</div>
@@ -6284,15 +6403,15 @@
     <script src="/static/js/auth.js"></script>
     <script src="/static/js/modal.js"></script>
     <script src="/static/js/notifications.js"></script>
-    <script src="/static/js/info-collect.js"></script>
-    <script src="/static/js/assets.js?v=20260716-10"></script>
+    <script src="/static/js/info-collect.js?v=20260717-1"></script>
+    <script src="/static/js/assets.js?v=20260717-5"></script>
     <script src="/static/js/agents.js"></script>
     <script src="/static/js/dashboard.js"></script>
     <script src="/static/js/chat-scroll.js"></script>
-    <script src="/static/js/monitor.js"></script>
-    <script src="/static/js/chat.js"></script>
+    <script src="/static/js/monitor.js?v=20260717-1"></script>
+    <script src="/static/js/chat.js?v=20260717-1"></script>
     <script src="/static/js/hitl.js"></script>
-    <script src="/static/js/settings.js"></script>
+    <script src="/static/js/settings.js?v=20260717-1"></script>
     <script src="/static/js/audit-datetime-picker.js"></script>
     <script src="/static/js/audit.js"></script>
     <script src="/static/js/wechat-robot.js"></script>
@@ -6302,7 +6421,7 @@
     <script src="/static/js/knowledge.js"></script>
     <script src="/static/js/skills.js"></script>
     <script src="/static/js/fact-graph.js"></script>
-    <script src="/static/js/projects.js"></script>
+    <script src="/static/js/projects.js?v=20260717-1"></script>
     <script src="/static/js/vulnerability.js?v=14"></script>
     <script src="/static/js/webshell.js"></script>
     <script src="/static/js/chat-files.js"></script>
@@ -6312,6 +6431,6 @@
     <script src="/static/js/roles.js"></script>
     <script src="/static/js/rbac.js"></script>
     <script src="/static/js/c2.js"></script>
-    <script src="/static/js/rbac-guards.js"></script>
+    <script src="/static/js/rbac-guards.js?v=20260717-1"></script>
 </body>
 </html>

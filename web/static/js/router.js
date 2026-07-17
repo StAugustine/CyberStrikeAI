@@ -1,5 +1,5 @@
 // 页面路由管理
-let currentPage = 'dashboard';
+let currentPage = null;
 
 /** chat、漏洞管理页在切换时保留当前 hash 上的查询串（如 ?conversation= / ?conversation_id=） */
 function buildHashForPage(pageId) {
@@ -96,6 +96,19 @@ function initRouter() {
 
 // 切换页面
 function switchPage(pageId) {
+    const targetPage = document.getElementById(`page-${pageId}`);
+    if (!targetPage) return;
+
+    // 导航点击会修改 hash，随后浏览器还会触发 hashchange。
+    // 同一页面已经激活时不再重复初始化，避免接口重复请求和页面二次重绘。
+    if (currentPage === pageId && targetPage.classList.contains('active')) {
+        const currentHash = buildHashForPage(pageId);
+        if (window.location.hash.slice(1) !== currentHash) {
+            window.location.hash = currentHash;
+        }
+        return;
+    }
+
     if (typeof window.syncC2NavOnceFromServer === 'function') {
         void window.syncC2NavOnceFromServer();
     }
@@ -105,25 +118,22 @@ function switchPage(pageId) {
     });
     
     // 显示目标页面
-    const targetPage = document.getElementById(`page-${pageId}`);
-    if (targetPage) {
-        targetPage.classList.add('active');
-        currentPage = pageId;
+    targetPage.classList.add('active');
+    currentPage = pageId;
         
-        const newHash = buildHashForPage(pageId);
-        if (window.location.hash.slice(1) !== newHash) {
-            window.location.hash = newHash;
-        }
+    const newHash = buildHashForPage(pageId);
+    if (window.location.hash.slice(1) !== newHash) {
+        window.location.hash = newHash;
+    }
         
-        // 更新导航状态
-        updateNavState(pageId);
+    // 更新导航状态
+    updateNavState(pageId);
         
-        // 页面特定的初始化
-        initPage(pageId);
+    // 页面特定的初始化
+    initPage(pageId);
 
-        if (typeof applyRBACToUI === 'function') {
-            applyRBACToUI(targetPage);
-        }
+    if (typeof applyRBACToUI === 'function') {
+        applyRBACToUI(targetPage);
     }
 }
 window.switchPage = switchPage;

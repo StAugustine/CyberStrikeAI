@@ -2377,11 +2377,19 @@ async function syncAssistantReasoningContentFromServer(backendMessageId, domAssi
         const msg = conv.messages.find((m) => m && String(m.id) === String(backendMessageId));
         if (!msg || !msg.reasoningContent) return;
         setMessageReasoningContent(domAssistantId, msg.reasoningContent);
-        const pdRes = await apiFetch(`/api/messages/${encodeURIComponent(String(backendMessageId))}/process-details`);
-        const pdJson = await pdRes.json().catch(() => ({}));
-        const details = pdRes.ok && Array.isArray(pdJson.processDetails) ? pdJson.processDetails : [];
-        if (typeof renderProcessDetails === 'function') {
-            renderProcessDetails(domAssistantId, details);
+        // 最终回复到达后同样必须完整恢复过程详情；无参数接口默认仅返回前 50 条，
+        // 否则这里会把 task-events 恢复出的完整时间线再次覆盖成第一页。
+        if (typeof window.loadProcessDetailsPaginated === 'function') {
+            await window.loadProcessDetailsPaginated(domAssistantId, String(backendMessageId));
+        } else {
+            const pdRes = await apiFetch(
+                `/api/messages/${encodeURIComponent(String(backendMessageId))}/process-details?full=1`
+            );
+            const pdJson = await pdRes.json().catch(() => ({}));
+            const details = pdRes.ok && Array.isArray(pdJson.processDetails) ? pdJson.processDetails : [];
+            if (typeof renderProcessDetails === 'function') {
+                renderProcessDetails(domAssistantId, details);
+            }
         }
     } catch (e) {
         console.warn('syncAssistantReasoningContentFromServer failed', e);
@@ -4151,7 +4159,7 @@ async function prefetchLastAssistantProcessDetails() {
         await window.loadProcessDetailsPaginated(last.id, backendId);
         return;
     }
-    const res = await apiFetch('/api/messages/' + encodeURIComponent(String(backendId)) + '/process-details');
+    const res = await apiFetch('/api/messages/' + encodeURIComponent(String(backendId)) + '/process-details?full=1');
     const j = await res.json().catch(() => ({}));
     if (!res.ok || !Array.isArray(j.processDetails) || j.processDetails.length === 0) return;
     if (typeof renderProcessDetails === 'function') {
@@ -9374,7 +9382,7 @@ function renderBatchConversations(filtered = null) {
 
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.className = 'batch-conversation-checkbox';
+        checkbox.className = 'batch-conversation-checkbox theme-checkbox';
         checkbox.dataset.conversationId = conv.id;
         checkbox.addEventListener('change', syncSelectAllBatchCheckbox);
 

@@ -41,7 +41,10 @@ function buildApiSpecTagToKey() {
 function translateApiDocTag(tag) {
     if (!tag) return tag;
     var key = apiSpecTagToKey[tag];
-    return key ? _t('apiDocs.tags.' + key) : tag;
+    if (!key) return tag;
+    var i18nKey = 'apiDocs.tags.' + key;
+    var translated = _t(i18nKey);
+    return translated === i18nKey ? tag : translated;
 }
 function translateApiDocSummaryFromOp(op) {
     var key = op && op['x-i18n-summary'];

@@ -506,7 +506,7 @@ function renderFofaResults(payload) {
 
     // 表头（左：勾选列；右：操作列固定）
     const headerCells = [
-        '<th class="info-collect-col-select"><input type="checkbox" id="fofa-select-all" title="' + escapeHtml(_t('infoCollect.selectAll')) + '"/></th>',
+        '<th class="info-collect-col-select"><input type="checkbox" id="fofa-select-all" class="theme-checkbox" title="' + escapeHtml(_t('infoCollect.selectAll')) + '"/></th>',
         ...visibleFields.map(f => `<th>${escapeHtml(String(f))}</th>`),
         '<th class="info-collect-col-actions">' + escapeHtml(_t('infoCollect.actions')) + '</th>'
     ].join('');
@@ -525,7 +525,7 @@ function renderFofaResults(payload) {
         const encoded = encodeURIComponent(JSON.stringify(safeRow));
         const encodedTarget = encodeURIComponent(target || '');
 
-        const selectHtml = '<td class="info-collect-col-select"><input class="fofa-row-select" type="checkbox" data-index="' + idx + '" title="' + escapeHtml(_t('infoCollect.selectRow')) + '"/></td>';
+        const selectHtml = '<td class="info-collect-col-select"><input class="fofa-row-select theme-checkbox" type="checkbox" data-index="' + idx + '" title="' + escapeHtml(_t('infoCollect.selectRow')) + '"/></td>';
 
         const cellsHtml = visibleFields.map(f => {
             const val = safeRow[f];

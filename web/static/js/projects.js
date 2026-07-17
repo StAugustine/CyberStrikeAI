@@ -8,6 +8,20 @@ let currentProjectId = null;
 let currentProjectUpdatedAt = null;
 let currentProjectTab = 'facts';
 let currentProjectAssets = [];
+const PROJECT_ASSETS_PAGE_SIZE_KEY = 'cyberstrike.project_assets_page_size';
+let projectAssetsPagination = {
+    page: 1,
+    pageSize: (() => {
+        try {
+            const size = Number(localStorage.getItem(PROJECT_ASSETS_PAGE_SIZE_KEY));
+            return [10, 20, 50, 100].includes(size) ? size : 20;
+        } catch (e) {
+            return 20;
+        }
+    })(),
+    total: 0,
+    totalPages: 1,
+};
 const projectNameById = {};
 let _projectsListReady = false;
 let _projectsFetchPromise = null;
@@ -974,6 +988,7 @@ function updateProjectStats(stats) {
 
 async function selectProject(id) {
     currentProjectId = id;
+    projectAssetsPagination.page = 1;
     const searchEl = document.getElementById('project-facts-search');
     const catEl = document.getElementById('project-facts-filter-category');
     const confEl = document.getElementById('project-facts-filter-confidence');
@@ -1032,24 +1047,40 @@ function switchProjectTab(tab) {
     if (tab === 'vulns') loadProjectVulnerabilities();
 }
 
-async function loadProjectAssets() {
+async function loadProjectAssets(page) {
     const tbody = document.getElementById('project-assets-tbody');
     const countEl = document.getElementById('project-assets-count');
     if (!tbody || !currentProjectId) return;
+    const requestedPage = Math.max(1, Number(page || projectAssetsPagination.page || 1));
+    projectAssetsPagination.page = requestedPage;
     tbody.innerHTML = `<tr class="is-empty-row"><td colspan="7">${escapeHtml(tpFmt('common.loading', '加载中...'))}</td></tr>`;
-    const qs = new URLSearchParams({ project_id: currentProjectId, page: '1', page_size: '100' });
+    const qs = new URLSearchParams({
+        project_id: currentProjectId,
+        page: String(requestedPage),
+        page_size: String(projectAssetsPagination.pageSize),
+    });
     const res = await apiFetch(`/api/assets?${qs.toString()}`);
     if (!res.ok) {
         currentProjectAssets = [];
+        projectAssetsPagination.total = 0;
+        projectAssetsPagination.totalPages = 1;
         if (countEl) countEl.textContent = '0';
         tbody.innerHTML = `<tr class="is-empty-row"><td colspan="7">${escapeHtml(tpFmt('common.loadFailed', '加载失败'))}</td></tr>`;
+        renderProjectAssetsPagination();
         return;
     }
     const data = await res.json();
     currentProjectAssets = data.assets || [];
+    projectAssetsPagination.page = Number(data.page || requestedPage);
+    projectAssetsPagination.total = Number(data.total || 0);
+    projectAssetsPagination.totalPages = Math.max(1, Number(data.total_pages || 1));
+    if (projectAssetsPagination.page > projectAssetsPagination.totalPages) {
+        return loadProjectAssets(projectAssetsPagination.totalPages);
+    }
     if (countEl) countEl.textContent = tpFmt('projects.assetCount', `${data.total || 0} 个资产`, { count: data.total || 0 });
     if (!currentProjectAssets.length) {
         tbody.innerHTML = `<tr class="is-empty-row"><td colspan="7">${escapeHtml(tpFmt('projects.noBoundAssets', '暂无绑定到此项目的资产'))}</td></tr>`;
+        renderProjectAssetsPagination();
         return;
     }
     tbody.innerHTML = currentProjectAssets.map((asset, index) => {
@@ -1068,6 +1099,47 @@ async function loadProjectAssets() {
             <td class="col-actions"><div class="projects-table-actions"><button type="button" class="projects-action-btn projects-action-btn--view" onclick="openProjectAssetDetail(${index})">${escapeHtml(tpFmt('common.view', '查看'))}</button></div></td>
         </tr>`;
     }).join('');
+    renderProjectAssetsPagination();
+    const tableWrap = document.querySelector('#project-panel-assets .projects-table-wrap');
+    if (tableWrap) tableWrap.scrollTop = 0;
+}
+
+function renderProjectAssetsPagination() {
+    const root = document.getElementById('project-assets-pagination');
+    if (!root) return;
+    const { page, pageSize, total, totalPages } = projectAssetsPagination;
+    const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+    const end = total === 0 ? 0 : Math.min(page * pageSize, total);
+    const atFirst = page <= 1 || total === 0;
+    const atLast = page >= totalPages || total === 0;
+    root.innerHTML = `<div class="pagination">
+        <div class="pagination-info">
+            <span>${escapeHtml(tpFmt('projects.paginationShow', `显示 ${start}-${end} / 共 ${total}`, { start, end, total }))}</span>
+            <label class="pagination-page-size">${escapeHtml(tpFmt('projects.paginationPerPage', '每页显示'))}
+                <select id="project-assets-page-size" onchange="changeProjectAssetsPageSize(this.value)">
+                    ${[10, 20, 50, 100].map(size => `<option value="${size}" ${size === pageSize ? 'selected' : ''}>${size}</option>`).join('')}
+                </select>
+            </label>
+        </div>
+        <div class="pagination-controls">
+            <button type="button" class="btn-secondary" onclick="loadProjectAssets(1)" ${atFirst ? 'disabled' : ''}>${escapeHtml(tpFmt('skillsPage.firstPage', '首页'))}</button>
+            <button type="button" class="btn-secondary" onclick="loadProjectAssets(${Math.max(1, page - 1)})" ${atFirst ? 'disabled' : ''}>${escapeHtml(tpFmt('projects.paginationPrev', '上一页'))}</button>
+            <span class="pagination-page">${escapeHtml(tpFmt('skillsPage.pageOf', `第 ${page} / ${totalPages} 页`, { current: page, total: totalPages }))}</span>
+            <button type="button" class="btn-secondary" onclick="loadProjectAssets(${Math.min(totalPages, page + 1)})" ${atLast ? 'disabled' : ''}>${escapeHtml(tpFmt('projects.paginationNext', '下一页'))}</button>
+            <button type="button" class="btn-secondary" onclick="loadProjectAssets(${totalPages})" ${atLast ? 'disabled' : ''}>${escapeHtml(tpFmt('skillsPage.lastPage', '尾页'))}</button>
+        </div>
+    </div>`;
+}
+
+function changeProjectAssetsPageSize(value) {
+    const size = Number(value);
+    if (![10, 20, 50, 100].includes(size)) return;
+    projectAssetsPagination.pageSize = size;
+    projectAssetsPagination.page = 1;
+    try {
+        localStorage.setItem(PROJECT_ASSETS_PAGE_SIZE_KEY, String(size));
+    } catch (e) { /* ignore */ }
+    loadProjectAssets(1);
 }
 
 function openProjectAssetDetail(index) {

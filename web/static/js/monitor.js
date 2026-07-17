@@ -1375,11 +1375,19 @@ function integrateProgressToMCPSection(progressId, assistantMessageId, mcpExecut
 }
 
 const PROCESS_DETAILS_PAGE_SIZE = 50;
+const processDetailsAutoLoadObservers = new WeakMap();
 
-function getProcessDetailsLoadMoreLabel(hasMore) {
-    if (!hasMore) return '';
-    return (typeof window.t === 'function' ? window.t('common.loadMore') : '加载更多') + ' · ' +
-        (typeof window.t === 'function' ? window.t('chat.penetrationTestDetail') : '任务执行详情');
+function processDetailsContinuousLabel(kind) {
+    if (kind === 'older') {
+        return typeof window.t === 'function' ? window.t('chat.loadingEarlierDetails') : '正在加载更早记录…';
+    }
+    if (kind === 'newer') {
+        return typeof window.t === 'function' ? window.t('chat.loadingLaterDetails') : '正在加载更新记录…';
+    }
+    if (kind === 'retry') {
+        return typeof window.t === 'function' ? window.t('common.retry') : '加载失败，点击重试';
+    }
+    return '';
 }
 
 function updateProcessDetailsLoadMoreButton(assistantMessageId, backendMessageId, hasMore) {
@@ -1389,79 +1397,171 @@ function updateProcessDetailsLoadMoreButton(assistantMessageId, backendMessageId
     });
 }
 
+function disconnectProcessDetailsAutoLoader(detailsContainer) {
+    if (!detailsContainer) return;
+    const old = processDetailsAutoLoadObservers.get(detailsContainer);
+    if (old) {
+        old.disconnect();
+        processDetailsAutoLoadObservers.delete(detailsContainer);
+    }
+}
+
+function scrollProcessDetailsToLatest(assistantMessageId, smooth) {
+    const detailsContainer = document.getElementById('process-details-' + assistantMessageId);
+    if (!detailsContainer) return;
+    const timeline = detailsContainer.querySelector('.progress-timeline');
+    if (!timeline) return;
+    const behavior = smooth === false ? 'auto' : 'smooth';
+    if (timeline.scrollHeight > timeline.clientHeight + 2) {
+        timeline.scrollTo({ top: timeline.scrollHeight, behavior: behavior });
+        return;
+    }
+    const items = timeline.querySelectorAll('.timeline-item');
+    if (!items.length) return;
+    const lastItem = items[items.length - 1];
+    lastItem.scrollIntoView({ behavior: behavior, block: 'nearest' });
+}
+
+function updateProcessDetailsJumpLatestVisibility(detailsContainer) {
+    if (!detailsContainer) return;
+    const btn = detailsContainer.querySelector('.process-details-jump-latest');
+    const timeline = detailsContainer.querySelector('.progress-timeline');
+    if (!btn || !timeline) return;
+    const hasUnloadedNewer = detailsContainer.dataset.hasNext === '1';
+    const awayFromTimelineBottom = timeline.scrollHeight - timeline.clientHeight - timeline.scrollTop > 120;
+    btn.classList.toggle('visible', hasUnloadedNewer || awayFromTimelineBottom);
+}
+
+async function requestProcessDetailsAutoPage(assistantMessageId, backendMessageId, direction, sentinel) {
+    const detailsContainer = document.getElementById('process-details-' + assistantMessageId);
+    if (!detailsContainer || !sentinel) return;
+    const loadingKey = direction === 'prev' ? 'loadingPrev' : 'loadingMore';
+    const hasKey = direction === 'prev' ? 'hasPrev' : 'hasNext';
+    if (detailsContainer.dataset[hasKey] !== '1' || detailsContainer.dataset[loadingKey] === '1') return;
+    detailsContainer.dataset[loadingKey] = '1';
+    sentinel.classList.add('is-loading');
+    sentinel.textContent = processDetailsContinuousLabel(direction === 'prev' ? 'older' : 'newer');
+    try {
+        await loadProcessDetailsPaginated(assistantMessageId, backendMessageId, {
+            prepend: direction === 'prev',
+            append: direction === 'next',
+            autoLoadAll: false
+        });
+    } catch (e) {
+        console.error('自动加载过程详情失败:', e);
+        sentinel.classList.remove('is-loading');
+        sentinel.classList.add('is-error');
+        sentinel.textContent = processDetailsContinuousLabel('retry');
+        sentinel.onclick = function () {
+            sentinel.onclick = null;
+            sentinel.classList.remove('is-error');
+            requestProcessDetailsAutoPage(assistantMessageId, backendMessageId, direction, sentinel);
+        };
+    } finally {
+        detailsContainer.dataset[loadingKey] = '0';
+    }
+}
+
 function updateProcessDetailsPaginationButtons(assistantMessageId, backendMessageId, pageState) {
     const detailsContainer = document.getElementById('process-details-' + assistantMessageId);
     if (!detailsContainer) return;
+    const timeline = detailsContainer.querySelector('.progress-timeline');
+    if (!timeline) return;
     const state = pageState || {};
+    detailsContainer.dataset.hasPrev = state.hasPrev ? '1' : '0';
+    detailsContainer.dataset.hasNext = state.hasNext ? '1' : '0';
 
-    let prevBtn = detailsContainer.querySelector('.process-details-load-prev-btn');
-    if (!state.hasPrev) {
-        if (prevBtn) prevBtn.remove();
-    } else {
-        if (!prevBtn) {
-            prevBtn = document.createElement('button');
-            prevBtn.type = 'button';
-            prevBtn.className = 'mcp-detail-btn process-details-load-prev-btn';
-            const content = detailsContainer.querySelector('.process-details-content');
-            if (content) {
-                detailsContainer.insertBefore(prevBtn, content);
-            } else {
-                detailsContainer.prepend(prevBtn);
-            }
-        }
-        const loadMoreText = typeof window.t === 'function' ? window.t('common.loadMore') : '加载更多';
-        let prevPageText = typeof window.t === 'function' ? window.t('chat.previousPage') : '上一页';
-        if (!prevPageText || prevPageText === 'chat.previousPage') prevPageText = '上一页';
-        prevBtn.textContent = loadMoreText + ' · ' + prevPageText;
-        prevBtn.disabled = false;
-        prevBtn.onclick = async () => {
-            if (detailsContainer.dataset.loadingPrev === '1') return;
-            detailsContainer.dataset.loadingPrev = '1';
-            prevBtn.disabled = true;
-            prevBtn.textContent = typeof window.t === 'function' ? window.t('common.loading') : '加载中…';
-            try {
-                await loadProcessDetailsPaginated(assistantMessageId, backendMessageId, {
-                    prepend: true,
-                    autoLoadAll: false
-                });
-            } finally {
-                detailsContainer.dataset.loadingPrev = '0';
-            }
-        };
+    detailsContainer.querySelectorAll('.process-details-load-prev-btn, .process-details-load-more-btn').forEach(function (el) {
+        el.remove();
+    });
+    timeline.querySelectorAll('.process-details-auto-sentinel').forEach(function (el) {
+        el.remove();
+    });
+    disconnectProcessDetailsAutoLoader(detailsContainer);
+
+    let topSentinel = null;
+    let bottomSentinel = null;
+    if (state.hasPrev) {
+        topSentinel = document.createElement('button');
+        topSentinel.type = 'button';
+        topSentinel.className = 'process-details-auto-sentinel process-details-auto-sentinel--top';
+        topSentinel.setAttribute('aria-label', processDetailsContinuousLabel('older'));
+        topSentinel.textContent = processDetailsContinuousLabel('older');
+        timeline.prepend(topSentinel);
+    }
+    if (state.hasNext) {
+        bottomSentinel = document.createElement('button');
+        bottomSentinel.type = 'button';
+        bottomSentinel.className = 'process-details-auto-sentinel process-details-auto-sentinel--bottom';
+        bottomSentinel.setAttribute('aria-label', processDetailsContinuousLabel('newer'));
+        bottomSentinel.textContent = processDetailsContinuousLabel('newer');
+        timeline.appendChild(bottomSentinel);
     }
 
-    let nextBtn = detailsContainer.querySelector('.process-details-load-more-btn');
-    if (!state.hasNext) {
-        if (nextBtn) nextBtn.remove();
-        return;
+    let jumpBtn = detailsContainer.querySelector('.process-details-jump-latest');
+    if (!jumpBtn) {
+        jumpBtn = document.createElement('button');
+        jumpBtn.type = 'button';
+        jumpBtn.className = 'process-details-jump-latest';
+        jumpBtn.textContent = typeof window.t === 'function' ? window.t('chat.backToLatestProgress') : '↓ 回到最新进度';
+        detailsContainer.appendChild(jumpBtn);
     }
-    if (!nextBtn) {
-        nextBtn = document.createElement('button');
-        nextBtn.type = 'button';
-        nextBtn.className = 'mcp-detail-btn process-details-load-more-btn';
-        detailsContainer.appendChild(nextBtn);
-    }
-    nextBtn.textContent = getProcessDetailsLoadMoreLabel(true);
-    nextBtn.disabled = false;
-    nextBtn.onclick = async () => {
-        if (detailsContainer.dataset.loadingMore === '1') return;
-        detailsContainer.dataset.loadingMore = '1';
-        nextBtn.disabled = true;
-        nextBtn.textContent = typeof window.t === 'function' ? window.t('common.loading') : '加载中…';
-        try {
+    jumpBtn.onclick = async function () {
+        if (detailsContainer.dataset.hasNext === '1') {
             await loadProcessDetailsPaginated(assistantMessageId, backendMessageId, {
-                append: true,
-                autoLoadAll: false
+                autoLoadAll: false,
+                initialLatest: true
             });
-        } finally {
-            detailsContainer.dataset.loadingMore = '0';
         }
+        requestAnimationFrame(function () {
+            scrollProcessDetailsToLatest(assistantMessageId, true);
+            updateProcessDetailsJumpLatestVisibility(detailsContainer);
+        });
     };
+
+    if (timeline.dataset.continuousScrollBound !== '1') {
+        timeline.dataset.continuousScrollBound = '1';
+        timeline.addEventListener('scroll', function () {
+            updateProcessDetailsJumpLatestVisibility(detailsContainer);
+        }, { passive: true });
+    }
+
+    if (typeof IntersectionObserver === 'function' && (topSentinel || bottomSentinel)) {
+        const root = document.getElementById('chat-messages') || null;
+        const observer = new IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+                if (!entry.isIntersecting) return;
+                if (detailsContainer.dataset.autoLoadSuspended === '1') return;
+                if (entry.target === topSentinel) {
+                    requestProcessDetailsAutoPage(assistantMessageId, backendMessageId, 'prev', topSentinel);
+                } else if (entry.target === bottomSentinel) {
+                    requestProcessDetailsAutoPage(assistantMessageId, backendMessageId, 'next', bottomSentinel);
+                }
+            });
+        }, { root: root, rootMargin: '180px 0px', threshold: 0.01 });
+        if (topSentinel) observer.observe(topSentinel);
+        if (bottomSentinel) observer.observe(bottomSentinel);
+        processDetailsAutoLoadObservers.set(detailsContainer, observer);
+    } else {
+        if (topSentinel) {
+            topSentinel.textContent = typeof window.t === 'function' ? window.t('common.loadMore') : '加载更早记录';
+            topSentinel.onclick = function () {
+                requestProcessDetailsAutoPage(assistantMessageId, backendMessageId, 'prev', topSentinel);
+            };
+        }
+        if (bottomSentinel) {
+            bottomSentinel.textContent = typeof window.t === 'function' ? window.t('common.loadMore') : '加载更新记录';
+            bottomSentinel.onclick = function () {
+                requestProcessDetailsAutoPage(assistantMessageId, backendMessageId, 'next', bottomSentinel);
+            };
+        }
+    }
+    updateProcessDetailsJumpLatestVisibility(detailsContainer);
 }
 
 /**
  * 分页加载过程详情并增量渲染。默认全量加载供恢复流程使用；
- * 用户手动展开时传 autoLoadAll=false，只加载一页并展示“加载更多”。
+ * 用户手动展开时由任务状态选择首个历史页或最新页，滚动到边界后自动加载相邻页。
  */
 async function loadProcessDetailsPaginated(assistantMessageId, backendMessageId, options) {
     if (!assistantMessageId || !backendMessageId || typeof apiFetch !== 'function' || typeof renderProcessDetails !== 'function') {
@@ -1481,6 +1581,21 @@ async function loadProcessDetailsPaginated(assistantMessageId, backendMessageId,
         ? parseInt(detailsContainer.dataset.nextOffset, 10) || 0
         : 0;
     const anchorId = opts.anchorId != null ? String(opts.anchorId).trim() : '';
+    if (opts.initialLatest && !prepend && !opts.append && !anchorId) {
+        if (detailsContainer) {
+            // 初页渲染完成前禁止顶部哨兵抢先触发；定位到底部后再开放自动加载。
+            detailsContainer.dataset.autoLoadSuspended = '1';
+        }
+        const summaryRes = await apiFetch(
+            '/api/messages/' + encodeURIComponent(String(backendMessageId)) + '/process-details?summary=1'
+        );
+        const summaryJSON = await summaryRes.json().catch(() => ({}));
+        if (!summaryRes.ok) {
+            throw new Error((summaryJSON && summaryJSON.error) ? summaryJSON.error : String(summaryRes.status));
+        }
+        const total = summaryJSON && summaryJSON.summary && Number(summaryJSON.summary.total);
+        offset = Number.isFinite(total) ? Math.max(0, total - PAGE) : 0;
+    }
     let isFirst = !opts.append;
     while (true) {
         const params = new URLSearchParams();
@@ -1507,6 +1622,9 @@ async function loadProcessDetailsPaginated(assistantMessageId, backendMessageId,
             markLoaded: autoLoadAll ? !hasMore : true,
             toolExecutions: toolExecutions
         });
+        // renderProcessDetails 对大页分帧渲染；等待一帧后再放置顶部/底部哨兵，
+        // 避免哨兵被后续批次插到时间线中间。
+        await new Promise((resolve) => requestAnimationFrame(resolve));
         const responseOffset = j && typeof j.offset === 'number' ? j.offset : offset;
         const total = j && typeof j.total === 'number' ? j.total : responseOffset + details.length;
         const nextOffset = prepend && existingNextOffset > 0
@@ -1519,6 +1637,7 @@ async function loadProcessDetailsPaginated(assistantMessageId, backendMessageId,
             detailsContainer.dataset.loaded = hasMore ? 'partial' : '1';
             detailsContainer.dataset.prevOffset = String(prevOffset);
             detailsContainer.dataset.nextOffset = String(nextOffset);
+            detailsContainer.dataset.total = String(total);
         }
         updateProcessDetailsPaginationButtons(assistantMessageId, backendMessageId, {
             hasPrev: !autoLoadAll && responseOffset > 0,
@@ -1530,9 +1649,37 @@ async function loadProcessDetailsPaginated(assistantMessageId, backendMessageId,
         isFirst = false;
         await new Promise((resolve) => requestAnimationFrame(resolve));
     }
+    if (opts.initialLatest) {
+        requestAnimationFrame(function () {
+            scrollProcessDetailsToLatest(assistantMessageId, false);
+            if (detailsContainer) {
+                delete detailsContainer.dataset.autoLoadSuspended;
+            }
+        });
+    } else if (opts.initialStart) {
+        requestAnimationFrame(function () {
+            const container = document.getElementById('process-details-' + assistantMessageId);
+            const timeline = container && container.querySelector('.progress-timeline');
+            if (timeline) timeline.scrollTop = 0;
+        });
+    }
 }
 
 window.loadProcessDetailsPaginated = loadProcessDetailsPaginated;
+
+function shouldInitiallyOpenProcessDetailsAtLatest(assistantMessageId, detailsContainer) {
+    if (!detailsContainer) return false;
+    // task-events 恢复流会明确给当前详情容器打 is-streaming 标记。
+    if (detailsContainer.classList.contains('is-streaming')) return true;
+    try {
+        const replay = window.__csTaskEventStream;
+        if (replay && replay.active && String(replay.assistantDomId || '') === String(assistantMessageId || '')) {
+            return true;
+        }
+    } catch (e) { /* ignore */ }
+    // 其余情况按终态/历史详情处理，从第一条开始，便于顺序复盘。
+    return false;
+}
 
 function resolveEventBackendMessageId(eventData) {
     if (!eventData || typeof eventData !== 'object') return '';
@@ -1549,7 +1696,12 @@ function triggerLazyProcessDetailsLoad(assistantMessageId, backendMessageId, det
     if (timeline) {
         timeline.innerHTML = '<div class="progress-timeline-empty">' + ((typeof window.t === 'function') ? window.t('common.loading') : '加载中…') + '</div>';
     }
-    loadProcessDetailsPaginated(assistantMessageId, backendMessageId, { autoLoadAll: false })
+    const openAtLatest = shouldInitiallyOpenProcessDetailsAtLatest(assistantMessageId, detailsContainer);
+    loadProcessDetailsPaginated(assistantMessageId, backendMessageId, {
+        autoLoadAll: false,
+        initialLatest: openAtLatest,
+        initialStart: !openAtLatest
+    })
         .catch((e) => {
             console.error('加载过程详情失败:', e);
             const tl = detailsContainer.querySelector('.progress-timeline');
@@ -3146,7 +3298,7 @@ async function restoreWorkflowHitlInlineForConversation(conversationId) {
                 if (typeof loadProcessDetailsPaginated === 'function') {
                     await loadProcessDetailsPaginated(clientMsgId, backendMsgId);
                 } else if (typeof apiFetch === 'function' && backendMsgId) {
-                    const res = await apiFetch('/api/messages/' + encodeURIComponent(backendMsgId) + '/process-details');
+                    const res = await apiFetch('/api/messages/' + encodeURIComponent(backendMsgId) + '/process-details?full=1');
                     const j = await res.json().catch(function () { return {}; });
                     if (res.ok && typeof renderProcessDetails === 'function') {
                         renderProcessDetails(clientMsgId, (j && Array.isArray(j.processDetails)) ? j.processDetails : []);
@@ -3278,7 +3430,7 @@ async function restoreHitlInlineForConversation(conversationId) {
                     if (typeof loadProcessDetailsPaginated === 'function') {
                         await loadProcessDetailsPaginated(clientMsgId, backendMsgId);
                     } else {
-                        const res = await apiFetch('/api/messages/' + encodeURIComponent(backendMsgId) + '/process-details');
+                        const res = await apiFetch('/api/messages/' + encodeURIComponent(backendMsgId) + '/process-details?full=1');
                         const j = await res.json().catch(function () { return {}; });
                         if (!res.ok) throw new Error((j && j.error) ? j.error : String(res.status));
                         const details = (j && Array.isArray(j.processDetails)) ? j.processDetails : [];
@@ -3356,12 +3508,20 @@ async function refreshLastAssistantProcessDetails(conversationId) {
         wasExpanded = !!(tl && tl.classList.contains('expanded'));
     }
     try {
-        const res = await apiFetch('/api/messages/' + encodeURIComponent(backendId) + '/process-details');
-        const j = await res.json().catch(function () { return {}; });
-        if (!res.ok) return;
-        const details = Array.isArray(j.processDetails) ? j.processDetails : [];
-        if (typeof renderProcessDetails === 'function') {
-            renderProcessDetails(clientId, details);
+        // 恢复流程必须遍历全部分页。直接请求无参数接口只会返回最早 50 条，
+        // 长任务刷新后会表现为“旧轮次 → 当前实时轮次”的中间历史缺失。
+        if (typeof loadProcessDetailsPaginated === 'function') {
+            await loadProcessDetailsPaginated(clientId, backendId);
+        } else {
+            const res = await apiFetch(
+                '/api/messages/' + encodeURIComponent(backendId) + '/process-details?full=1'
+            );
+            const j = await res.json().catch(function () { return {}; });
+            if (!res.ok) return;
+            const details = Array.isArray(j.processDetails) ? j.processDetails : [];
+            if (typeof renderProcessDetails === 'function') {
+                renderProcessDetails(clientId, details);
+            }
         }
         if (wasExpanded) {
             expandProcessDetailsTimeline(clientId);
@@ -3407,14 +3567,21 @@ async function attachRunningTaskEventStream(conversationId) {
             if (!asEl || !asEl.id) return false;
             const backendId = asEl.dataset && asEl.dataset.backendMessageId;
             if (backendId && typeof renderProcessDetails === 'function') {
-                const res = await apiFetch('/api/messages/' + encodeURIComponent(String(backendId)) + '/process-details');
-                const jd = await res.json().catch(function () { return {}; });
-                if (res.ok && Array.isArray(jd.processDetails)) {
-                    renderProcessDetails(asEl.id, jd.processDetails);
-                    // renderProcessDetails 会重建时间线节点，需重新挂载 HITL 审批入口
-                    if (typeof window.restoreHitlInlineForConversation === 'function') {
-                        await window.restoreHitlInlineForConversation(conversationId);
+                // 运行中会话可能远超默认 50 条；完整补齐数据库历史后再接实时事件。
+                if (typeof loadProcessDetailsPaginated === 'function') {
+                    await loadProcessDetailsPaginated(asEl.id, String(backendId));
+                } else {
+                    const res = await apiFetch(
+                        '/api/messages/' + encodeURIComponent(String(backendId)) + '/process-details?full=1'
+                    );
+                    const jd = await res.json().catch(function () { return {}; });
+                    if (res.ok && Array.isArray(jd.processDetails)) {
+                        renderProcessDetails(asEl.id, jd.processDetails);
                     }
+                }
+                // 历史重绘会重建时间线节点，需重新挂载 HITL 审批入口。
+                if (typeof window.restoreHitlInlineForConversation === 'function') {
+                    await window.restoreHitlInlineForConversation(conversationId);
                 }
             }
             expandProcessDetailsTimeline(asEl.id);
@@ -3482,7 +3649,18 @@ async function attachRunningTaskEventStream(conversationId) {
             }
             if (typeof loadActiveTasks === 'function') loadActiveTasks();
             if (replaySawDone && typeof window.loadConversation === 'function' && window.currentConversationId === conversationId) {
+                const replayTimeline = document.getElementById('process-details-' + asEl.id + '-timeline');
+                const keepExpanded = !!(replayTimeline && replayTimeline.classList.contains('expanded'));
                 await window.loadConversation(conversationId);
+                // loadConversation 使用轻量消息接口，会把详情重新置为懒加载状态；
+                // 任务终态再从 DB 全量对账一次，补回订阅建立期间可能错过的事件。
+                await refreshLastAssistantProcessDetails(conversationId);
+                if (keepExpanded) {
+                    const finalAssistant = findLastAssistantMessageElInChat();
+                    if (finalAssistant && finalAssistant.id) {
+                        expandProcessDetailsTimeline(finalAssistant.id);
+                    }
+                }
             }
             return true;
         } catch (e) {
@@ -6236,7 +6414,7 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
                 html: `
                 <tr data-execution-id="${executionId}">
                     <td>
-                        <input type="checkbox" class="monitor-execution-checkbox" value="${executionId}" ${isSelected ? 'checked' : ''} onchange="toggleExecutionSelection('${jsExecId}', this.checked)" />
+                        <input type="checkbox" class="monitor-execution-checkbox theme-checkbox" value="${executionId}" ${isSelected ? 'checked' : ''} onchange="toggleExecutionSelection('${jsExecId}', this.checked)" />
                     </td>
                     <td>${toolName}</td>
                     <td><span class="${statusClass}">${escapeHtml(statusLabel)}</span></td>
@@ -6269,7 +6447,7 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
     const headerHtml = `
         <tr>
             <th style="width: 40px;">
-                <input type="checkbox" id="monitor-select-all" onchange="toggleSelectAll(this)" />
+                <input type="checkbox" id="monitor-select-all" class="theme-checkbox" onchange="toggleSelectAll(this)" />
             </th>
             <th>${escapeHtml(colTool)}</th>
             <th>${escapeHtml(colStatus)}</th>

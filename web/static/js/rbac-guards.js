@@ -115,6 +115,8 @@
         exportFofaResults: 'fofa:execute',
         importSelectedFofaAssets: 'asset:write',
         importFofaRowAsset: 'asset:write',
+        openAssetImport: 'asset:write',
+        submitAssetImport: 'asset:write',
         saveAsset: 'asset:write',
         deleteAsset: 'asset:delete',
 
