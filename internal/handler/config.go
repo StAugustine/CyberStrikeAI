@@ -846,15 +846,18 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 		}
 		if h.executor != nil {
 			h.executor.SetToolOutputMaxBytes(h.config.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
+			h.executor.SetToolOutputSpillRoot(h.config.MultiAgent.EinoMiddleware.ReductionRootDir)
 		}
 		if h.mcpServer != nil {
 			h.mcpServer.ConfigureHTTPToolCallTimeoutFromAgentMinutes(h.config.Agent.ToolTimeoutMinutes)
 			h.mcpServer.ConfigureToolWaitTimeoutSeconds(h.config.Agent.ToolWaitTimeoutSeconds)
 			h.mcpServer.ConfigureToolResultMaxBytes(h.config.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
+			h.mcpServer.ConfigureToolResultSpillRoot(h.config.MultiAgent.EinoMiddleware.ReductionRootDir)
 		}
 		if h.externalMCPMgr != nil {
 			h.externalMCPMgr.ConfigureToolWaitTimeoutSeconds(h.config.Agent.ToolWaitTimeoutSeconds)
 			h.externalMCPMgr.ConfigureToolResultMaxBytes(h.config.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
+			h.externalMCPMgr.ConfigureToolResultSpillRoot(h.config.MultiAgent.EinoMiddleware.ReductionRootDir)
 			h.externalMCPMgr.ConfigureResilience(mcp.ExternalMCPResilienceConfig{
 				MaxConcurrentPerServer:  h.config.Agent.ExternalMCPMaxConcurrentPerServer,
 				MaxConcurrentTotal:      h.config.Agent.ExternalMCPMaxConcurrentTotal,
@@ -1512,6 +1515,7 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 
 	// 重新注册安全工具
 	h.executor.SetToolOutputMaxBytes(h.config.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
+	h.executor.SetToolOutputSpillRoot(h.config.MultiAgent.EinoMiddleware.ReductionRootDir)
 	h.executor.RegisterTools(h.mcpServer)
 
 	// 重新注册漏洞记录工具（内置工具，必须注册）
@@ -1585,13 +1589,16 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 		h.mcpServer.ConfigureHTTPToolCallTimeoutFromAgentMinutes(h.config.Agent.ToolTimeoutMinutes)
 		h.mcpServer.ConfigureToolWaitTimeoutSeconds(h.config.Agent.ToolWaitTimeoutSeconds)
 		h.mcpServer.ConfigureToolResultMaxBytes(h.config.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
+		h.mcpServer.ConfigureToolResultSpillRoot(h.config.MultiAgent.EinoMiddleware.ReductionRootDir)
 	}
 	if h.executor != nil {
 		h.executor.SetToolOutputMaxBytes(h.config.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
+		h.executor.SetToolOutputSpillRoot(h.config.MultiAgent.EinoMiddleware.ReductionRootDir)
 	}
 	if h.externalMCPMgr != nil {
 		h.externalMCPMgr.ConfigureToolWaitTimeoutSeconds(h.config.Agent.ToolWaitTimeoutSeconds)
 		h.externalMCPMgr.ConfigureToolResultMaxBytes(h.config.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
+		h.externalMCPMgr.ConfigureToolResultSpillRoot(h.config.MultiAgent.EinoMiddleware.ReductionRootDir)
 		h.externalMCPMgr.ConfigureResilience(mcp.ExternalMCPResilienceConfig{
 			MaxConcurrentPerServer:  h.config.Agent.ExternalMCPMaxConcurrentPerServer,
 			MaxConcurrentTotal:      h.config.Agent.ExternalMCPMaxConcurrentTotal,
