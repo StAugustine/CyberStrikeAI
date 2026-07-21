@@ -96,8 +96,11 @@ func TestExecuteSystemCommand_FailureFormat(t *testing.T) {
 
 func TestExecuteSystemCommand_OutputIsSourceLimited(t *testing.T) {
 	executor, _ := setupTestExecutor(t)
-	executor.SetToolOutputMaxBytes(64)
-	res, err := executor.executeSystemCommand(context.Background(), map[string]interface{}{
+	spillRoot := t.TempDir()
+	executor.SetToolOutputMaxBytes(200)
+	executor.SetToolOutputSpillRoot(spillRoot)
+	ctx := mcp.WithMCPConversationID(context.Background(), "exec-spill")
+	res, err := executor.executeSystemCommand(ctx, map[string]interface{}{
 		"command": "i=0; while [ $i -lt 2000 ]; do printf 0123456789; i=$((i+1)); done",
 		"shell":   "sh",
 	})
@@ -108,10 +111,10 @@ func TestExecuteSystemCommand_OutputIsSourceLimited(t *testing.T) {
 		t.Fatalf("expected success, got %+v", res)
 	}
 	text := res.Content[0].Text
-	if !strings.Contains(text, "tool output limit reached") {
-		t.Fatalf("missing output limit marker: %q", text)
+	if !strings.Contains(text, "<persisted-output>") || !strings.Contains(text, "Full output saved to:") {
+		t.Fatalf("missing persisted-output notice: %q", text)
 	}
-	if len(text) > 64 {
+	if len(text) > 200 {
 		t.Fatalf("output exceeded hard limit: len=%d text=%q", len(text), text)
 	}
 	if strings.Contains(text, strings.Repeat("0123456789", 20)) {
@@ -121,11 +124,14 @@ func TestExecuteSystemCommand_OutputIsSourceLimited(t *testing.T) {
 
 func TestExecuteSystemCommand_StreamingOutputIsSourceLimited(t *testing.T) {
 	executor, _ := setupTestExecutor(t)
-	executor.SetToolOutputMaxBytes(64)
+	spillRoot := t.TempDir()
+	executor.SetToolOutputMaxBytes(200)
+	executor.SetToolOutputSpillRoot(spillRoot)
 	var streamed strings.Builder
 	ctx := context.WithValue(context.Background(), ToolOutputCallbackCtxKey, ToolOutputCallback(func(chunk string) {
 		streamed.WriteString(chunk)
 	}))
+	ctx = mcp.WithMCPConversationID(ctx, "exec-stream-spill")
 	res, err := executor.executeSystemCommand(ctx, map[string]interface{}{
 		"command": "i=0; while [ $i -lt 2000 ]; do printf abcdefghij; i=$((i+1)); done",
 		"shell":   "sh",
@@ -134,17 +140,21 @@ func TestExecuteSystemCommand_StreamingOutputIsSourceLimited(t *testing.T) {
 		t.Fatalf("executeSystemCommand: %v", err)
 	}
 	text := res.Content[0].Text
-	if text != streamed.String() {
-		t.Fatalf("streamed output and returned output diverged\nstream=%q\nret=%q", streamed.String(), text)
+	if !strings.Contains(text, "<persisted-output>") {
+		t.Fatalf("missing persisted-output notice: %q", text)
 	}
-	if !strings.Contains(text, "tool output limit reached") {
-		t.Fatalf("missing output limit marker: %q", text)
+	if len(text) > 200 {
+		t.Fatalf("returned output exceeded hard limit: len=%d text=%q", len(text), text)
 	}
-	if len(text) > 64 {
-		t.Fatalf("streamed output exceeded hard limit: len=%d text=%q", len(text), text)
+	// SSE only streams the bounded prefix; final agent-facing body is the spill notice.
+	if len(streamed.String()) > 200 {
+		t.Fatalf("streamed prefix exceeded hard limit: len=%d", len(streamed.String()))
 	}
-	if strings.Contains(text, strings.Repeat("abcdefghij", 20)) {
-		t.Fatalf("streamed output kept too much data: len=%d", len(text))
+	if streamed.Len() == 0 {
+		t.Fatal("expected some streamed prefix before truncation")
+	}
+	if strings.Contains(text, strings.Repeat("abcdefghij", 50)) {
+		t.Fatalf("returned output kept too much raw data: len=%d", len(text))
 	}
 }
 

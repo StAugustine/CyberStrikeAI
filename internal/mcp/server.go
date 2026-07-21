@@ -56,6 +56,7 @@ type Server struct {
 	executionService       *ExecutionService
 	toolWaitTimeout        time.Duration
 	toolResultMaxBytes     int
+	spillRootDir           string
 }
 
 // SetToolAuthorizer installs the common policy decision point for every
@@ -125,6 +126,20 @@ func (s *Server) ConfigureToolResultMaxBytes(maxBytes int) {
 	s.mu.Unlock()
 	if s.executionService != nil {
 		s.executionService.ConfigureToolResultMaxBytes(maxBytes)
+	}
+}
+
+// ConfigureToolResultSpillRoot sets the local directory root used when oversized
+// tool results are spilled (aligned with reduction_root_dir; empty → tmp/reduction).
+func (s *Server) ConfigureToolResultSpillRoot(rootDir string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.spillRootDir = strings.TrimSpace(rootDir)
+	s.mu.Unlock()
+	if s.executionService != nil {
+		s.executionService.ConfigureToolResultSpillRoot(rootDir)
 	}
 }
 
@@ -900,6 +915,7 @@ func (s *Server) CallTool(ctx context.Context, toolName string, args map[string]
 	if s.executionService == nil {
 		s.executionService = NewExecutionService(s.storage, s.logger)
 		s.executionService.ConfigureToolResultMaxBytes(s.toolResultMaxBytes)
+		s.executionService.ConfigureToolResultSpillRoot(s.spillRootDir)
 	}
 	var ownerUserID string
 	if principal, ok := authctx.PrincipalFromContext(ctx); ok {
@@ -1036,6 +1052,7 @@ func (s *Server) FinishToolExecution(ctx context.Context, executionID, toolName 
 
 	s.mu.Lock()
 	maxBytes := s.toolResultMaxBytes
+	spillRoot := s.spillRootDir
 	exec, inMem := s.executions[id]
 	if !inMem || exec == nil {
 		exec = &ToolExecution{
@@ -1063,13 +1080,19 @@ func (s *Server) FinishToolExecution(ctx context.Context, executionID, toolName 
 	}
 	exec.Duration = now.Sub(exec.StartTime)
 
+	spill := ToolResultSpillConfig{
+		RootDir:        spillRoot,
+		ProjectID:      MCPProjectIDFromContext(ctx),
+		ConversationID: exec.ConversationID,
+		ExecutionID:    id,
+	}
 	if failed {
 		st, msg := executionStatusAndMessage(invokeErr)
 		exec.Status = st
 		exec.Error = msg
 		if strings.TrimSpace(resultText) != "" {
 			finalResult = &ToolResult{Content: []Content{{Type: "text", Text: resultText}}}
-			finalResult = NormalizeToolResultForStorage(finalResult, maxBytes)
+			finalResult = NormalizeToolResultForStorageWithSpill(finalResult, maxBytes, spill)
 			exec.Result = finalResult
 		}
 	} else {
@@ -1079,7 +1102,7 @@ func (s *Server) FinishToolExecution(ctx context.Context, executionID, toolName 
 			text = "（无输出）"
 		}
 		finalResult = &ToolResult{Content: []Content{{Type: "text", Text: text}}}
-		finalResult = NormalizeToolResultForStorage(finalResult, maxBytes)
+		finalResult = NormalizeToolResultForStorageWithSpill(finalResult, maxBytes, spill)
 		exec.Result = finalResult
 	}
 	s.mu.Unlock()
@@ -1116,9 +1139,16 @@ func (s *Server) UpdateToolExecutionResult(executionID string, result *ToolResul
 		return nil
 	}
 	s.mu.Lock()
-	result = NormalizeToolResultForStorage(result, s.toolResultMaxBytes)
+	spill := ToolResultSpillConfig{
+		RootDir:     s.spillRootDir,
+		ExecutionID: executionID,
+	}
 	if exec, ok := s.executions[executionID]; ok && exec != nil {
+		spill.ConversationID = exec.ConversationID
+		result = NormalizeToolResultForStorageWithSpill(result, s.toolResultMaxBytes, spill)
 		exec.Result = result
+	} else {
+		result = NormalizeToolResultForStorageWithSpill(result, s.toolResultMaxBytes, spill)
 	}
 	s.mu.Unlock()
 	if s.storage != nil {

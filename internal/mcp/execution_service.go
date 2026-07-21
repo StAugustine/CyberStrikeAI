@@ -76,6 +76,7 @@ type ExecutionService struct {
 	abortUserNotes map[string]string
 	maxInMemory    int
 	resultMaxBytes int
+	spillRootDir   string
 }
 
 func NewExecutionService(storage MonitorStorage, logger *zap.Logger) *ExecutionService {
@@ -99,6 +100,17 @@ func (s *ExecutionService) ConfigureToolResultMaxBytes(maxBytes int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.resultMaxBytes = maxBytes
+}
+
+// ConfigureToolResultSpillRoot sets the reduction-compatible root used when
+// oversized tool results are spilled to local files (empty → tmp/reduction).
+func (s *ExecutionService) ConfigureToolResultSpillRoot(rootDir string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.spillRootDir = strings.TrimSpace(rootDir)
 }
 
 func (s *ExecutionService) Submit(ctx context.Context, req ExecutionRequest) (*ExecutionHandle, error) {
@@ -163,6 +175,10 @@ func (s *ExecutionService) Submit(ctx context.Context, req ExecutionRequest) (*E
 
 func (s *ExecutionService) runWorker(ctx context.Context, entry *executionEntry, onDone ExecutionDoneFunc) {
 	id := entry.exec.ID
+	ctx = WithMCPExecutionID(ctx, id)
+	if conv := strings.TrimSpace(entry.exec.ConversationID); conv != "" {
+		ctx = WithMCPConversationID(ctx, conv)
+	}
 	var release func()
 	defer func() {
 		if release != nil {
@@ -212,7 +228,20 @@ func (s *ExecutionService) finishEntry(ctx context.Context, entry *executionEntr
 
 	now := time.Now()
 	s.mu.Lock()
-	result = NormalizeToolResultForStorage(result, s.resultMaxBytes)
+	spill := ToolResultSpillConfig{
+		RootDir:        s.spillRootDir,
+		ConversationID: entry.exec.ConversationID,
+		ExecutionID:    id,
+	}
+	if ctx != nil {
+		if pid := MCPProjectIDFromContext(ctx); pid != "" {
+			spill.ProjectID = pid
+		}
+		if conv := MCPConversationIDFromContext(ctx); conv != "" {
+			spill.ConversationID = conv
+		}
+	}
+	result = NormalizeToolResultForStorageWithSpill(result, s.resultMaxBytes, spill)
 	entry.result = result
 	entry.err = err
 	entry.exec.EndTime = &now

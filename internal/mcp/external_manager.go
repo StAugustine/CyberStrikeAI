@@ -77,6 +77,7 @@ type ExternalMCPManager struct {
 	executionService   *ExecutionService
 	toolWaitTimeout    time.Duration
 	toolResultMaxBytes int
+	spillRootDir       string
 	resilience         ExternalMCPResilienceConfig
 	serverRuntimes     map[string]*externalMCPServerRuntime
 	globalSemaphore    chan struct{}
@@ -140,6 +141,20 @@ func (m *ExternalMCPManager) ConfigureToolResultMaxBytes(maxBytes int) {
 	m.mu.Unlock()
 	if m.executionService != nil {
 		m.executionService.ConfigureToolResultMaxBytes(maxBytes)
+	}
+}
+
+// ConfigureToolResultSpillRoot sets the local directory root used when oversized
+// tool results are spilled (aligned with reduction_root_dir; empty → tmp/reduction).
+func (m *ExternalMCPManager) ConfigureToolResultSpillRoot(rootDir string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.spillRootDir = strings.TrimSpace(rootDir)
+	m.mu.Unlock()
+	if m.executionService != nil {
+		m.executionService.ConfigureToolResultSpillRoot(rootDir)
 	}
 }
 
@@ -704,6 +719,7 @@ func (m *ExternalMCPManager) CallTool(ctx context.Context, toolName string, args
 	if m.executionService == nil {
 		m.executionService = NewExecutionService(m.storage, m.logger)
 		m.executionService.ConfigureToolResultMaxBytes(m.toolResultMaxBytes)
+		m.executionService.ConfigureToolResultSpillRoot(m.spillRootDir)
 	}
 	var ownerUserID string
 	if principal, ok := authctx.PrincipalFromContext(ctx); ok {

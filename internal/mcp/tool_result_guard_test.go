@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -63,12 +65,15 @@ func TestServerCallToolStoresAndReturnsSameGuardedResult(t *testing.T) {
 	storage := newInMemoryMonitorStorage()
 	server := NewServerWithStorage(zap.NewNop(), storage)
 	server.ConfigureToolWaitTimeoutSeconds(0)
-	server.ConfigureToolResultMaxBytes(50)
+	server.ConfigureToolResultMaxBytes(400)
+	spillRoot := t.TempDir()
+	server.ConfigureToolResultSpillRoot(spillRoot)
 	server.RegisterTool(Tool{Name: "big", InputSchema: map[string]interface{}{"type": "object"}}, func(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-		return &ToolResult{Content: []Content{{Type: "text", Text: strings.Repeat("x", 100)}}}, nil
+		return &ToolResult{Content: []Content{{Type: "text", Text: strings.Repeat("x", 800)}}}, nil
 	})
 
-	result, executionID, err := server.CallTool(context.Background(), "big", nil)
+	ctx := WithMCPConversationID(context.Background(), "conv-spill")
+	result, executionID, err := server.CallTool(ctx, "big", nil)
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
@@ -76,11 +81,27 @@ func TestServerCallToolStoresAndReturnsSameGuardedResult(t *testing.T) {
 		t.Fatal("missing execution id")
 	}
 	returned := ToolResultPlainText(result)
-	if !strings.Contains(returned, "tool output truncated") || strings.Contains(returned, strings.Repeat("x", 100)) {
-		t.Fatalf("returned result was not guarded: %q", returned)
+	if !strings.Contains(returned, "<persisted-output>") || !strings.Contains(returned, "Full output saved to:") {
+		t.Fatalf("returned result was not spilled: %q", returned)
 	}
-	if len(returned) > 50 {
+	if len(returned) > 400 {
 		t.Fatalf("returned result exceeded hard limit: len=%d text=%q", len(returned), returned)
+	}
+
+	spillPath := filepath.Join(spillRoot, "conversations", "conv-spill", "trunc", executionID)
+	abs, err := filepath.Abs(spillPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(returned, abs) {
+		t.Fatalf("missing spill path %q in %q", abs, returned)
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatalf("read spill file: %v", err)
+	}
+	if string(body) != strings.Repeat("x", 800) {
+		t.Fatalf("spill body mismatch: len=%d", len(body))
 	}
 
 	inMem, ok := server.GetExecution(executionID)
@@ -101,11 +122,14 @@ func TestServerCallToolStoresAndReturnsSameGuardedResult(t *testing.T) {
 
 func TestExecutionServiceStoresGuardedResult(t *testing.T) {
 	service := NewExecutionService(nil, zap.NewNop())
-	service.ConfigureToolResultMaxBytes(80)
+	service.ConfigureToolResultMaxBytes(400)
+	spillRoot := t.TempDir()
+	service.ConfigureToolResultSpillRoot(spillRoot)
 	handle, err := service.Submit(context.Background(), ExecutionRequest{
-		ToolName: "big",
+		ToolName:       "big",
+		ConversationID: "svc-conv",
 		Run: func(context.Context) (*ToolResult, error) {
-			return &ToolResult{Content: []Content{{Type: "text", Text: strings.Repeat("a", 200)}}}, nil
+			return &ToolResult{Content: []Content{{Type: "text", Text: strings.Repeat("a", 800)}}}, nil
 		},
 	})
 	if err != nil {
@@ -116,10 +140,19 @@ func TestExecutionServiceStoresGuardedResult(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 	got := ToolResultPlainText(snap.Execution.Result)
-	if !strings.Contains(got, "tool output truncated") || strings.Contains(got, strings.Repeat("a", 64)) {
-		t.Fatalf("service result was not guarded: %q", got)
+	if !strings.Contains(got, "<persisted-output>") {
+		t.Fatalf("service result was not spilled: %q", got)
 	}
-	if len(got) > 80 {
+	if len(got) > 400 {
 		t.Fatalf("service result exceeded hard limit: len=%d text=%q", len(got), got)
+	}
+	path := filepath.Join(spillRoot, "conversations", "svc-conv", "trunc", handle.ID)
+	abs, _ := filepath.Abs(path)
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatalf("read spill: %v", err)
+	}
+	if string(body) != strings.Repeat("a", 800) {
+		t.Fatalf("unexpected spill body len=%d", len(body))
 	}
 }
