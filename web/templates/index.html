@@ -2928,14 +2928,68 @@
                         </div>
                     </div>
                     <div class="page-content c2-events-page-wrap">
-                        <div class="c2-events-toolbar">
-                            <label class="c2-events-select-all-label">
-                                <input type="checkbox" id="c2-events-select-all" onchange="C2.onEventsSelectAll(this.checked)">
-                                <span data-i18n="c2.events.selectAll">全选本页</span>
-                            </label>
+                        <div class="c2-events-summary" id="c2-events-summary" hidden>
+                            <span class="c2-events-stat">
+                                <span class="c2-events-stat-label" data-i18n="c2.events.statTotal">当前筛选</span>
+                                <strong id="c2-events-stat-total">0</strong>
+                            </span>
+                            <span class="c2-events-stat c2-events-stat--info">
+                                <span class="c2-events-stat-label" data-i18n="c2.events.info">信息</span>
+                                <strong id="c2-events-stat-info">0</strong>
+                            </span>
+                            <span class="c2-events-stat c2-events-stat--warn">
+                                <span class="c2-events-stat-label" data-i18n="c2.events.warn">警告</span>
+                                <strong id="c2-events-stat-warn">0</strong>
+                            </span>
+                            <span class="c2-events-stat c2-events-stat--critical">
+                                <span class="c2-events-stat-label" data-i18n="c2.events.critical">严重</span>
+                                <strong id="c2-events-stat-critical">0</strong>
+                            </span>
                         </div>
-                        <div id="c2-event-list" class="c2-event-list"></div>
-                        <div id="c2-events-pagination" class="pagination-container"></div>
+                        <div class="c2-events-filter-card">
+                            <div class="c2-events-time-presets" id="c2-events-time-presets">
+                                <span class="c2-events-time-presets-label" data-i18n="c2.events.timePresets">快捷</span>
+                                <button type="button" class="c2-events-time-preset-btn" data-preset="15m" data-i18n="c2.events.preset15m">最近15分钟</button>
+                                <button type="button" class="c2-events-time-preset-btn" data-preset="1h" data-i18n="c2.events.preset1h">最近1小时</button>
+                                <button type="button" class="c2-events-time-preset-btn" data-preset="24h" data-i18n="c2.events.preset24h">最近24小时</button>
+                                <button type="button" class="c2-events-time-preset-btn" data-preset="7d" data-i18n="c2.events.preset7d">最近7天</button>
+                                <button type="button" class="c2-events-time-preset-btn" data-preset="all" data-i18n="c2.events.presetAll">全部</button>
+                            </div>
+                            <div class="c2-events-filter-fields">
+                                <label class="c2-events-field">
+                                    <span data-i18n="c2.events.level">级别</span>
+                                    <select id="c2-events-filter-level" class="form-control">
+                                        <option value="" data-i18n="c2.events.filterAllLevels">全部级别</option>
+                                        <option value="info" data-i18n="c2.events.info">信息</option>
+                                        <option value="warn" data-i18n="c2.events.warn">警告</option>
+                                        <option value="critical" data-i18n="c2.events.critical">严重</option>
+                                    </select>
+                                </label>
+                                <label class="c2-events-field">
+                                    <span data-i18n="c2.events.category">类别</span>
+                                    <select id="c2-events-filter-category" class="form-control">
+                                        <option value="" data-i18n="c2.events.filterAllCategories">全部类别</option>
+                                        <option value="listener" data-i18n="c2.events.listener">监听器</option>
+                                        <option value="session" data-i18n="c2.events.session">会话</option>
+                                        <option value="task" data-i18n="c2.events.task">任务</option>
+                                        <option value="payload" data-i18n="c2.events.payload">Payload</option>
+                                        <option value="opsec" data-i18n="c2.events.opsec">OPSEC</option>
+                                    </select>
+                                </label>
+                                <label class="c2-events-field c2-events-field--session">
+                                    <span data-i18n="c2.events.filterSession">会话 ID</span>
+                                    <input type="text" id="c2-events-filter-session" class="form-control" data-i18n="c2.events.filterSessionPlaceholder" data-i18n-attr="placeholder" placeholder="s_xxxxxxxx" autocomplete="off" spellcheck="false" />
+                                </label>
+                                <div class="c2-events-filter-actions">
+                                    <button type="button" class="btn-primary btn-small" onclick="C2.applyEventsFilters()" data-i18n="c2.events.applyFilters">应用筛选</button>
+                                    <button type="button" class="btn-secondary btn-small" onclick="C2.resetEventsFilters()" data-i18n="c2.events.resetFilters">重置</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="c2-events-panel">
+                            <div id="c2-event-list" class="c2-events-list-container"></div>
+                            <div id="c2-events-pagination" class="pagination-container c2-events-pagination"></div>
+                        </div>
                     </div>
                 </div>
 

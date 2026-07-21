@@ -32253,16 +32253,60 @@ html[data-theme="dark"] .chat-files-toast.chat-toast--error {
 #project-panel-vulns .projects-table-wrap {
     overflow-x: hidden;
 }
+#project-panel-assets .projects-table-wrap {
+    overflow: hidden;
+}
+#project-panel-assets .data-table--projects {
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+}
+#project-panel-assets .data-table--projects thead {
+    display: block;
+    flex: 0 0 auto;
+}
+#project-panel-assets .data-table--projects tbody {
+    display: block;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-muted, #94a3b8) 52%, transparent) transparent;
+}
+#project-panel-assets .data-table--projects tr {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+}
+#project-panel-assets .data-table--projects tbody::-webkit-scrollbar {
+    width: 8px;
+}
+#project-panel-assets .data-table--projects tbody::-webkit-scrollbar-track {
+    background: var(--bg-primary, #fff);
+}
+#project-panel-assets .data-table--projects tbody::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text-muted, #94a3b8) 62%, transparent);
+    background-clip: content-box;
+}
+#project-panel-assets .data-table--projects tbody::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--text-secondary, #64748b) 82%, transparent);
+    background-clip: content-box;
+}
 #project-panel-facts .projects-table-wrap {
     overflow-x: auto;
 }
 #project-panel-facts .projects-table-wrap .data-table--projects thead th,
-#project-panel-assets .projects-table-wrap .data-table--projects thead th,
 #project-panel-conversations .projects-table-wrap .data-table--projects thead th,
 #project-panel-vulns .projects-table-wrap .data-table--projects thead th {
     position: sticky;
     top: 0;
     z-index: 2;
+    box-shadow: 0 1px 0 var(--border-color, #e2e8f0);
+}
+#project-panel-assets .projects-table-wrap .data-table--projects thead th {
     box-shadow: 0 1px 0 var(--border-color, #e2e8f0);
 }
 .projects-panel-toolbar--hint {
@@ -41171,14 +41215,18 @@ html[data-theme="dark"] .workflow-toolbar #workflow-connect-btn[aria-pressed="tr
 .asset-batch-permission-action { display: contents; }
 .asset-list-meta { margin-left: auto; }
 .asset-list-card { overflow: hidden; border: 1px solid var(--border-color, #e5e7eb); border-radius: 12px; background: var(--card-bg, #fff); box-shadow: 0 1px 3px rgba(15,23,42,.03); }
-#page-asset-library .asset-list-card { overflow: visible; }
+#page-asset-library .asset-list-card { overflow: hidden; }
 #page-asset-library .asset-list-card { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .asset-table-wrap { overflow: auto; border: 1px solid var(--border-color, #e5e7eb); border-radius: 12px; background: var(--card-bg, #fff); }
 .asset-list-card .asset-table-wrap { border: 0; border-radius: 0; }
-#page-asset-library .asset-list-card .asset-table-wrap { --table-scroll-header-height: 41px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
-#page-asset-library .asset-list-card .asset-table-wrap::-webkit-scrollbar,
-.info-collect-results-table-wrap::-webkit-scrollbar { width: 10px; }
-#page-asset-library .asset-list-card .asset-table-wrap::-webkit-scrollbar-track { margin-top: var(--table-scroll-header-height); background: transparent; }
+#page-asset-library .asset-list-card .asset-table-wrap { --table-scroll-header-height: 41px; --asset-table-header-bg: var(--card-bg, #fff); flex: 1 1 auto; min-height: 0; overflow: hidden; scrollbar-gutter: auto; }
+#page-asset-library .asset-table { display: flex; height: 100%; flex-direction: column; }
+#page-asset-library .asset-table thead { display: block; flex: 0 0 auto; }
+#page-asset-library .asset-table tbody { display: block; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-muted, #94a3b8) 52%, transparent) transparent; }
+#page-asset-library .asset-table tr { display: table; width: 100%; table-layout: fixed; }
+#page-asset-library .asset-table tbody::-webkit-scrollbar,
+.info-collect-results-table-wrap::-webkit-scrollbar { width: 8px; }
+#page-asset-library .asset-table tbody::-webkit-scrollbar-track { background: var(--card-bg, #fff); }
 .info-collect-results-table-wrap::-webkit-scrollbar-track {
     background: linear-gradient(
         to bottom,
@@ -41186,14 +41234,14 @@ html[data-theme="dark"] .workflow-toolbar #workflow-connect-btn[aria-pressed="tr
         var(--bg-primary) var(--table-scroll-header-height) 100%
     );
 }
-#page-asset-library .asset-list-card .asset-table-wrap::-webkit-scrollbar-thumb,
+#page-asset-library .asset-table tbody::-webkit-scrollbar-thumb,
 .info-collect-results-table-wrap::-webkit-scrollbar-thumb {
-    border: 3px solid transparent;
+    border: 2px solid transparent;
     border-radius: 999px;
     background: color-mix(in srgb, var(--text-muted, #94a3b8) 62%, transparent);
     background-clip: content-box;
 }
-#page-asset-library .asset-list-card .asset-table-wrap::-webkit-scrollbar-thumb:hover,
+#page-asset-library .asset-table tbody::-webkit-scrollbar-thumb:hover,
 .info-collect-results-table-wrap::-webkit-scrollbar-thumb:hover {
     background: color-mix(in srgb, var(--text-secondary, #64748b) 82%, transparent);
     background-clip: content-box;
@@ -41203,7 +41251,7 @@ html[data-theme="dark"] .workflow-toolbar #workflow-connect-btn[aria-pressed="tr
 .asset-list-card #asset-pagination.pagination-fixed .pagination { border-radius: 0; }
 .asset-table { width: 100%; min-width: 0; table-layout: fixed; border-collapse: collapse; }
 .asset-table th,.asset-table td { padding: 13px 14px; border-bottom: 1px solid var(--border-color, #edf0f4); text-align: left; vertical-align: middle; }
-.asset-table th { position: sticky; top: 0; box-sizing: border-box; height: var(--table-scroll-header-height, auto); background: var(--card-bg, #fff); color: var(--text-secondary, #64748b); font-size: 12px; font-weight: 600; z-index: 1; }
+.asset-table th { box-sizing: border-box; height: var(--table-scroll-header-height, auto); background: var(--asset-table-header-bg, var(--card-bg, #fff)); color: var(--text-secondary, #64748b); font-size: 12px; font-weight: 600; z-index: 1; }
 .asset-table td { font-size: 13px; }
 .asset-table td:nth-child(2) { width: 220px; max-width: 280px; }
 .asset-table th:nth-child(2),.asset-table td:nth-child(2) { width: auto; }
@@ -41767,6 +41815,18 @@ html[data-theme="dark"] #page-projects .projects-table-wrap,
 html[data-theme="dark"] #page-asset-library .asset-table-wrap {
     background: #0f172a !important;
     border-color: #223047 !important;
+}
+
+html[data-theme="dark"] #page-asset-library .asset-table-wrap {
+    --asset-table-header-bg: #172033;
+}
+
+html[data-theme="dark"] #page-asset-library .asset-table tbody::-webkit-scrollbar-track {
+    background: #0f172a;
+}
+
+html[data-theme="dark"] #project-panel-assets .data-table--projects tbody::-webkit-scrollbar-track {
+    background: #0f172a;
 }
 
 html[data-theme="dark"] #page-projects .projects-panel-toolbar--hint {

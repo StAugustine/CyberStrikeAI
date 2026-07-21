@@ -18,6 +18,8 @@
         eventsPage: 1,
         eventsPageSize: 10,
         eventsTotal: 0,
+        eventsLevelCounts: { info: 0, warn: 0, critical: 0 },
+        eventsFilter: { level: '', category: '', session_id: '', since: '', timePreset: 'all' },
         profiles: [],
         selectedSessionId: null,
         selectedListenerId: null,
@@ -3343,25 +3345,218 @@
     // 事件审计
     // ============================================================================
 
+    function eventLevelLabel(level) {
+        const key = 'c2.events.' + (level || 'info');
+        const translated = c2t(key);
+        return translated !== key ? translated : (level || 'info');
+    }
+
+    function eventCategoryLabel(category) {
+        const key = 'c2.events.' + (category || '');
+        const translated = c2t(key);
+        return translated !== key ? translated : (category || '-');
+    }
+
+    function eventLevelBadgeClass(level) {
+        if (level === 'warn') return 'c2-event-level-badge--warn';
+        if (level === 'critical') return 'c2-event-level-badge--critical';
+        return 'c2-event-level-badge--info';
+    }
+
+    function eventCategoryBadgeClass(category) {
+        return 'c2-event-category-badge c2-event-category-badge--' + (category || 'default');
+    }
+
+    function readEventsFilterFromDom() {
+        const levelEl = document.getElementById('c2-events-filter-level');
+        const catEl = document.getElementById('c2-events-filter-category');
+        const sessionEl = document.getElementById('c2-events-filter-session');
+        C2.eventsFilter = C2.eventsFilter || { level: '', category: '', session_id: '', since: '', timePreset: 'all' };
+        C2.eventsFilter.level = levelEl ? levelEl.value.trim() : '';
+        C2.eventsFilter.category = catEl ? catEl.value.trim() : '';
+        C2.eventsFilter.session_id = sessionEl ? sessionEl.value.trim() : '';
+    }
+
+    function buildEventsQueryParams(page, pageSize) {
+        const params = new URLSearchParams();
+        params.set('page', String(page));
+        params.set('page_size', String(pageSize));
+        const f = C2.eventsFilter || {};
+        if (f.level) params.set('level', f.level);
+        if (f.category) params.set('category', f.category);
+        if (f.session_id) params.set('session_id', f.session_id);
+        if (f.since) params.set('since', f.since);
+        return params.toString();
+    }
+
+    function eventsTimePresetToSince(preset) {
+        if (!preset || preset === 'all') return '';
+        const now = Date.now();
+        const map = { '15m': 15 * 60 * 1000, '1h': 60 * 60 * 1000, '24h': 24 * 60 * 60 * 1000, '7d': 7 * 24 * 60 * 60 * 1000 };
+        const ms = map[preset];
+        if (!ms) return '';
+        return new Date(now - ms).toISOString();
+    }
+
+    function syncEventsTimePresetButtons() {
+        const wrap = document.getElementById('c2-events-time-presets');
+        if (!wrap) return;
+        const active = (C2.eventsFilter && C2.eventsFilter.timePreset) || 'all';
+        wrap.querySelectorAll('.c2-events-time-preset-btn').forEach(btn => {
+            btn.classList.toggle('is-active', btn.getAttribute('data-preset') === active);
+        });
+    }
+
+    function bindEventsFilterUiOnce() {
+        if (document.documentElement.dataset.c2EventsFilterBound === '1') return;
+        document.documentElement.dataset.c2EventsFilterBound = '1';
+
+        const presets = document.getElementById('c2-events-time-presets');
+        if (presets) {
+            presets.addEventListener('click', (e) => {
+                const btn = e.target.closest('.c2-events-time-preset-btn');
+                if (!btn) return;
+                const preset = btn.getAttribute('data-preset') || 'all';
+                C2.eventsFilter = C2.eventsFilter || { level: '', category: '', session_id: '', since: '', timePreset: 'all' };
+                C2.eventsFilter.timePreset = preset;
+                C2.eventsFilter.since = eventsTimePresetToSince(preset);
+                syncEventsTimePresetButtons();
+                C2.loadEvents(1);
+            });
+        }
+
+        const sessionInput = document.getElementById('c2-events-filter-session');
+        if (sessionInput) {
+            sessionInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') C2.applyEventsFilters();
+            });
+        }
+    }
+
+    C2.applyEventsFilters = function() {
+        readEventsFilterFromDom();
+        C2.loadEvents(1);
+    };
+
+    C2.resetEventsFilters = function() {
+        C2.eventsFilter = { level: '', category: '', session_id: '', since: '', timePreset: 'all' };
+        const levelEl = document.getElementById('c2-events-filter-level');
+        const catEl = document.getElementById('c2-events-filter-category');
+        const sessionEl = document.getElementById('c2-events-filter-session');
+        if (levelEl) levelEl.value = '';
+        if (catEl) catEl.value = '';
+        if (sessionEl) sessionEl.value = '';
+        syncEventsTimePresetButtons();
+        C2.loadEvents(1);
+    };
+
+    C2.renderEventsSummary = function() {
+        const summary = document.getElementById('c2-events-summary');
+        if (!summary) return;
+        const total = C2.eventsTotal || 0;
+        const counts = C2.eventsLevelCounts || { info: 0, warn: 0, critical: 0 };
+        const set = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = String(val);
+        };
+        set('c2-events-stat-total', total);
+        set('c2-events-stat-info', counts.info || 0);
+        set('c2-events-stat-warn', counts.warn || 0);
+        set('c2-events-stat-critical', counts.critical || 0);
+        summary.hidden = total === 0;
+    };
+
+    C2.viewEvent = function(id) {
+        const event = (C2.events || []).find(e => e.id === id);
+        if (!event) return;
+        const modal = document.getElementById('c2-modal');
+        const content = document.getElementById('c2-modal-content');
+        if (!content || !modal) return;
+
+        const modalBox = modal.querySelector('.c2-modal');
+        if (modalBox) modalBox.classList.add('c2-modal--wide');
+
+        const hasData = event.data && typeof event.data === 'object' && Object.keys(event.data).length > 0;
+        const levelCls = eventLevelBadgeClass(event.level);
+        const catCls = eventCategoryBadgeClass(event.category);
+
+        content.innerHTML = `
+            <div class="c2-modal-header c2-event-modal-header">
+                <div class="c2-event-modal-heading">
+                    <h3>${escapeHtml(c2t('c2.events.detailTitle'))}</h3>
+                    <span class="c2-event-level-badge ${levelCls}">${escapeHtml(eventLevelLabel(event.level))}</span>
+                    <span class="${catCls}">${escapeHtml(eventCategoryLabel(event.category))}</span>
+                </div>
+                <button class="c2-modal-close" onclick="C2.closeModal()">&times;</button>
+            </div>
+            <div class="c2-modal-body">
+                <div class="c2-event-detail">
+                    <div class="c2-event-detail-grid">
+                        <div class="c2-event-kv">
+                            <span class="c2-event-kv__label">${escapeHtml(c2t('c2.events.time'))}</span>
+                            <span class="c2-event-kv__value">${escapeHtml(formatTime(event.createdAt))}</span>
+                        </div>
+                        <div class="c2-event-kv">
+                            <span class="c2-event-kv__label">${escapeHtml(c2t('c2.events.colSession'))}</span>
+                            <span class="c2-event-kv__value c2-event-kv__value--mono">${escapeHtml(event.sessionId || '-')}</span>
+                        </div>
+                        <div class="c2-event-kv">
+                            <span class="c2-event-kv__label">${escapeHtml(c2t('c2.events.colTask'))}</span>
+                            <span class="c2-event-kv__value c2-event-kv__value--mono">${escapeHtml(event.taskId || '-')}</span>
+                        </div>
+                        <div class="c2-event-kv">
+                            <span class="c2-event-kv__label">${escapeHtml(c2t('c2.events.colId'))}</span>
+                            <span class="c2-event-kv__value c2-event-kv__value--mono">${escapeHtml(event.id || '-')}</span>
+                        </div>
+                    </div>
+                    <div class="c2-event-message-block">
+                        <div class="c2-event-message-block__label">${escapeHtml(c2t('c2.events.message'))}</div>
+                        <div class="c2-event-message-block__body">${escapeHtml(event.message || '-')}</div>
+                    </div>
+                    ${hasData ? `
+                        <div class="c2-event-data-block">
+                            <div class="c2-event-data-block__header">
+                                <span>${escapeHtml(c2t('c2.events.detailData'))}</span>
+                                <button type="button" class="btn-ghost btn-sm" onclick="C2.copyTaskBlock('c2-event-data-pre')">${escapeHtml(c2t('common.copy'))}</button>
+                            </div>
+                            <pre class="c2-event-data-pre" id="c2-event-data-pre">${escapeHtml(JSON.stringify(event.data, null, 2))}</pre>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+            <div class="c2-modal-footer">
+                <button class="btn-secondary" onclick="C2.closeModal()">${escapeHtml(c2t('common.close'))}</button>
+            </div>
+        `;
+        openAppModal('c2-modal');
+        if (typeof applyTranslations === 'function') applyTranslations(content);
+    };
+
     C2.loadEvents = function(page) {
+        bindEventsFilterUiOnce();
+        readEventsFilterFromDom();
         const p = page != null ? page : (C2.eventsPage || 1);
         C2.eventsPage = p;
         const ps = C2.eventsPageSize || 10;
-        apiRequest('GET', `${API_BASE}/events?page=${encodeURIComponent(String(p))}&page_size=${encodeURIComponent(String(ps))}`).then(data => {
+        const qs = buildEventsQueryParams(p, ps);
+        apiRequest('GET', `${API_BASE}/events?${qs}`).then(data => {
             if (data.error) {
                 showToast(String(data.error), 'error');
                 return;
             }
             C2.events = data.events || [];
             C2.eventsTotal = typeof data.total === 'number' ? data.total : (C2.events.length || 0);
+            C2.eventsLevelCounts = data.level_counts || { info: 0, warn: 0, critical: 0 };
             const maxPage = Math.max(1, Math.ceil(C2.eventsTotal / ps));
             if (p > maxPage) {
                 C2.loadEvents(maxPage);
                 return;
             }
             C2.renderEvents();
+            C2.renderEventsSummary();
             C2.renderEventsPagination();
             C2.syncEventsToolbar();
+            syncEventsTimePresetButtons();
         }).catch(err => {
             showToast(err.message || String(err), 'error');
         });
@@ -3497,7 +3692,7 @@
         }
 
         if (C2.events.length === 0) {
-            container.innerHTML = '<div class="c2-empty">' + escapeHtml(c2t('c2.events.empty')) + '</div>';
+            container.innerHTML = '<div class="c2-events-empty">' + escapeHtml(c2t('c2.events.empty')) + '</div>';
             if (selAll) selAll.disabled = true;
             C2.syncEventsToolbar();
             return;
@@ -3505,24 +3700,57 @@
         if (selAll) selAll.disabled = false;
 
         const delTitle = escapeHtml(c2t('c2.events.deleteOne'));
-        container.innerHTML = C2.events.map(e => {
-            const eid = escapeHtml(e.id || '');
-            return `
-            <div class="c2-event-item">
-                <label class="c2-event-check-label" onclick="event.stopPropagation();">
-                    <input type="checkbox" class="c2-event-check" data-id="${eid}" onchange="C2.syncEventsToolbar()">
-                </label>
-                <div class="c2-event-level ${escapeHtml(e.level || '')}"></div>
-                <div class="c2-event-content">
-                    <div class="c2-event-message">${escapeHtml(e.message)}</div>
-                    <div class="c2-event-meta">
-                        ${formatTime(e.createdAt)} · ${escapeHtml(e.category || '')}${e.sessionId ? ' · ' + escapeHtml(String(e.sessionId).substring(0, 8)) : ''}
-                    </div>
-                </div>
-                <button type="button" class="btn-secondary c2-event-row-delete" data-require-permission="c2:delete" onclick="event.stopPropagation();C2.deleteEventById('${eid}')" title="${delTitle}" aria-label="${delTitle}">🗑</button>
-            </div>
+        const dash = '<span class="c2-events-cell-muted">—</span>';
+        const deleteIcon = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+
+        container.innerHTML = `
+            <table class="c2-events-table">
+                <thead>
+                    <tr>
+                        <th class="c2-events-table-col-check">
+                            <label class="c2-event-check-label" title="${escapeHtml(c2t('c2.events.selectAll'))}">
+                                <input type="checkbox" id="c2-events-select-all" onchange="C2.onEventsSelectAll(this.checked)">
+                            </label>
+                        </th>
+                        <th>${escapeHtml(c2t('c2.events.time'))}</th>
+                        <th>${escapeHtml(c2t('c2.events.level'))}</th>
+                        <th>${escapeHtml(c2t('c2.events.category'))}</th>
+                        <th>${escapeHtml(c2t('c2.events.message'))}</th>
+                        <th>${escapeHtml(c2t('c2.events.colSession'))}</th>
+                        <th>${escapeHtml(c2t('c2.events.colTask'))}</th>
+                        <th class="c2-events-table-col-actions">${escapeHtml(c2t('common.actions'))}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${C2.events.map(e => {
+                        const eid = escapeHtml(e.id || '');
+                        const levelCls = eventLevelBadgeClass(e.level);
+                        const catCls = eventCategoryBadgeClass(e.category);
+                        const sessionShort = e.sessionId ? escapeHtml(String(e.sessionId).substring(0, 10)) + (String(e.sessionId).length > 10 ? '\u2026' : '') : '';
+                        const taskShort = e.taskId ? escapeHtml(String(e.taskId).substring(0, 10)) + (String(e.taskId).length > 10 ? '\u2026' : '') : '';
+                        const msg = escapeHtml(e.message || '');
+                        const rowLevel = escapeHtml(e.level || 'info');
+                        return `
+                        <tr class="c2-events-row c2-events-row--${rowLevel}" data-event-id="${eid}" onclick="C2.viewEvent('${eid}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();C2.viewEvent('${eid}')}" role="button" tabindex="0">
+                            <td class="c2-events-table-col-check" onclick="event.stopPropagation();">
+                                <label class="c2-event-check-label">
+                                    <input type="checkbox" class="c2-event-check" data-id="${eid}" onchange="C2.syncEventsToolbar()">
+                                </label>
+                            </td>
+                            <td class="c2-events-col-time">${escapeHtml(formatTime(e.createdAt))}</td>
+                            <td><span class="c2-event-level-badge ${levelCls}">${escapeHtml(eventLevelLabel(e.level))}</span></td>
+                            <td><span class="${catCls}">${escapeHtml(eventCategoryLabel(e.category))}</span></td>
+                            <td class="c2-events-col-message" title="${msg}">${msg || dash}</td>
+                            <td class="c2-events-col-mono" title="${escapeHtml(e.sessionId || '')}">${sessionShort || dash}</td>
+                            <td class="c2-events-col-mono" title="${escapeHtml(e.taskId || '')}">${taskShort || dash}</td>
+                            <td class="c2-events-table-col-actions" onclick="event.stopPropagation();">
+                                <button type="button" class="c2-events-delete-btn" data-require-permission="c2:delete" onclick="C2.deleteEventById('${eid}')" title="${delTitle}" aria-label="${delTitle}">${deleteIcon}</button>
+                            </td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
         `;
-        }).join('');
 
         C2.syncEventsToolbar();
         if (typeof applyTranslations === 'function') applyTranslations(container);
