@@ -40,15 +40,47 @@ func TestWebshellExecRequiresConnectionAccessWhenConnectionIDProvided(t *testing
 	}
 }
 
-func TestWebshellExecRejectsAdHocURLWithoutConnectionID(t *testing.T) {
+func TestWebshellExecAllowsAdHocURLWithoutConnectionID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	_, user, _, _ := setupWebshellRBACTest(t)
 	handler := NewWebShellHandler(zap.NewNop(), nil)
+	// Ad-hoc probe (connectivity test before save) must not be rejected as "无权访问".
+	// The target URL will fail to connect; we only assert auth allows the request through.
 	w := performWebshellJSON(user, http.MethodPost, "/api/webshell/exec", map[string]interface{}{
-		"url": "http://127.0.0.1/admin", "command": "id",
+		"url": "http://127.0.0.1:1/admin", "command": "id",
 	}, handler.Exec)
+	if w.Code == http.StatusForbidden {
+		t.Fatalf("ad-hoc URL status = %d, want non-403: %s", w.Code, w.Body.String())
+	}
+	var resp ExecResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, w.Body.String())
+	}
+	if resp.OK {
+		t.Fatalf("expected connection failure for closed port, got ok=true")
+	}
+}
+
+func TestWebshellExecRejectsAdHocWithoutWritePermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	user := &database.RBACUser{ID: "u_ro", Username: "readonly"}
+	handler := NewWebShellHandler(zap.NewNop(), nil)
+	payload, _ := json.Marshal(map[string]interface{}{
+		"url": "http://127.0.0.1/admin", "command": "id",
+	})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/webshell/exec", bytes.NewReader(payload))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(security.ContextSessionKey, security.Session{
+		UserID:      user.ID,
+		Username:    user.Username,
+		Permissions: map[string]bool{"webshell:read": true},
+		Scope:       database.RBACScopeAssigned,
+	})
+	handler.Exec(c)
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("ad-hoc URL status = %d, want %d: %s", w.Code, http.StatusForbidden, w.Body.String())
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusForbidden, w.Body.String())
 	}
 }
 

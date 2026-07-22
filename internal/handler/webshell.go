@@ -721,15 +721,22 @@ func (h *WebShellHandler) Exec(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "url and command are required"})
 		return
 	}
-	conn, allowed := h.authorizedWebshellConnection(c, req.ConnectionID, req.URL)
-	if !allowed {
+	// Pre-save connectivity tests send form credentials without connection_id.
+	// Saved connections must go through resource ACL; DB credentials are authoritative.
+	if cid := strings.TrimSpace(req.ConnectionID); cid != "" {
+		conn, allowed := h.authorizedWebshellConnection(c, cid, req.URL)
+		if !allowed {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+			return
+		}
+		// Never let a caller pair an authorized ID with attacker-controlled
+		// transport credentials or a URL.
+		req.URL, req.Password, req.Type = conn.URL, conn.Password, conn.Type
+		req.Method, req.CmdParam, req.Encoding = conn.Method, conn.CmdParam, conn.Encoding
+	} else if !security.SessionHasPermission(c, "webshell:write") {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
-	// The database record is authoritative. Never let a caller pair an
-	// authorized ID with attacker-controlled transport credentials or a URL.
-	req.URL, req.Password, req.Type = conn.URL, conn.Password, conn.Type
-	req.Method, req.CmdParam, req.Encoding = conn.Method, conn.CmdParam, conn.Encoding
 
 	parsed, err := url.Parse(req.URL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
@@ -823,13 +830,18 @@ func (h *WebShellHandler) FileOp(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "url and action are required"})
 		return
 	}
-	conn, allowed := h.authorizedWebshellConnection(c, req.ConnectionID, req.URL)
-	if !allowed {
+	if cid := strings.TrimSpace(req.ConnectionID); cid != "" {
+		conn, allowed := h.authorizedWebshellConnection(c, cid, req.URL)
+		if !allowed {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+			return
+		}
+		req.URL, req.Password, req.Type = conn.URL, conn.Password, conn.Type
+		req.Method, req.CmdParam, req.Encoding, req.OS = conn.Method, conn.CmdParam, conn.Encoding, conn.OS
+	} else if !security.SessionHasPermission(c, "webshell:write") {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
-	req.URL, req.Password, req.Type = conn.URL, conn.Password, conn.Type
-	req.Method, req.CmdParam, req.Encoding, req.OS = conn.Method, conn.CmdParam, conn.Encoding, conn.OS
 
 	parsed, err := url.Parse(req.URL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
