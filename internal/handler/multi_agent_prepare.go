@@ -56,6 +56,7 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 		var err error
 		meta := audit.ConversationCreateMetaFromGin(c, source)
 		meta.ProjectID = projectID
+		meta.RoleName = req.Role
 		if webshellID != "" {
 			meta.Source = source + "_webshell"
 			meta.WebShellConnectionID = webshellID
@@ -79,6 +80,9 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 		if !canAccess("conversation", conversationID) {
 			return nil, fmt.Errorf("无权访问该对话")
 		}
+	}
+	if err := h.db.SetConversationRoleName(conversationID, req.Role); err != nil {
+		h.logger.Warn("更新对话角色失败", zap.String("conversationId", conversationID), zap.String("role", req.Role), zap.Error(err))
 	}
 
 	agentHistoryMessages, err := h.loadHistoryFromAgentTrace(conversationID)
