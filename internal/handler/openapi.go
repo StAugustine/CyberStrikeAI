@@ -5798,10 +5798,15 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 				"get": map[string]interface{}{
 					"tags":        []string{"对话附件"},
 					"summary":     "列出附件",
-					"description": "获取对话附件文件列表，可按对话ID过滤。",
+					"description": "获取对话文件列表，包含手动上传附件、工具输出和会话产物，可按会话、项目、来源、文件名搜索和分页过滤。",
 					"operationId": "listChatUploads",
 					"parameters": []map[string]interface{}{
 						{"name": "conversation", "in": "query", "required": false, "description": "按对话ID过滤", "schema": map[string]interface{}{"type": "string"}},
+						{"name": "project", "in": "query", "required": false, "description": "按项目ID过滤", "schema": map[string]interface{}{"type": "string"}},
+						{"name": "source", "in": "query", "required": false, "description": "按来源过滤：upload/reduction/conversation_artifact/all", "schema": map[string]interface{}{"type": "string", "enum": []string{"all", "upload", "reduction", "conversation_artifact"}}},
+						{"name": "search", "in": "query", "required": false, "description": "按文件名或子路径搜索", "schema": map[string]interface{}{"type": "string"}},
+						{"name": "page", "in": "query", "required": false, "description": "页码，从1开始", "schema": map[string]interface{}{"type": "integer", "default": 1}},
+						{"name": "pageSize", "in": "query", "required": false, "description": "每页数量，传 all 返回全部", "schema": map[string]interface{}{"oneOf": []map[string]interface{}{{"type": "integer"}, {"type": "string", "enum": []string{"all"}}}}},
 					},
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{
@@ -5823,11 +5828,18 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 														"modifiedUnix":   map[string]interface{}{"type": "integer"},
 														"date":           map[string]interface{}{"type": "string"},
 														"conversationId": map[string]interface{}{"type": "string"},
+														"projectId":      map[string]interface{}{"type": "string"},
 														"subPath":        map[string]interface{}{"type": "string"},
+														"source":         map[string]interface{}{"type": "string", "description": "upload/reduction/conversation_artifact"},
 													},
 												},
 											},
 											"folders": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+											"total":   map[string]interface{}{"type": "integer"},
+											"page":    map[string]interface{}{"type": "integer"},
+											"pageSize": map[string]interface{}{
+												"type": "integer",
+											},
 										},
 									},
 								},
@@ -5898,6 +5910,31 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 					},
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{"description": "删除成功"},
+						"401": map[string]interface{}{"description": "未授权"},
+					},
+				},
+			},
+			"/api/chat-uploads/export": map[string]interface{}{
+				"get": map[string]interface{}{
+					"tags":        []string{"对话附件"},
+					"summary":     "导出附件",
+					"description": "按当前过滤条件导出对话文件 ZIP，包含 manifest.json。",
+					"operationId": "exportChatUploads",
+					"parameters": []map[string]interface{}{
+						{"name": "conversation", "in": "query", "required": false, "description": "按对话ID过滤", "schema": map[string]interface{}{"type": "string"}},
+						{"name": "project", "in": "query", "required": false, "description": "按项目ID过滤", "schema": map[string]interface{}{"type": "string"}},
+						{"name": "source", "in": "query", "required": false, "description": "按来源过滤：upload/reduction/conversation_artifact/all", "schema": map[string]interface{}{"type": "string", "enum": []string{"all", "upload", "reduction", "conversation_artifact"}}},
+						{"name": "search", "in": "query", "required": false, "description": "按文件名或子路径搜索", "schema": map[string]interface{}{"type": "string"}},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "ZIP文件下载",
+							"content": map[string]interface{}{
+								"application/zip": map[string]interface{}{
+									"schema": map[string]interface{}{"type": "string", "format": "binary"},
+								},
+							},
+						},
 						"401": map[string]interface{}{"description": "未授权"},
 					},
 				},

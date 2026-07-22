@@ -61,7 +61,7 @@ var apiDocI18nSummaryToKey = map[string]string{
 	"获取连接状态": "getWebshellConnectionState", "保存连接状态": "saveWebshellConnectionState",
 	"获取AI对话历史": "getWebshellAIHistory", "列出AI对话": "listWebshellAIConversations",
 	"执行WebShell命令": "webshellExec", "WebShell文件操作": "webshellFileOp",
-	"列出附件": "listChatUploads", "上传附件": "uploadChatFile", "删除附件": "deleteChatUpload",
+	"列出附件": "listChatUploads", "导出附件": "exportChatUploads", "上传附件": "uploadChatFile", "删除附件": "deleteChatUpload",
 	"下载附件": "downloadChatUpload", "获取附件文本内容": "getChatUploadContent",
 	"写入附件文本内容": "putChatUploadContent", "创建附件目录": "mkdirChatUpload", "重命名附件": "renameChatUpload",
 	"企业微信回调验证": "wecomCallbackVerify", "企业微信消息回调": "wecomCallbackMessage",
