@@ -783,6 +783,28 @@ func (a *Agent) FinishLocalToolExecution(ctx context.Context, executionID, toolN
 	return a.mcpServer.FinishToolExecution(ctx, executionID, toolName, args, resultText, invokeErr)
 }
 
+// AppendLocalToolExecutionPartialOutput records a bounded live-output preview for a running local tool.
+func (a *Agent) AppendLocalToolExecutionPartialOutput(executionID, chunk string) {
+	if a == nil || a.mcpServer == nil {
+		return
+	}
+	a.mcpServer.AppendToolExecutionPartialOutput(executionID, chunk)
+}
+
+func (a *Agent) RegisterLocalToolExecutionCancel(executionID string, cancel context.CancelFunc) {
+	if a == nil || a.mcpServer == nil {
+		return
+	}
+	a.mcpServer.RegisterToolExecutionCancel(executionID, cancel)
+}
+
+func (a *Agent) UnregisterLocalToolExecutionCancel(executionID string) {
+	if a == nil || a.mcpServer == nil {
+		return
+	}
+	a.mcpServer.UnregisterToolExecutionCancel(executionID)
+}
+
 // RecordLocalToolExecution 将非 CallTool 路径完成的工具调用写入 MCP 监控库（与 CallTool 落库一致），返回 executionId。
 // 用于 Eino filesystem execute 等场景，使助手气泡「渗透测试详情」与常规 MCP 一致可点进监控。
 func (a *Agent) RecordLocalToolExecution(ctx context.Context, toolName string, args map[string]interface{}, resultText string, invokeErr error) string {
