@@ -107,8 +107,12 @@ func subAgentFilesystemMiddleware(
 	invokeNotify *einomcp.ToolInvokeNotifyHolder,
 	einoAgentName string,
 	beginMonitor func(toolCallID, command string) string,
+	appendPartialMonitor func(executionID, toolCallID, chunk string),
+	registerCancelMonitor func(executionID string, cancel context.CancelFunc),
+	unregisterCancelMonitor func(executionID string),
 	finishMonitor func(executionID, toolCallID, command, stdout string, success bool, invokeErr error),
 	toolTimeoutMinutes int,
+	toolWaitTimeoutSeconds int,
 	shellNoOutputTimeoutSec int,
 	outputChunk func(toolName, toolCallID, chunk string),
 ) (adk.ChatModelAgentMiddleware, error) {
@@ -123,8 +127,12 @@ func subAgentFilesystemMiddleware(
 			einoAgentName:           strings.TrimSpace(einoAgentName),
 			outputChunk:             outputChunk,
 			beginMonitor:            beginMonitor,
+			appendPartialMonitor:    appendPartialMonitor,
+			registerCancelMonitor:   registerCancelMonitor,
+			unregisterCancelMonitor: unregisterCancelMonitor,
 			finishMonitor:           finishMonitor,
 			toolTimeoutMinutes:      toolTimeoutMinutes,
+			toolWaitTimeoutSeconds:  toolWaitTimeoutSeconds,
 			shellNoOutputTimeoutSec: shellNoOutputTimeoutSec,
 		},
 	})
@@ -136,6 +144,13 @@ func agentToolTimeoutMinutes(cfg *config.Config) int {
 		return 0
 	}
 	return cfg.Agent.ToolTimeoutMinutes
+}
+
+func agentToolWaitTimeoutSeconds(cfg *config.Config) int {
+	if cfg == nil {
+		return 0
+	}
+	return cfg.Agent.ToolWaitTimeoutSeconds
 }
 
 // agentShellNoOutputTimeoutSeconds：0=默认 300s（5 分钟）；-1=关闭；>0=自定义秒数。

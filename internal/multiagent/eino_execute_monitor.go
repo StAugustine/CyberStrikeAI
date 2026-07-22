@@ -12,6 +12,9 @@ import (
 // 与 CallTool 路径一致，使监控页能展示「执行中」状态。
 func newEinoExecuteMonitorCallbacks(ctx context.Context, ag *agent.Agent, recorder einomcp.ExecutionRecorder) (
 	begin func(toolCallID, command string) string,
+	appendPartial func(executionID, toolCallID, chunk string),
+	registerCancel func(executionID string, cancel context.CancelFunc),
+	unregisterCancel func(executionID string),
 	finish func(executionID, toolCallID, command, stdout string, success bool, invokeErr error),
 ) {
 	begin = func(toolCallID, command string) string {
@@ -24,6 +27,24 @@ func newEinoExecuteMonitorCallbacks(ctx context.Context, ag *agent.Agent, record
 			recorder(id, toolCallID)
 		}
 		return id
+	}
+	appendPartial = func(executionID, toolCallID, chunk string) {
+		if ag == nil || executionID == "" || chunk == "" {
+			return
+		}
+		ag.AppendLocalToolExecutionPartialOutput(executionID, chunk)
+	}
+	registerCancel = func(executionID string, cancel context.CancelFunc) {
+		if ag == nil || executionID == "" || cancel == nil {
+			return
+		}
+		ag.RegisterLocalToolExecutionCancel(executionID, cancel)
+	}
+	unregisterCancel = func(executionID string) {
+		if ag == nil || executionID == "" {
+			return
+		}
+		ag.UnregisterLocalToolExecutionCancel(executionID)
 	}
 	finish = func(executionID, toolCallID, command, stdout string, success bool, invokeErr error) {
 		if ag == nil {
@@ -43,5 +64,5 @@ func newEinoExecuteMonitorCallbacks(ctx context.Context, ag *agent.Agent, record
 			recorder(id, toolCallID)
 		}
 	}
-	return begin, finish
+	return begin, appendPartial, registerCancel, unregisterCancel, finish
 }
