@@ -1,5 +1,9 @@
 // 设置相关功能
 let currentConfig = null;
+let selectedAIChannelId = '';
+const AI_CHANNEL_PROBE_CONCURRENCY = 2;
+const selectedAIChannelBulkIds = new Set();
+const aiChannelProbeResults = {};
 let allTools = [];
 let alwaysVisibleToolNames = new Set();
 let alwaysVisibleBuiltinToolNames = new Set();
@@ -668,39 +672,10 @@ async function loadConfig(loadTools = true, options = {}) {
             });
         }
         
-        // 填充OpenAI配置
-        const providerEl = document.getElementById('openai-provider');
-        if (providerEl) {
-            providerEl.value = currentConfig.openai.provider || 'openai';
-        }
-        document.getElementById('openai-api-key').value = currentConfig.openai.api_key || '';
-        document.getElementById('openai-base-url').value = currentConfig.openai.base_url || '';
-        document.getElementById('openai-model').value = currentConfig.openai.model || '';
-        const maxTokensEl = document.getElementById('openai-max-total-tokens');
-        if (maxTokensEl) {
-            maxTokensEl.value = currentConfig.openai.max_total_tokens || 120000;
-        }
-        const orm = currentConfig.openai && currentConfig.openai.reasoning ? currentConfig.openai.reasoning : {};
-        const orModeEl = document.getElementById('openai-reasoning-mode');
-        if (orModeEl) {
-            const mv = (orm.mode || 'auto').toString().trim().toLowerCase();
-            orModeEl.value = ['auto', 'on', 'off'].includes(mv) ? mv : 'auto';
-        }
-        const orEffEl = document.getElementById('openai-reasoning-effort');
-        if (orEffEl) {
-            const ev = (orm.effort || '').toString().trim().toLowerCase();
-            orEffEl.value = ['', 'low', 'medium', 'high', 'max', 'xhigh'].includes(ev) ? ev : '';
-        }
-        const orProfEl = document.getElementById('openai-reasoning-profile');
-        if (orProfEl) {
-            const pv = (orm.profile || 'auto').toString().trim().toLowerCase();
-            const ok = ['auto', 'deepseek_compat', 'openai_compat', 'output_config_effort'];
-            orProfEl.value = ok.includes(pv) ? pv : 'auto';
-        }
-        const orAllowEl = document.getElementById('openai-reasoning-allow-client');
-        if (orAllowEl) {
-            orAllowEl.checked = orm.allow_client_reasoning !== false;
-        }
+        currentConfig.ai = ensureAIConfigShape(currentConfig);
+        selectedAIChannelId = currentConfig.ai.default_channel;
+        renderAIChannelSelect();
+        writeAIChannelToMainForm(selectedAIChannelId);
 
         fillVisionConfigFromCurrent(currentConfig.vision || {});
         initModelListControls();
@@ -1897,7 +1872,14 @@ async function applySettings() {
         };
         
         const wecomAgentIdVal = document.getElementById('robot-wecom-agent-id')?.value.trim();
-        const prevOpenai = (currentConfig && currentConfig.openai) ? currentConfig.openai : {};
+        if (!currentConfig) currentConfig = {};
+        currentConfig.ai = ensureAIConfigShape(currentConfig);
+        const activeChannelId = normalizeAIChannelId(selectedAIChannelId || currentConfig.ai.default_channel || 'default');
+        currentConfig.ai.channels[activeChannelId] = readAIChannelFromMainForm(activeChannelId);
+        currentConfig.ai.default_channel = activeChannelId;
+        renderAIChannelSelect();
+        const activeChannel = currentConfig.ai.channels[activeChannelId] || {};
+        const prevOpenai = activeChannel;
         const prevRobots = (currentConfig && currentConfig.robots) ? currentConfig.robots : {};
         const prevHitl = (currentConfig && currentConfig.hitl) ? currentConfig.hitl : {};
         const hitlRetentionRaw = document.getElementById('hitl-retention-days')?.value;
@@ -1909,21 +1891,7 @@ async function applySettings() {
                 return String(s || '').split(/[\n,，]/).map(v => v.trim()).filter(Boolean);
             };
         const config = {
-            openai: {
-                ...prevOpenai,
-                provider: provider,
-                api_key: apiKey,
-                base_url: baseUrl,
-                model: model,
-                max_total_tokens: parseInt(document.getElementById('openai-max-total-tokens')?.value) || 120000,
-                reasoning: {
-                    ...(prevOpenai.reasoning || {}),
-                    mode: document.getElementById('openai-reasoning-mode')?.value || 'auto',
-                    effort: (document.getElementById('openai-reasoning-effort')?.value || '').trim(),
-                    profile: document.getElementById('openai-reasoning-profile')?.value || 'auto',
-                    allow_client_reasoning: document.getElementById('openai-reasoning-allow-client')?.checked !== false
-                }
-            },
+            ai: currentConfig.ai,
             vision: visionPayload,
             fofa: {
                 api_key: document.getElementById('fofa-api-key')?.value.trim() || '',
@@ -2438,6 +2406,534 @@ function enhanceModelPickSelect(selectId) {
     syncModelPickDropdown(selectId);
 }
 
+function normalizeAIChannelId(name) {
+    const raw = String(name || '').trim().toLowerCase().replace(/_/g, '-');
+    const id = raw.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return id || 'default';
+}
+
+function escapeAIChannelHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function ensureAIConfigShape(cfg) {
+    const ai = cfg && cfg.ai && typeof cfg.ai === 'object' ? cfg.ai : {};
+    const channels = ai.channels && typeof ai.channels === 'object' ? { ...ai.channels } : {};
+    let def = normalizeAIChannelId(ai.default_channel || '');
+    if (!channels[def]) {
+        const oa = (cfg && cfg.openai) ? cfg.openai : {};
+        channels[def] = {
+            name: def === 'default' ? 'Default' : def,
+            provider: oa.provider || 'openai',
+            api_key: oa.api_key || '',
+            base_url: oa.base_url || '',
+            model: oa.model || '',
+            max_total_tokens: oa.max_total_tokens || 120000,
+            max_completion_tokens: oa.max_completion_tokens || 0,
+            reasoning: oa.reasoning || {}
+        };
+    }
+    return { default_channel: def, channels };
+}
+
+function readAIChannelFromMainForm(id) {
+    const prev = currentConfig?.ai?.channels?.[id] || {};
+    const maxCompletionTokens = parseInt(document.getElementById('openai-max-completion-tokens')?.value, 10) || 16384;
+    return {
+        ...prev,
+        name: (document.getElementById('ai-channel-name')?.value || '').trim() || prev.name || id,
+        provider: document.getElementById('openai-provider')?.value || 'openai',
+        api_key: document.getElementById('openai-api-key')?.value.trim() || '',
+        base_url: document.getElementById('openai-base-url')?.value.trim() || '',
+        model: document.getElementById('openai-model')?.value.trim() || '',
+        max_total_tokens: parseInt(document.getElementById('openai-max-total-tokens')?.value, 10) || 120000,
+        max_completion_tokens: maxCompletionTokens,
+        reasoning: {
+            ...(prev.reasoning || {}),
+            mode: document.getElementById('openai-reasoning-mode')?.value || 'auto',
+            effort: (document.getElementById('openai-reasoning-effort')?.value || '').trim(),
+            profile: document.getElementById('openai-reasoning-profile')?.value || 'auto',
+            allow_client_reasoning: document.getElementById('openai-reasoning-allow-client')?.checked !== false
+        }
+    };
+}
+
+function writeAIChannelToMainForm(id) {
+    const ai = ensureAIConfigShape(currentConfig || {});
+    const ch = ai.channels[id] || ai.channels[ai.default_channel] || {};
+    selectedAIChannelId = id || ai.default_channel;
+    const nameEl = document.getElementById('ai-channel-name');
+    if (nameEl) nameEl.value = ch.name || selectedAIChannelId;
+    const providerEl = document.getElementById('openai-provider');
+    if (providerEl) {
+        const provider = (ch.provider === 'openai' || !ch.provider) ? 'openai_compatible' : ch.provider;
+        providerEl.value = provider;
+    }
+    const keyEl = document.getElementById('openai-api-key');
+    if (keyEl) keyEl.value = ch.api_key || '';
+    const baseEl = document.getElementById('openai-base-url');
+    if (baseEl) baseEl.value = ch.base_url || '';
+    const modelEl = document.getElementById('openai-model');
+    if (modelEl) modelEl.value = ch.model || '';
+    const maxTokensEl = document.getElementById('openai-max-total-tokens');
+    if (maxTokensEl) maxTokensEl.value = ch.max_total_tokens || 120000;
+    const maxCompletionTokensEl = document.getElementById('openai-max-completion-tokens');
+    if (maxCompletionTokensEl) maxCompletionTokensEl.value = ch.max_completion_tokens || 16384;
+    const r = ch.reasoning || {};
+    const modeEl = document.getElementById('openai-reasoning-mode');
+    if (modeEl) modeEl.value = ['auto', 'on', 'off'].includes(String(r.mode || '').toLowerCase()) ? String(r.mode).toLowerCase() : 'auto';
+    const effEl = document.getElementById('openai-reasoning-effort');
+    if (effEl) effEl.value = ['', 'low', 'medium', 'high', 'max', 'xhigh'].includes(String(r.effort || '').toLowerCase()) ? String(r.effort || '').toLowerCase() : '';
+    const profileEl = document.getElementById('openai-reasoning-profile');
+    if (profileEl) profileEl.value = ['auto', 'deepseek_compat', 'openai_compat', 'output_config_effort'].includes(String(r.profile || '').toLowerCase()) ? String(r.profile || '').toLowerCase() : 'auto';
+    const allowEl = document.getElementById('openai-reasoning-allow-client');
+    if (allowEl) allowEl.checked = r.allow_client_reasoning !== false;
+    syncModelListFetchButtons();
+}
+
+function renderAIChannelSelect() {
+    if (!currentConfig) return;
+    currentConfig.ai = ensureAIConfigShape(currentConfig);
+    const select = document.getElementById('ai-channel-select');
+    if (!select) return;
+    select.innerHTML = '';
+    const ids = Object.keys(currentConfig.ai.channels || {}).sort();
+    ids.forEach((id) => {
+        const ch = currentConfig.ai.channels[id] || {};
+        const opt = document.createElement('option');
+        opt.value = id;
+        const marker = id === currentConfig.ai.default_channel ? ' *' : '';
+        opt.textContent = `${ch.name || id}${marker} · ${ch.model || '-'}`;
+        select.appendChild(opt);
+    });
+    selectedAIChannelId = selectedAIChannelId && currentConfig.ai.channels[selectedAIChannelId]
+        ? selectedAIChannelId
+        : currentConfig.ai.default_channel;
+    select.value = selectedAIChannelId;
+    renderAIChannelList(ids);
+    updateAIChannelEditorChrome(selectedAIChannelId);
+    const countLabel = typeof window.t === 'function'
+        ? window.t('settingsBasic.aiChannelCount').replace('{count}', String(ids.length))
+        : `已保存 ${ids.length} 个通道`;
+    showAIChannelSaveHint(countLabel, true);
+}
+
+function channelHostLabel(baseUrl) {
+    const raw = String(baseUrl || '').trim();
+    if (!raw) return '-';
+    try {
+        return new URL(raw).host || raw;
+    } catch (e) {
+        return raw.replace(/^https?:\/\//, '').split('/')[0] || raw;
+    }
+}
+
+function renderAIChannelList(ids) {
+    const list = document.getElementById('ai-channel-list');
+    if (!list || !currentConfig?.ai?.channels) return;
+    list.innerHTML = '';
+    (ids || Object.keys(currentConfig.ai.channels).sort()).forEach((id) => {
+        const ch = currentConfig.ai.channels[id] || {};
+        const isDefault = id === currentConfig.ai.default_channel;
+        const isComplete = !validateSelectedAIChannelPayload(ch);
+        const probe = aiChannelProbeResults[id] || null;
+        const item = document.createElement('div');
+        item.className = 'ai-channel-list-item' + (id === selectedAIChannelId ? ' active' : '') + (selectedAIChannelBulkIds.has(id) ? ' checked' : '');
+        item.setAttribute('role', 'button');
+        item.setAttribute('tabindex', '0');
+        item.setAttribute('aria-current', id === selectedAIChannelId ? 'true' : 'false');
+        item.onclick = () => selectAIChannelForEditing(id);
+        item.onkeydown = (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                selectAIChannelForEditing(id);
+            }
+        };
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'ai-channel-bulk-check';
+        checkbox.checked = selectedAIChannelBulkIds.has(id);
+        checkbox.setAttribute('aria-label', `选择 ${ch.name || id}`);
+        checkbox.onclick = (event) => {
+            event.stopPropagation();
+            if (checkbox.checked) {
+                selectedAIChannelBulkIds.add(id);
+            } else {
+                selectedAIChannelBulkIds.delete(id);
+            }
+            item.classList.toggle('checked', checkbox.checked);
+        };
+        const defaultBadge = isDefault ? `<span class="ai-channel-badge">${escapeAIChannelHtml(settingsT('settingsBasic.aiChannelDefaultBadge', '默认'))}</span>` : '';
+        let statusText = isComplete
+            ? settingsT('settingsBasic.aiChannelReady', '可用')
+            : settingsT('settingsBasic.aiChannelDraft', '待完善');
+        let statusClass = isComplete ? 'ready' : 'draft';
+        if (probe) {
+            statusText = probe.message || statusText;
+            statusClass = probe.status || statusClass;
+        }
+        const body = document.createElement('div');
+        body.className = 'ai-channel-card-body';
+        body.innerHTML = `
+            <div class="ai-channel-list-main">
+                <span class="ai-channel-status-dot ${statusClass}" aria-hidden="true"></span>
+                <strong title="${escapeAIChannelHtml(ch.name || id)}">${escapeAIChannelHtml(ch.name || id)}</strong>
+                ${defaultBadge}
+            </div>
+            <div class="ai-channel-list-meta" title="${escapeAIChannelHtml(ch.model || '-')} · ${escapeAIChannelHtml(channelHostLabel(ch.base_url))}">${escapeAIChannelHtml(ch.model || '-')} · ${escapeAIChannelHtml(channelHostLabel(ch.base_url))}</div>
+            <div class="ai-channel-list-foot">
+                <span class="ai-channel-status-label ${statusClass}" title="${escapeAIChannelHtml(statusText)}">${escapeAIChannelHtml(statusText)}</span>
+                <span title="${escapeAIChannelHtml(id)}">${escapeAIChannelHtml(id)}</span>
+            </div>
+        `;
+        item.appendChild(checkbox);
+        item.appendChild(body);
+        list.appendChild(item);
+    });
+}
+
+function showAIChannelSaveHint(message, ok) {
+    const el = document.getElementById('ai-channel-save-hint');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.toggle('is-error', ok === false);
+    el.classList.toggle('is-success', ok !== false);
+}
+
+function updateAIChannelEditorChrome(id) {
+    const ai = ensureAIConfigShape(currentConfig || {});
+    const channelId = normalizeAIChannelId(id || ai.default_channel || 'default');
+    const ch = ai.channels[channelId] || {};
+    const title = document.getElementById('ai-channel-editor-title');
+    const meta = document.getElementById('ai-channel-editor-meta');
+    if (title) title.textContent = ch.name || channelId;
+    if (meta) {
+        const parts = [
+            channelId === ai.default_channel
+                ? settingsT('settingsBasic.aiChannelDefaultMeta', '默认通道')
+                : settingsT('settingsBasic.aiChannelCustomMeta', '自定义通道'),
+            ch.provider === 'claude' ? 'Claude' : settingsT('settingsBasic.aiChannelOpenAICompat', 'OpenAI 兼容'),
+            ch.model || settingsT('settingsBasic.aiChannelModelMissing', '未填写模型'),
+            channelHostLabel(ch.base_url)
+        ].filter(Boolean);
+        meta.textContent = parts.join(' / ');
+    }
+}
+
+function validateSelectedAIChannelPayload(ch) {
+    const missing = [];
+    if (!String(ch.base_url || '').trim()) missing.push('Base URL');
+    if (!String(ch.api_key || '').trim()) missing.push('API Key');
+    if (!String(ch.model || '').trim()) missing.push('模型');
+    if (missing.length) {
+        return missing.join(', ');
+    }
+    return '';
+}
+
+async function persistAIChannelsToServer(successMessage, options = {}) {
+    if (typeof requirePermission === 'function' && !requirePermission('config:write')) return false;
+    if (!currentConfig) currentConfig = {};
+    currentConfig.ai = ensureAIConfigShape(currentConfig);
+    const id = normalizeAIChannelId(selectedAIChannelId || currentConfig.ai.default_channel || 'default');
+    const channelPayload = readAIChannelFromMainForm(id);
+    currentConfig.ai.channels[id] = channelPayload;
+    selectedAIChannelId = id;
+    const missing = validateSelectedAIChannelPayload(channelPayload);
+    if (missing) {
+        showAIChannelSaveHint(`请填写：${missing}`, false);
+        alert(`请填写：${missing}`);
+        return false;
+    }
+    renderAIChannelSelect();
+    showAIChannelSaveHint('正在保存通道...', true);
+    try {
+        const shouldMergeLatest = options.mergeLatest !== false;
+        const latestResponse = shouldMergeLatest ? await apiFetch('/api/config') : null;
+        if (latestResponse && latestResponse.ok) {
+            const latest = await latestResponse.json();
+            const latestAI = ensureAIConfigShape(latest || {});
+            currentConfig.ai.channels = {
+                ...(latestAI.channels || {}),
+                ...(currentConfig.ai.channels || {}),
+                [id]: channelPayload
+            };
+            if (!currentConfig.ai.default_channel) {
+                currentConfig.ai.default_channel = latestAI.default_channel || id;
+            }
+        }
+        const updateResponse = await apiFetch('/api/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ai: currentConfig.ai })
+        });
+        if (!updateResponse.ok) {
+            const error = await updateResponse.json().catch(() => ({}));
+            throw new Error(error.error || '保存通道失败');
+        }
+        const applyResponse = await apiFetch('/api/config/apply', { method: 'POST' });
+        if (!applyResponse.ok) {
+            const error = await applyResponse.json().catch(() => ({}));
+            throw new Error(error.error || '应用通道失败');
+        }
+        const response = await apiFetch('/api/config');
+        if (response.ok) {
+            currentConfig = await response.json();
+            currentConfig.ai = ensureAIConfigShape(currentConfig);
+            selectedAIChannelId = currentConfig.ai.channels[id] ? id : currentConfig.ai.default_channel;
+            renderAIChannelSelect();
+            writeAIChannelToMainForm(selectedAIChannelId);
+            if (typeof populateChatAIChannelSelect === 'function') {
+                populateChatAIChannelSelect(currentConfig.ai);
+            }
+        }
+        showAIChannelSaveHint(successMessage || '通道已保存', true);
+        return true;
+    } catch (error) {
+        showAIChannelSaveHint(error.message || '保存通道失败', false);
+        alert(error.message || '保存通道失败');
+        return false;
+    }
+}
+
+async function persistAIConfigOnlyToServer(successMessage) {
+    if (typeof requirePermission === 'function' && !requirePermission('config:write')) return false;
+    if (!currentConfig) return false;
+    currentConfig.ai = ensureAIConfigShape(currentConfig);
+    showAIChannelSaveHint('正在保存通道...', true);
+    try {
+        const updateResponse = await apiFetch('/api/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ai: currentConfig.ai })
+        });
+        if (!updateResponse.ok) {
+            const error = await updateResponse.json().catch(() => ({}));
+            throw new Error(error.error || '保存通道失败');
+        }
+        const applyResponse = await apiFetch('/api/config/apply', { method: 'POST' });
+        if (!applyResponse.ok) {
+            const error = await applyResponse.json().catch(() => ({}));
+            throw new Error(error.error || '应用通道失败');
+        }
+        if (typeof populateChatAIChannelSelect === 'function') {
+            populateChatAIChannelSelect(currentConfig.ai);
+        }
+        showAIChannelSaveHint(successMessage || '通道已保存', true);
+        return true;
+    } catch (error) {
+        showAIChannelSaveHint(error.message || '保存通道失败', false);
+        alert(error.message || '保存通道失败');
+        return false;
+    }
+}
+
+async function saveSelectedAIChannel() {
+    await persistAIChannelsToServer(typeof window.t === 'function' ? window.t('settingsBasic.aiChannelSaved') : '通道已保存');
+}
+
+async function setSelectedAIChannelDefault() {
+    if (!currentConfig) return;
+    currentConfig.ai = ensureAIConfigShape(currentConfig);
+    const id = normalizeAIChannelId(selectedAIChannelId || currentConfig.ai.default_channel || 'default');
+    currentConfig.ai.channels[id] = readAIChannelFromMainForm(id);
+    currentConfig.ai.default_channel = id;
+    await persistAIChannelsToServer(typeof window.t === 'function' ? window.t('settingsBasic.aiChannelDefaultSaved') : '已设为默认通道');
+}
+
+function selectAIChannelForEditing(id) {
+    if (!currentConfig) return;
+    if (selectedAIChannelId && currentConfig.ai?.channels?.[selectedAIChannelId]) {
+        currentConfig.ai.channels[selectedAIChannelId] = readAIChannelFromMainForm(selectedAIChannelId);
+    }
+    const next = normalizeAIChannelId(id || currentConfig.ai?.default_channel || 'default');
+    selectedAIChannelId = next;
+    writeAIChannelToMainForm(next);
+    renderAIChannelSelect();
+}
+
+function uniqueAIChannelId(base) {
+    const ai = ensureAIConfigShape(currentConfig || {});
+    let id = normalizeAIChannelId(base);
+    if (!ai.channels[id]) return id;
+    let i = 2;
+    while (ai.channels[`${id}-${i}`]) i++;
+    return `${id}-${i}`;
+}
+
+function createAIChannelFromForm() {
+    if (!currentConfig) currentConfig = {};
+    currentConfig.ai = ensureAIConfigShape(currentConfig);
+    if (selectedAIChannelId && currentConfig.ai.channels[selectedAIChannelId]) {
+        currentConfig.ai.channels[selectedAIChannelId] = readAIChannelFromMainForm(selectedAIChannelId);
+    }
+    const baseName = (typeof window.t === 'function' ? window.t('settingsBasic.aiChannelUntitled') : 'New Channel');
+    const id = uniqueAIChannelId(baseName);
+    currentConfig.ai.channels[id] = {
+        name: baseName,
+        provider: 'openai_compatible',
+        api_key: '',
+        base_url: '',
+        model: '',
+        max_total_tokens: 120000,
+        max_completion_tokens: 16384,
+        reasoning: { mode: 'auto', effort: '', profile: 'auto', allow_client_reasoning: true }
+    };
+    selectedAIChannelId = id;
+    renderAIChannelSelect();
+    writeAIChannelToMainForm(id);
+    showAIChannelSaveHint('新通道尚未保存，填写后点击「保存更改」。', true);
+}
+
+function copyAIChannelFromForm() {
+    if (!currentConfig) return;
+    currentConfig.ai = ensureAIConfigShape(currentConfig);
+    const source = readAIChannelFromMainForm(selectedAIChannelId || currentConfig.ai.default_channel);
+    const id = uniqueAIChannelId((source.name || selectedAIChannelId || 'channel') + '-copy');
+    currentConfig.ai.channels[id] = { ...source, name: (source.name || id) + ' Copy' };
+    selectedAIChannelId = id;
+    renderAIChannelSelect();
+    writeAIChannelToMainForm(id);
+    showAIChannelSaveHint('复制的通道尚未保存，确认后点击「保存更改」。', true);
+}
+
+function deleteSelectedAIChannel() {
+    if (!currentConfig) return;
+    currentConfig.ai = ensureAIConfigShape(currentConfig);
+    const ids = Object.keys(currentConfig.ai.channels || {});
+    if (ids.length <= 1) {
+        alert('至少保留一个 AI 通道');
+        return;
+    }
+    const id = selectedAIChannelId || currentConfig.ai.default_channel;
+    const ch = currentConfig.ai.channels[id] || {};
+    const name = ch.name || id;
+    const msg = typeof window.t === 'function'
+        ? window.t('settingsBasic.aiChannelDeleteConfirm').replace('{name}', name)
+        : `确定删除 AI 通道「${name}」吗？`;
+    if (!confirm(msg)) {
+        return;
+    }
+    delete currentConfig.ai.channels[id];
+    currentConfig.ai.default_channel = Object.keys(currentConfig.ai.channels).sort()[0];
+    renderAIChannelSelect();
+    writeAIChannelToMainForm(currentConfig.ai.default_channel);
+    persistAIChannelsToServer('通道已删除', { mergeLatest: false });
+}
+
+function selectedOrAllAIChannelIdsForProbe() {
+    if (!currentConfig) return [];
+    currentConfig.ai = ensureAIConfigShape(currentConfig);
+    if (selectedAIChannelId && currentConfig.ai.channels[selectedAIChannelId]) {
+        currentConfig.ai.channels[selectedAIChannelId] = readAIChannelFromMainForm(selectedAIChannelId);
+    }
+    const checked = Array.from(selectedAIChannelBulkIds).filter((id) => currentConfig.ai.channels[id]);
+    const ids = checked.length ? checked : Object.keys(currentConfig.ai.channels || {}).sort();
+    return ids.filter((id) => !validateSelectedAIChannelPayload(currentConfig.ai.channels[id] || {}));
+}
+
+async function probeSelectedAIChannels() {
+    if (typeof requirePermission === 'function' && !requirePermission('config:write')) return;
+    const ids = selectedOrAllAIChannelIdsForProbe();
+    if (!ids.length) {
+        alert('没有可探活的完整通道，请先填写 Base URL、API Key 和模型');
+        return;
+    }
+    showAIChannelSaveHint(`正在探活 ${ids.length} 个通道...`, true);
+    ids.forEach((id) => {
+        aiChannelProbeResults[id] = { status: 'testing', message: '测试中...' };
+    });
+    renderAIChannelList();
+    let okCount = 0;
+    let nextIndex = 0;
+    async function probeNextAIChannel() {
+        const id = ids[nextIndex++];
+        if (!id) return;
+        const ch = currentConfig.ai.channels[id] || {};
+        try {
+            const response = await apiFetch('/api/config/test-openai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    provider: ch.provider || 'openai_compatible',
+                    base_url: ch.base_url || '',
+                    api_key: ch.api_key || '',
+                    model: ch.model || ''
+                })
+            });
+            const result = await response.json().catch(() => ({}));
+            if (response.ok && result.success) {
+                okCount += 1;
+                const latency = result.latency_ms ? ` ${result.latency_ms}ms` : '';
+                aiChannelProbeResults[id] = { status: 'ready', message: `可用${latency}` };
+            } else {
+                aiChannelProbeResults[id] = { status: 'failed', message: (result.error || '连接失败') };
+            }
+        } catch (error) {
+            aiChannelProbeResults[id] = { status: 'failed', message: error.message || '测试出错' };
+        }
+        renderAIChannelList();
+    }
+    const workers = Array.from({ length: Math.min(AI_CHANNEL_PROBE_CONCURRENCY, ids.length) }, async function () {
+        while (nextIndex < ids.length) {
+            await probeNextAIChannel();
+        }
+    });
+    await Promise.all(workers);
+    showAIChannelSaveHint(`探活完成：${okCount}/${ids.length} 可用`, okCount === ids.length);
+}
+
+async function deleteCheckedAIChannels() {
+    if (typeof requirePermission === 'function' && !requirePermission('config:write')) return;
+    if (!currentConfig) return;
+    currentConfig.ai = ensureAIConfigShape(currentConfig);
+    const ids = Array.from(selectedAIChannelBulkIds).filter((id) => currentConfig.ai.channels[id]);
+    if (!ids.length) {
+        alert('请先勾选要删除的通道');
+        return;
+    }
+    const deletable = ids.filter((id) => id !== currentConfig.ai.default_channel);
+    if (!deletable.length) {
+        alert('默认通道不能批量删除，请先切换默认通道');
+        return;
+    }
+    if (Object.keys(currentConfig.ai.channels || {}).length - deletable.length < 1) {
+        alert('至少保留一个 AI 通道');
+        return;
+    }
+    const names = deletable.map((id) => currentConfig.ai.channels[id]?.name || id).join('、');
+    if (!confirm(`确定删除 ${deletable.length} 个 AI 通道吗？\n${names}`)) {
+        return;
+    }
+    deletable.forEach((id) => {
+        delete currentConfig.ai.channels[id];
+        selectedAIChannelBulkIds.delete(id);
+        delete aiChannelProbeResults[id];
+    });
+    if (!currentConfig.ai.channels[selectedAIChannelId]) {
+        selectedAIChannelId = currentConfig.ai.default_channel;
+    }
+    renderAIChannelSelect();
+    writeAIChannelToMainForm(selectedAIChannelId);
+    await persistAIConfigOnlyToServer(`已删除 ${deletable.length} 个通道`);
+}
+
+if (typeof window !== 'undefined') {
+    window.selectAIChannelForEditing = selectAIChannelForEditing;
+    window.saveSelectedAIChannel = saveSelectedAIChannel;
+    window.setSelectedAIChannelDefault = setSelectedAIChannelDefault;
+    window.createAIChannelFromForm = createAIChannelFromForm;
+    window.copyAIChannelFromForm = copyAIChannelFromForm;
+    window.deleteSelectedAIChannel = deleteSelectedAIChannel;
+    window.probeSelectedAIChannels = probeSelectedAIChannels;
+    window.deleteCheckedAIChannels = deleteCheckedAIChannels;
+}
+
 function initModelListControls() {
     const providerEl = document.getElementById('openai-provider');
     if (providerEl && !providerEl.dataset.modelListBound) {
@@ -2941,7 +3437,7 @@ async function saveToolsConfig() {
         
         // 构建只包含工具配置的配置对象
         const config = {
-            openai: currentConfig.openai || {},
+            ai: ensureAIConfigShape(currentConfig || {}),
             agent: currentConfig.agent || {},
             multi_agent: {
                 enabled: currentConfig?.multi_agent?.enabled === true,

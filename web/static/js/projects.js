@@ -596,8 +596,12 @@ function prefetchProjectsForChat() {
     ensureProjectsLoaded().catch(() => {});
 }
 
-/** 新对话时默认不绑定项目；用户需主动选择后才写入共享黑板 */
+/** 新对话沿用用户最近选择的项目；没有选择时才保持未绑定。 */
 async function ensureDefaultActiveProjectForNewChat() {
+    const id = getActiveProjectId();
+    if (!id) return '';
+    const project = await fetchProjectSummary(id).catch(() => null);
+    if (project && project.id && project.status !== 'archived') return project.id;
     setActiveProjectId('');
     return '';
 }
@@ -988,6 +992,7 @@ function updateProjectStats(stats) {
 
 async function selectProject(id) {
     currentProjectId = id;
+    if (id) setActiveProjectId(id);
     projectAssetsPagination.page = 1;
     const searchEl = document.getElementById('project-facts-search');
     const catEl = document.getElementById('project-facts-filter-category');

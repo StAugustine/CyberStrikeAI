@@ -990,7 +990,7 @@
                             </div>
                             <div id="conversations-pagination" class="sidebar-list-pagination conversation-sidebar-pagination"></div>
                             <div id="chat-reasoning-wrapper" class="chat-reasoning-wrapper conversation-reasoning-card conversation-reasoning-collapsed" style="display: none;">
-                                <button type="button" id="conversation-reasoning-toggle" class="conversation-reasoning-card-header" onclick="toggleConversationReasoningCard()" aria-expanded="false" aria-controls="conversation-reasoning-body" data-i18n="chat.reasoningCompactAria" data-i18n-attr="aria-label,title" data-i18n-skip-text="true" aria-label="模型推理选项" title="模型推理选项">
+                                <button type="button" id="conversation-reasoning-toggle" class="conversation-reasoning-card-header" onclick="toggleConversationReasoningCard()" aria-expanded="false" aria-controls="conversation-reasoning-body" data-i18n="chat.sessionSettingsAria" data-i18n-attr="aria-label,title" data-i18n-skip-text="true" aria-label="会话设置" title="会话设置">
                                     <div class="conversation-reasoning-heading">
                                         <span class="conversation-reasoning-icon" aria-hidden="true">
                                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -999,7 +999,7 @@
                                             </svg>
                                         </span>
                                         <div class="conversation-reasoning-heading-text">
-                                            <span class="conversation-reasoning-title" data-i18n="chat.reasoningPanelTitle">模型推理</span>
+                                            <span class="conversation-reasoning-title" data-i18n="chat.sessionSettingsTitle">会话设置</span>
                                             <span id="chat-reasoning-summary" class="conversation-reasoning-summary"></span>
                                         </div>
                                     </div>
@@ -1010,89 +1010,75 @@
                                     </span>
                                 </button>
                                 <div id="conversation-reasoning-body" class="conversation-reasoning-body" role="region">
-                                    <p class="chat-reasoning-panel-hint" data-i18n="chat.reasoningPanelHint">仅 Eino 请求生效，与系统设置中的默认值合并。</p>
+                                    <p class="chat-reasoning-panel-hint" data-i18n="chat.sessionSettingsHint">AI 通道、推理设置与人机协同只影响后续消息。</p>
                                     <div class="chat-reasoning-fields">
-                                        <div class="chat-reasoning-field">
-                                            <label class="chat-reasoning-field-label" for="chat-reasoning-mode"><span data-i18n="chat.reasoningModeLabel">模式</span></label>
-                                            <select id="chat-reasoning-mode" class="chat-reasoning-select" onchange="persistChatReasoningPrefs()">
-                                                <option value="default" data-i18n="chat.reasoningModeDefault">跟随系统</option>
-                                                <option value="off" data-i18n="chat.reasoningModeOff">关闭</option>
-                                                <option value="on" data-i18n="chat.reasoningModeOn">开启</option>
-                                                <option value="auto" data-i18n="chat.reasoningModeAuto">自动</option>
-                                            </select>
-                                        </div>
-                                        <div class="chat-reasoning-field">
-                                            <label class="chat-reasoning-field-label" for="chat-reasoning-effort"><span data-i18n="chat.reasoningEffortLabel">推理强度</span></label>
-                                            <select id="chat-reasoning-effort" class="chat-reasoning-select" onchange="persistChatReasoningPrefs()">
-                                                <option value="" data-i18n="chat.reasoningEffortUnset">不指定</option>
-                                                <option value="low">low</option>
-                                                <option value="medium">medium</option>
-                                                <option value="high">high</option>
-                                                <option value="xhigh">xhigh</option>
-                                                <option value="max">max</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="hitl-sidebar-card hitl-sidebar-collapsed" id="hitl-sidebar-card">
-                                <div class="hitl-sidebar-card-header" id="hitl-sidebar-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="hitl-sidebar-body" onclick="toggleHitlSidebarCard()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleHitlSidebarCard(); }">
-                                    <div class="hitl-sidebar-heading">
-                                        <span class="hitl-sidebar-icon" aria-hidden="true">
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/>
-                                                <path d="M9.5 12.5l2 2 3-4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-                                            </svg>
-                                        </span>
-                                        <div class="hitl-sidebar-heading-text">
-                                            <span class="hitl-sidebar-title" data-i18n="chat.hitlTitle">人机协同</span>
-                                            <span class="hitl-sidebar-subtitle" data-i18n="chat.hitlCardSubtitle">审批与白名单</span>
-                                        </div>
-                                    </div>
-                                    <span class="sidebar-card-chevron hitl-sidebar-chevron" aria-hidden="true">
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                            <path d="M9 18l6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                        </svg>
-                                    </span>
-                                </div>
-                                <div class="hitl-sidebar-body" id="hitl-sidebar-body">
-                                    <div id="hitl-apply-feedback" class="hitl-apply-feedback" role="status" aria-live="polite"></div>
-                                    <div class="hitl-sidebar-config">
-                                        <div class="hitl-config-field">
-                                            <label class="hitl-config-label" for="hitl-mode-select" data-i18n="chat.hitlModeLabel">模式</label>
-                                            <select id="hitl-mode-select" class="hitl-config-select">
-                                                <option value="off" data-i18n="chat.hitlModeOff">关闭</option>
-                                                <option value="approval" data-i18n="chat.hitlModeApproval">审批模式</option>
-                                                <option value="review_edit" data-i18n="chat.hitlModeReviewEdit">审查编辑</option>
-                                            </select>
-                                        </div>
-                                        <div class="hitl-config-field" id="hitl-reviewer-field">
-                                            <label class="hitl-config-label" data-i18n="chat.hitlReviewerLabel">审批方</label>
-                                            <div class="hitl-reviewer-toggle" role="group" aria-label="Reviewer">
-                                                <button type="button" class="hitl-reviewer-toggle-btn is-active" data-reviewer="human" aria-pressed="true">
-                                                    <span data-i18n="chat.hitlReviewerHuman">人工审批</span>
-                                                </button>
-                                                <button type="button" class="hitl-reviewer-toggle-btn" data-reviewer="audit_agent" aria-pressed="false">
-                                                    <span data-i18n="chat.hitlReviewerAgent">审计 Agent</span>
-                                                </button>
+                                        <div class="session-settings-group session-settings-group-ai">
+                                            <div class="session-settings-group-title">AI</div>
+                                            <div class="chat-reasoning-field">
+                                                <label class="chat-reasoning-field-label" for="chat-ai-channel-select"><span data-i18n="chat.aiChannelLabel">AI 通道</span></label>
+                                                <select id="chat-ai-channel-select" class="chat-reasoning-select" onchange="persistChatAIChannelPref()">
+                                                    <option value="" data-i18n="chat.aiChannelDefault">跟随默认通道</option>
+                                                </select>
                                             </div>
-                                            <input type="hidden" id="hitl-reviewer-select" value="human" />
-                                            <p class="hitl-config-hint" data-i18n="chat.hitlReviewerHint">可在人工与审计 Agent 之间随时切换；规则与白名单不变。人机协同为「关闭」时也可预先选择。</p>
+                                            <div class="session-settings-inline">
+                                                <div class="chat-reasoning-field">
+                                                    <label class="chat-reasoning-field-label" for="chat-reasoning-mode"><span data-i18n="chat.reasoningModeLabel">模式</span></label>
+                                                    <select id="chat-reasoning-mode" class="chat-reasoning-select" onchange="persistChatReasoningPrefs()">
+                                                        <option value="default" data-i18n="chat.reasoningModeDefault">跟随系统</option>
+                                                        <option value="off" data-i18n="chat.reasoningModeOff">关闭</option>
+                                                        <option value="on" data-i18n="chat.reasoningModeOn">开启</option>
+                                                        <option value="auto" data-i18n="chat.reasoningModeAuto">自动</option>
+                                                    </select>
+                                                </div>
+                                                <div class="chat-reasoning-field">
+                                                    <label class="chat-reasoning-field-label" for="chat-reasoning-effort"><span data-i18n="chat.reasoningEffortLabel">推理强度</span></label>
+                                                    <select id="chat-reasoning-effort" class="chat-reasoning-select" onchange="persistChatReasoningPrefs()">
+                                                        <option value="" data-i18n="chat.reasoningEffortUnset">不指定</option>
+                                                        <option value="low">low</option>
+                                                        <option value="medium">medium</option>
+                                                        <option value="high">high</option>
+                                                        <option value="xhigh">xhigh</option>
+                                                        <option value="max">max</option>
+                                                    </select>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div class="hitl-config-field hitl-config-field--tools">
-                                            <label class="hitl-config-label" for="hitl-sensitive-tools" data-i18n="chat.hitlWhitelistTools">白名单工具（免审批，逗号分隔）</label>
-                                            <textarea id="hitl-sensitive-tools" class="hitl-config-textarea" rows="3" spellcheck="false" autocomplete="off" data-i18n="chat.hitlWhitelistPlaceholder" data-i18n-attr="placeholder" placeholder=""></textarea>
-                                            <p class="hitl-config-hint" data-i18n="chat.hitlWhitelistHint">每行一个或逗号分隔；与 config 中全局白名单合并展示。</p>
-                                        </div>
-                                        <div class="hitl-config-actions">
-                                            <button type="button" class="hitl-apply-btn" data-require-permission="hitl:write" id="hitl-apply-btn" onclick="window.applyHitlSidebarConfig && window.applyHitlSidebarConfig()">
-                                                <span data-i18n="chat.hitlApply">应用</span>
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </aside>
+	                                        <div class="chat-reasoning-field session-hitl-field session-settings-group">
+	                                            <div class="session-settings-group-title" data-i18n="chat.hitlTitle">人机协同</div>
+	                                            <div id="hitl-apply-feedback" class="hitl-apply-feedback" role="status" aria-live="polite"></div>
+	                                            <div class="hitl-sidebar-config session-hitl-config">
+	                                                <div class="hitl-config-field">
+	                                                    <label class="hitl-config-label" for="hitl-mode-select" data-i18n="chat.reasoningModeLabel">模式</label>
+	                                                    <select id="hitl-mode-select" class="hitl-config-select">
+	                                                        <option value="off" data-i18n="chat.hitlModeOff">关闭</option>
+	                                                        <option value="approval" data-i18n="chat.hitlModeApproval">审批模式</option>
+	                                                        <option value="review_edit" data-i18n="chat.hitlModeReviewEdit">审查编辑</option>
+	                                                    </select>
+	                                                </div>
+	                                                <div class="hitl-config-field" id="hitl-reviewer-field">
+	                                                    <label class="hitl-config-label" data-i18n="chat.hitlReviewerLabel">审批方</label>
+	                                                    <div class="hitl-reviewer-toggle" role="group" aria-label="Reviewer">
+	                                                        <button type="button" class="hitl-reviewer-toggle-btn is-active" data-reviewer="human" aria-pressed="true">
+	                                                            <span data-i18n="chat.hitlReviewerHuman">人工审批</span>
+	                                                        </button>
+	                                                        <button type="button" class="hitl-reviewer-toggle-btn" data-reviewer="audit_agent" aria-pressed="false">
+	                                                            <span data-i18n="chat.hitlReviewerAgent">审计 Agent</span>
+	                                                        </button>
+	                                                    </div>
+	                                                    <input type="hidden" id="hitl-reviewer-select" value="human" />
+	                                                    <p class="hitl-config-hint" data-i18n="chat.hitlReviewerHint">可在人工与审计 Agent 之间随时切换；规则与白名单不变。人机协同为「关闭」时也可预先选择。</p>
+	                                                </div>
+	                                                <div class="hitl-config-field hitl-config-field--tools">
+	                                                    <label class="hitl-config-label" for="hitl-sensitive-tools" data-i18n="chat.hitlWhitelistTools">白名单工具（免审批，逗号分隔）</label>
+	                                                    <textarea id="hitl-sensitive-tools" class="hitl-config-textarea" rows="3" spellcheck="false" autocomplete="off" data-i18n="chat.hitlWhitelistPlaceholder" data-i18n-attr="placeholder" placeholder=""></textarea>
+	                                                    <p class="hitl-config-hint" data-i18n="chat.hitlWhitelistHint">每行一个或逗号分隔；与 config 中全局白名单合并展示。</p>
+	                                                </div>
+	                                            </div>
+	                                        </div>
+	                                    </div>
+	                                </div>
+	                            </div>
+	                        </aside>
                         
                         <!-- 分组详情页面 -->
                         <div id="group-detail-page" class="group-detail-page" style="display: none;">
@@ -2827,8 +2813,8 @@
                 <div id="page-c2-sessions" class="page">
                     <div class="page-header">
                         <h2 data-i18n="c2.sessions.title">会话管理</h2>
-                        <div class="page-header-actions">
-                            <button type="button" class="btn-danger" id="c2-sessions-batch-delete" data-require-permission="c2:delete" disabled onclick="C2.deleteSelectedSessions()"><span data-i18n="c2.sessions.batchDelete">批量删除</span></button>
+                        <div class="page-header-actions c2-sessions-page-actions">
+                            <button type="button" class="btn-secondary" id="c2-sessions-batch-delete" data-require-permission="c2:delete" disabled onclick="C2.deleteSelectedSessions()"><span data-i18n="c2.sessions.batchDelete">批量删除</span></button>
                             <button type="button" class="btn-secondary" id="c2-sessions-delete-filtered" data-require-permission="c2:delete" disabled onclick="C2.deleteFilteredSessions()"><span data-i18n="c2.sessions.deleteFiltered">删除筛选结果</span></button>
                             <button class="btn-secondary" onclick="C2.loadSessions()"><span data-i18n="common.refresh">刷新</span></button>
                         </div>
@@ -2854,14 +2840,76 @@
                         </div>
                     </div>
                     <div class="page-content c2-tasks-page-wrap">
-                        <div class="c2-tasks-toolbar">
-                            <label class="c2-tasks-select-all-label">
-                                <input type="checkbox" id="c2-tasks-select-all" onchange="C2.onTasksSelectAll(this.checked)">
-                                <span data-i18n="c2.tasks.selectAll">全选本页</span>
-                            </label>
+                        <div class="c2-tasks-summary" id="c2-tasks-summary" hidden>
+                            <span class="c2-tasks-stat">
+                                <span class="c2-tasks-stat-label" data-i18n="c2.tasks.statTotal">当前筛选</span>
+                                <strong id="c2-tasks-stat-total">0</strong>
+                            </span>
+                            <span class="c2-tasks-stat c2-tasks-stat--success">
+                                <span class="c2-tasks-stat-label" data-i18n="c2.tasks.success">成功</span>
+                                <strong id="c2-tasks-stat-success">0</strong>
+                            </span>
+                            <span class="c2-tasks-stat c2-tasks-stat--failed">
+                                <span class="c2-tasks-stat-label" data-i18n="c2.tasks.failed">失败</span>
+                                <strong id="c2-tasks-stat-failed">0</strong>
+                            </span>
+                            <span class="c2-tasks-stat c2-tasks-stat--pending">
+                                <span class="c2-tasks-stat-label" data-i18n="c2.tasks.pending">待处理</span>
+                                <strong id="c2-tasks-stat-pending">0</strong>
+                            </span>
                         </div>
-                        <div id="c2-task-list" class="c2-task-list-container"></div>
-                        <div id="c2-tasks-pagination" class="pagination-container"></div>
+                        <div class="c2-tasks-filter-card">
+                            <div class="c2-tasks-time-presets" id="c2-tasks-time-presets">
+                                <span class="c2-tasks-time-presets-label" data-i18n="c2.tasks.timePresets">快捷</span>
+                                <button type="button" class="c2-tasks-time-preset-btn" data-preset="15m" data-i18n="c2.tasks.preset15m">最近15分钟</button>
+                                <button type="button" class="c2-tasks-time-preset-btn" data-preset="1h" data-i18n="c2.tasks.preset1h">最近1小时</button>
+                                <button type="button" class="c2-tasks-time-preset-btn" data-preset="24h" data-i18n="c2.tasks.preset24h">最近24小时</button>
+                                <button type="button" class="c2-tasks-time-preset-btn" data-preset="7d" data-i18n="c2.tasks.preset7d">最近7天</button>
+                                <button type="button" class="c2-tasks-time-preset-btn" data-preset="all" data-i18n="c2.tasks.presetAll">全部</button>
+                            </div>
+                            <div class="c2-tasks-filter-fields">
+                                <label class="c2-tasks-field">
+                                    <span data-i18n="c2.tasks.colStatus">状态</span>
+                                    <select id="c2-tasks-filter-status" class="form-control">
+                                        <option value="" data-i18n="c2.tasks.filterAllStatuses">全部状态</option>
+                                        <option value="queued" data-i18n="c2.tasks.queued">队列中</option>
+                                        <option value="sent" data-i18n="c2.tasks.sent">已发送</option>
+                                        <option value="running" data-i18n="c2.tasks.running">执行中</option>
+                                        <option value="success" data-i18n="c2.tasks.success">成功</option>
+                                        <option value="failed" data-i18n="c2.tasks.failed">失败</option>
+                                        <option value="cancelled" data-i18n="c2.tasks.cancelled">已取消</option>
+                                    </select>
+                                </label>
+                                <label class="c2-tasks-field">
+                                    <span data-i18n="c2.tasks.colType">类型</span>
+                                    <select id="c2-tasks-filter-type" class="form-control">
+                                        <option value="" data-i18n="c2.tasks.filterAllTypes">全部类型</option>
+                                        <option value="shell">shell</option>
+                                        <option value="exec">exec</option>
+                                        <option value="ls">ls</option>
+                                        <option value="pwd">pwd</option>
+                                        <option value="cd">cd</option>
+                                        <option value="download">download</option>
+                                        <option value="upload">upload</option>
+                                        <option value="ps">ps</option>
+                                        <option value="sleep">sleep</option>
+                                        <option value="screenshot">screenshot</option>
+                                    </select>
+                                </label>
+                                <label class="c2-tasks-field c2-tasks-field--session">
+                                    <span data-i18n="c2.tasks.filterSession">会话 ID</span>
+                                    <input type="text" id="c2-tasks-filter-session" class="form-control" data-i18n="c2.tasks.filterSessionPlaceholder" data-i18n-attr="placeholder" placeholder="s_xxxxxxxx" autocomplete="off" spellcheck="false" />
+                                </label>
+                                <div class="c2-tasks-filter-actions">
+                                    <button type="button" class="btn-primary btn-small" onclick="C2.applyTasksFilters()" data-i18n="c2.tasks.applyFilters">应用筛选</button>
+                                    <button type="button" class="btn-secondary btn-small" onclick="C2.resetTasksFilters()" data-i18n="c2.tasks.resetFilters">重置</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="c2-tasks-panel">
+                            <div id="c2-task-list" class="c2-tasks-list-container"></div>
+                            <div id="c2-tasks-pagination" class="pagination-container c2-tasks-pagination"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -3391,16 +3439,53 @@
                                     <h3 data-i18n="settingsBasic.basicTitle">基本设置</h3>
                                 </div>
                                 
-                                <!-- OpenAI配置 -->
+                                <!-- AI 通道配置 -->
                                 <div class="settings-subsection">
-                                    <h4 data-i18n="settingsBasic.openaiConfig">OpenAI 配置</h4>
-                                    <div class="settings-form">
+                                    <div class="ai-channel-manager">
+                                        <div class="ai-channel-manager-header">
+                                            <div>
+                                                <h4 data-i18n="settingsBasic.openaiConfig">AI 通道配置</h4>
+                                                <p id="ai-channel-save-hint" class="ai-channel-manager-hint" data-i18n="settingsBasic.aiChannelHint">已保存的通道会显示在左侧；保存后写入 ai.channels，默认通道用于新对话和未指定通道的任务。</p>
+                                            </div>
+                                            <button type="button" class="btn-primary ai-channel-save-btn" onclick="saveSelectedAIChannel()" data-i18n="settingsBasic.aiChannelSave">保存更改</button>
+                                        </div>
+                                        <div class="ai-channel-manager-body">
+                                            <aside class="ai-channel-sidebar" aria-label="AI 通道列表" data-i18n="settingsBasic.aiChannelListAria" data-i18n-attr="aria-label">
+                                                <div class="ai-channel-sidebar-head">
+                                                    <span data-i18n="settingsBasic.aiChannelSavedList">已保存通道</span>
+                                                    <div class="ai-channel-bulk-actions">
+                                                        <button type="button" class="ai-channel-bulk-btn" onclick="probeSelectedAIChannels()" title="检测所选或全部完整通道是否可用">批量探活</button>
+                                                        <button type="button" class="ai-channel-bulk-btn danger" onclick="deleteCheckedAIChannels()" title="删除已勾选的非默认通道">删除所选</button>
+                                                        <button type="button" class="ai-channel-icon-btn" onclick="createAIChannelFromForm()" title="新增通道" aria-label="新增通道">+</button>
+                                                    </div>
+                                                </div>
+                                                <select id="ai-channel-select" class="ai-channel-native-select" onchange="selectAIChannelForEditing(this.value)" aria-hidden="true" tabindex="-1"></select>
+                                                <div id="ai-channel-list" class="ai-channel-list" aria-live="polite"></div>
+                                            </aside>
+                                            <div class="ai-channel-editor">
+                                                <div class="ai-channel-editor-head">
+                                                    <div>
+                                                        <span class="ai-channel-editor-kicker" data-i18n="settingsBasic.aiChannelEditing">正在编辑</span>
+                                                        <h5 id="ai-channel-editor-title">-</h5>
+                                                        <p id="ai-channel-editor-meta">-</p>
+                                                    </div>
+                                                    <div class="ai-channel-editor-actions">
+                                                        <button type="button" class="btn-secondary" onclick="setSelectedAIChannelDefault()" data-i18n="settingsBasic.aiChannelSetDefault">设为默认</button>
+                                                        <button type="button" class="btn-secondary" onclick="copyAIChannelFromForm()" data-i18n="settingsBasic.aiChannelCopy">复制</button>
+                                                        <button type="button" class="btn-secondary danger" onclick="deleteSelectedAIChannel()" data-i18n="settingsBasic.aiChannelDelete">删除</button>
+                                                    </div>
+                                                </div>
+                                                <div class="settings-form ai-channel-editor-form">
+                                        <div class="form-group">
+                                            <label for="ai-channel-name" data-i18n="settingsBasic.aiChannelName">通道名称</label>
+                                            <input type="text" id="ai-channel-name" placeholder="Qwen Max" maxlength="24" />
+                                        </div>
                                         <div class="form-group">
                                             <label for="openai-provider" data-i18n="settingsBasic.apiProvider">API 提供商</label>
-                                            <select id="openai-provider" style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border-color, #e2e8f0); border-radius: 6px; background: var(--card-bg, #fff); color: var(--text-color, #2d3748); font-size: 0.875rem;">
-                                                <option value="openai" data-i18n="settingsBasic.providerOpenAI">OpenAI / 兼容 OpenAI 协议</option>
-                                                <option value="claude" data-i18n="settingsBasic.providerClaude">Claude (Anthropic Messages API)</option>
-                                            </select>
+	                                            <select id="openai-provider" style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border-color, #e2e8f0); border-radius: 6px; background: var(--card-bg, #fff); color: var(--text-color, #2d3748); font-size: 0.875rem;">
+	                                                <option value="openai_compatible" data-i18n="settingsBasic.providerOpenAI">OpenAI / 兼容 OpenAI 协议</option>
+	                                                <option value="claude" data-i18n="settingsBasic.providerClaude">Claude (Anthropic Messages API)</option>
+	                                            </select>
                                         </div>
                                         <div class="form-group">
                                             <label for="openai-base-url">Base URL <span style="color: red;">*</span></label>
@@ -3428,8 +3513,13 @@
                                             <small style="color: var(--text-muted, #718096); font-size: 0.75rem;" data-i18n="settingsBasic.maxTotalTokensHint">内存压缩和攻击链构建共用此配置，默认 120000</small>
                                         </div>
                                         <div class="form-group">
-                                            <label data-i18n="settingsBasic.openaiReasoningTitle">模型推理</label>
-                                            <small class="form-hint" data-i18n="settingsBasic.openaiReasoningHint">与对话页「模型推理」下拉配合使用。</small>
+                                            <label for="openai-max-completion-tokens"><span data-i18n="settingsBasic.maxCompletionTokens">最大输出 Token 数</span></label>
+                                            <input type="number" id="openai-max-completion-tokens" data-i18n="settingsBasic.maxCompletionTokensPlaceholder" data-i18n-attr="placeholder" placeholder="16384" min="1" step="256" />
+                                            <small style="color: var(--text-muted, #718096); font-size: 0.75rem;" data-i18n="settingsBasic.maxCompletionTokensHint">单次模型回复的输出上限，默认 16384</small>
+                                        </div>
+                                        <div class="form-group">
+                                            <label data-i18n="settingsBasic.openaiReasoningTitle">推理设置</label>
+                                            <small class="form-hint" data-i18n="settingsBasic.openaiReasoningHint">作为该 AI 通道的默认推理设置；对话页「会话设置」可覆盖。</small>
                                             <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; align-items: center;">
                                                 <label for="openai-reasoning-mode" style="font-size: 0.8125rem;" data-i18n="chat.reasoningModeLabel">模式</label>
                                                 <select id="openai-reasoning-mode" style="min-width: 140px; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border-color, #e2e8f0);">
@@ -3464,6 +3554,9 @@
                                             <a href="javascript:void(0)" id="test-openai-btn" onclick="testOpenAIConnection()" style="font-size: 0.8125rem; color: var(--accent-color, #3182ce); text-decoration: none; cursor: pointer; user-select: none;" data-i18n="settingsBasic.testConnection">测试连接</a>
                                             <span id="test-openai-result" style="font-size: 0.8125rem;"></span>
                                         </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -3483,7 +3576,7 @@
                                             <div class="form-group">
                                                 <label for="vision-provider" data-i18n="settingsBasic.provider">提供商</label>
                                                 <select id="vision-provider" style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border-color, #e2e8f0); border-radius: 6px; background: var(--card-bg, #fff); color: var(--text-color, #2d3748); font-size: 0.875rem;">
-                                                    <option value="" data-i18n="settingsBasic.visionProviderReuseOpenAI">OpenAI 配置（留空复用）</option>
+                                                    <option value="" data-i18n="settingsBasic.visionProviderReuseOpenAI">默认 AI 通道（留空复用）</option>
                                                     <option value="openai" data-i18n="settingsBasic.providerOpenAI">OpenAI / 兼容 OpenAI 协议</option>
                                                     <option value="claude" data-i18n="settingsBasic.providerClaude">Claude (Anthropic Messages API)</option>
                                                 </select>
@@ -6117,6 +6210,12 @@
                     <small class="form-hint" data-i18n="webshell.encodingHint">中文 Windows 目标若出现乱码，请切换为 GBK 或 GB18030</small>
                 </div>
                 <div class="form-group">
+                    <label for="webshell-project-id" data-i18n="assets.project">所属项目</label>
+                    <select id="webshell-project-id">
+                        <option value="" data-i18n="assets.unboundProject">暂不绑定</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label for="webshell-remark" data-i18n="webshell.remark">备注</label>
                     <input type="text" id="webshell-remark" data-i18n="webshell.remarkPlaceholder" data-i18n-attr="placeholder" placeholder="便于识别的备注名" />
                 </div>
@@ -6544,8 +6643,8 @@
     <script src="/static/js/agents.js"></script>
     <script src="/static/js/dashboard.js"></script>
     <script src="/static/js/chat-scroll.js"></script>
-    <script src="/static/js/monitor.js?v=20260717-1"></script>
-    <script src="/static/js/chat.js?v=20260717-1"></script>
+    <script src="/static/js/monitor.js?v=20260723-1"></script>
+    <script src="/static/js/chat.js?v=20260723-1"></script>
     <script src="/static/js/hitl.js"></script>
     <script src="/static/js/settings.js?v=20260717-1"></script>
     <script src="/static/js/audit-datetime-picker.js"></script>

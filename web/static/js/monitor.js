@@ -4,6 +4,7 @@ let userInterruptModalPending = null;
 let activeTaskInterval = null;
 const ACTIVE_TASK_REFRESH_INTERVAL = 10000; // 10秒检查一次
 const TASK_FINAL_STATUSES = new Set(['failed', 'timeout', 'cancelled', 'completed']);
+const hitlInterruptToolItemMap = new Map();
 
 /**
  * 主对话 POST 流仍在读取时，禁止再挂 task-events 补流，否则同一事件会画两遍（与 HITL 是否开启无关）。
@@ -16,6 +17,13 @@ function syncAgentLiveStreamConversationId(cid) {
         if (live && live.active) {
             live.conversationId = cid;
         }
+    } catch (e) { /* ignore */ }
+}
+
+function setCurrentConversationIdFromStream(cid) {
+    currentConversationId = cid;
+    try {
+        window.currentConversationId = cid;
     } catch (e) { /* ignore */ }
 }
 
@@ -1984,7 +1992,32 @@ function formatEinoRunRetryTitle(data) {
 
 // 处理流式事件
 function handleStreamEvent(event, progressElement, progressId, 
-                          getAssistantId, setAssistantId, getMcpIds, setMcpIds) {
+                          getAssistantId, setAssistantId, getMcpIds, setMcpIds, options) {
+    const expectedConversationId = options && options.conversationId
+        ? String(options.conversationId)
+        : '';
+    const eventConversationId = event && event.data && event.data.conversationId
+        ? String(event.data.conversationId)
+        : '';
+    if (expectedConversationId) {
+        if (eventConversationId && eventConversationId !== expectedConversationId) {
+            return;
+        }
+        if (
+            typeof window.currentConversationId === 'string' &&
+            window.currentConversationId &&
+            window.currentConversationId !== expectedConversationId
+        ) {
+            return;
+        }
+        const progressNode = progressId ? document.getElementById(progressId) : null;
+        const progressConversationId = progressNode && progressNode.dataset
+            ? String(progressNode.dataset.conversationId || '')
+            : '';
+        if (progressConversationId && progressConversationId !== expectedConversationId) {
+            return;
+        }
+    }
     const streamScrollWasPinned = typeof window.captureScrollPinState === 'function'
         ? window.captureScrollPinState()
         : (typeof window.isChatMessagesPinnedToBottom === 'function' ? window.isChatMessagesPinnedToBottom() : true);
@@ -2048,7 +2081,7 @@ function handleStreamEvent(event, progressElement, progressId,
                 }
                 
                 // 更新当前对话ID
-                currentConversationId = event.data.conversationId;
+                setCurrentConversationIdFromStream(event.data.conversationId);
                 syncAgentLiveStreamConversationId(event.data.conversationId);
                 updateActiveConversation();
                 addAttackChainButton(currentConversationId);
@@ -2408,29 +2441,38 @@ function handleStreamEvent(event, progressElement, progressId,
             break;
 
         case 'hitl_interrupt':
-            const hitlItemId = addTimelineItem(timeline, 'warning', {
-                title: '🧑‍⚖️ HITL',
-                message: event.message,
-                data: event.data
-            });
-            renderInlineHitlApproval(hitlItemId, event.data || {});
+            const hitlTargetItem = findToolCallItemForHitl(timeline, event.data || {});
+            if (hitlTargetItem && hitlTargetItem.id) {
+                renderInlineHitlApproval(hitlTargetItem.id, event.data || {});
+            } else {
+                const hitlItemId = addTimelineItem(timeline, 'hitl_interrupt', {
+                    title: '🧑‍⚖️ HITL',
+                    message: event.message,
+                    data: event.data
+                });
+                renderInlineHitlApproval(hitlItemId, event.data || {});
+            }
             try {
                 window.dispatchEvent(new CustomEvent('hitl-interrupt', { detail: event.data || {} }));
             } catch (e) {}
             break;
         case 'hitl_resumed':
-            addTimelineItem(timeline, 'progress', {
-                title: '✅ HITL',
-                message: event.message,
-                data: event.data
-            });
+            if (!resolveInlineHitlDecision(timeline, event.data || {}, 'approve', event.message)) {
+                addTimelineItem(timeline, 'progress', {
+                    title: '✅ HITL',
+                    message: event.message,
+                    data: event.data
+                });
+            }
             break;
         case 'hitl_rejected':
-            addTimelineItem(timeline, 'error', {
-                title: '⛔ HITL',
-                message: event.message,
-                data: event.data
-            });
+            if (!resolveInlineHitlDecision(timeline, event.data || {}, 'reject', event.message)) {
+                addTimelineItem(timeline, 'error', {
+                    title: '⛔ HITL',
+                    message: event.message,
+                    data: event.data
+                });
+            }
             break;
 
         case 'user_interrupt_continue': {
@@ -2801,7 +2843,7 @@ function handleStreamEvent(event, progressElement, progressId,
                     updateProgressConversation(progressId, responseData.conversationId);
                     break;
                 }
-                currentConversationId = responseData.conversationId;
+                setCurrentConversationIdFromStream(responseData.conversationId);
                 syncAgentLiveStreamConversationId(responseData.conversationId);
                 updateActiveConversation();
                 addAttackChainButton(currentConversationId);
@@ -2904,7 +2946,7 @@ function handleStreamEvent(event, progressElement, progressId,
                     break;
                 }
 
-                currentConversationId = responseData.conversationId;
+                setCurrentConversationIdFromStream(responseData.conversationId);
                 syncAgentLiveStreamConversationId(responseData.conversationId);
                 updateActiveConversation();
                 addAttackChainButton(currentConversationId);
@@ -3064,7 +3106,7 @@ function handleStreamEvent(event, progressElement, progressId,
             }
             // 更新对话ID
             if (event.data && event.data.conversationId) {
-                currentConversationId = event.data.conversationId;
+                setCurrentConversationIdFromStream(event.data.conversationId);
                 syncAgentLiveStreamConversationId(event.data.conversationId);
                 updateActiveConversation();
                 addAttackChainButton(currentConversationId);
@@ -3115,6 +3157,22 @@ function handleStreamEvent(event, progressElement, progressId,
 function renderInlineHitlApproval(itemId, data) {
     const item = document.getElementById(itemId);
     if (!item || !data || !data.interruptId) return;
+    if (item.classList.contains('timeline-item-tool_call')) {
+        const state = toolCallDetailStateByItemId.get(item.id) || {};
+        state.hitlData = data;
+        state.pending = true;
+        setToolCallDetailState(item, state);
+        if (data.interruptId) {
+            hitlInterruptToolItemMap.set(String(data.interruptId), item.id);
+        }
+        const existingContent = item.querySelector('.timeline-item-content.tool-call-detail-content');
+        if (existingContent) {
+            existingContent.remove();
+            item.classList.remove('tool-call-detail-expanded');
+        }
+        renderToolCallDetailContent(item);
+        return;
+    }
     let contentEl = item.querySelector('.timeline-item-content');
     if (!contentEl) {
         // warning 等类型默认没有内容区域；HITL 内联审批需要可交互容器
@@ -3136,31 +3194,165 @@ function renderInlineHitlApproval(itemId, data) {
     const allowEdit = mode === 'review_edit';
     const argsObj = payload.argumentsObj && typeof payload.argumentsObj === 'object' ? payload.argumentsObj : {};
     const argsJSON = JSON.stringify(argsObj, null, 2);
+    const modeLabel = mode === 'review_edit' ? '审查编辑' : '审批模式';
 
     const panel = document.createElement('div');
     panel.className = 'hitl-inline-approval';
-    panel.innerHTML = `
-        <div class="hitl-input-help"><strong>${escapeHtml(toolName)}</strong> 待人工审批。模式：${escapeHtml(mode || '-')}。</div>
-        ${allowEdit
-            ? `<div class="hitl-input-help">审查编辑参数（JSON，可选）：留空表示沿用原参数。</div>
-               <textarea class="hitl-edit-args hitl-inline-edit" placeholder='{"command":"ls -la"}'>${escapeHtml(argsJSON === '{}' ? '' : argsJSON)}</textarea>`
-            : '<div class="hitl-input-help">当前模式不支持改参，仅可通过/拒绝。</div>'
+    panel.innerHTML = buildInlineHitlApprovalHtml(data, {
+        toolName: toolName,
+        mode: mode,
+        modeLabel: modeLabel,
+        allowEdit: allowEdit,
+        argsJSON: argsJSON
+    });
+    contentEl.appendChild(panel);
+    bindInlineHitlApproval(panel, data, { allowEdit: allowEdit });
+}
+
+function resolveInlineHitlDecision(timeline, data, decision, message) {
+    if (!timeline || !data || !data.interruptId) return false;
+    const interruptId = String(data.interruptId);
+    let item = null;
+    const mappedId = hitlInterruptToolItemMap.get(interruptId);
+    if (mappedId) item = document.getElementById(mappedId);
+    if (!item) item = findToolCallItemForHitl(timeline, data);
+    if (!item) {
+        item = timeline.querySelector('[data-hitl-interrupt-id="' + hitlEscapeAttrSelector(interruptId) + '"]');
+    }
+    if (!item) return false;
+
+    if (item.classList.contains('timeline-item-tool_call')) {
+        const state = toolCallDetailStateByItemId.get(item.id) || {};
+        state.hitlData = Object.assign({}, state.hitlData || data, {
+            resolved: true,
+            decision: decision,
+            decisionMessage: message || '',
+            comment: data.comment || (state.hitlData && state.hitlData.comment) || '',
+            editedArgs: data.editedArgs || data.editedArguments || (state.hitlData && (state.hitlData.editedArgs || state.hitlData.editedArguments)) || null
+        });
+        if (decision === 'approve' && state.hitlData.editedArgs && typeof state.hitlData.editedArgs === 'object') {
+            state.originalArgs = state.originalArgs || state.args || {};
+            state.args = state.hitlData.editedArgs;
+            state.argsEditedByHitl = true;
         }
-        <div class="hitl-input-help">备注（可选）：建议写审批依据。</div>
-        <input class="hitl-config-input hitl-inline-comment" type="text" placeholder="例如：允许只读命令">
-        <div class="hitl-pending-actions">
+        state.pending = decision === 'approve';
+        setToolCallDetailState(item, state);
+        const content = item.querySelector('.timeline-item-content.tool-call-detail-content');
+        if (content) {
+            content.remove();
+            item.classList.remove('tool-call-detail-expanded');
+        }
+        renderToolCallDetailContent(item);
+        return true;
+    }
+
+    const panel = item.querySelector('.hitl-inline-approval');
+    if (panel) {
+        markInlineHitlDecision(panel, decision, message || '');
+        return true;
+    }
+    return false;
+}
+
+function findToolCallItemForHitl(timeline, data) {
+    if (!timeline || !data) return null;
+    const payload = data.payload && typeof data.payload === 'object' ? data.payload : {};
+    const toolCallId = String(data.toolCallId || payload.toolCallId || '').trim();
+    if (toolCallId) {
+        const byId = timeline.querySelector('[data-tool-call-id="' + hitlEscapeAttrSelector(toolCallId) + '"]');
+        if (byId && byId.classList.contains('timeline-item-tool_call')) return byId;
+    }
+    const toolName = String(data.toolName || payload.toolName || '').trim().toLowerCase();
+    if (!toolName) return null;
+    const shortWant = toolName.indexOf('::') >= 0 ? toolName.split('::').pop() : toolName;
+    const calls = timeline.querySelectorAll('.timeline-item-tool_call');
+    for (let i = calls.length - 1; i >= 0; i--) {
+        const tn = String(calls[i].dataset.toolName || '').trim().toLowerCase();
+        const shortTn = tn.indexOf('::') >= 0 ? tn.split('::').pop() : tn;
+        if (tn === toolName || tn.endsWith('::' + shortWant) || shortTn === shortWant) {
+            return calls[i];
+        }
+    }
+    return null;
+}
+
+function buildInlineHitlApprovalHtml(data, opts) {
+    const hasToolNameOverride = opts && Object.prototype.hasOwnProperty.call(opts, 'toolName');
+    const toolName = hasToolNameOverride ? String(opts.toolName || '') : (data.toolName || '-');
+    const mode = opts && opts.mode ? opts.mode : String(data.mode || 'approval').trim().toLowerCase();
+    const modeLabel = opts && opts.modeLabel ? opts.modeLabel : (mode === 'review_edit' ? '审查编辑' : '审批模式');
+    const allowEdit = opts && opts.allowEdit === true;
+    const argsJSON = opts && opts.argsJSON ? opts.argsJSON : '';
+    const toolBadge = toolName
+        ? '<span class="hitl-tool-badge">' + escapeHtml(toolName) + '</span>'
+        : '';
+    if (data && data.resolved) {
+        const ok = data.decision === 'approve';
+        const text = data.decisionMessage || (ok ? '已通过，继续执行' : '已拒绝');
+        const comment = data.comment ? '<span class="hitl-inline-decision-comment">' + escapeHtml(data.comment) + '</span>' : '';
+        return `
+            <div class="hitl-inline-decision hitl-inline-decision--${ok ? 'approve' : 'reject'}">
+                <span class="hitl-inline-decision-dot" aria-hidden="true"></span>
+                <strong>${escapeHtml(ok ? '审批通过' : '审批拒绝')}</strong>
+                <span>${escapeHtml(text)}</span>
+                ${comment}
+            </div>
+        `;
+    }
+    return `
+        <div class="hitl-inline-header">
+            <div class="hitl-inline-title">
+                <span class="hitl-inline-icon" aria-hidden="true">!</span>
+                <span>待审批</span>
+            </div>
+            <div class="hitl-inline-badges">
+                ${toolBadge}
+                <span class="hitl-mode-tag hitl-mode-tag--${escapeHtml(mode || 'approval')}">${escapeHtml(modeLabel)}</span>
+            </div>
+        </div>
+        <div class="hitl-inline-body">
+            <div class="hitl-input-help hitl-inline-summary">确认上方参数后决定是否继续执行。</div>
+            ${allowEdit
+                ? `<label class="hitl-inline-field">
+                       <span class="hitl-context-label">参数覆盖（JSON，可选）</span>
+                       <textarea class="hitl-edit-args hitl-inline-edit" placeholder='{"command":"ls -la"}'>${escapeHtml(argsJSON === '{}' ? '' : argsJSON)}</textarea>
+                   </label>`
+                : ''
+            }
+            <label class="hitl-inline-field">
+                <span class="hitl-context-label">备注（可选）</span>
+                <input class="hitl-config-input hitl-inline-comment" type="text" placeholder="例如：允许只读命令">
+            </label>
+        </div>
+        <div class="hitl-pending-actions hitl-inline-actions">
+            <div class="hitl-input-help hitl-inline-status" aria-live="polite"></div>
             <button class="btn-secondary hitl-inline-reject">拒绝</button>
             <button class="btn-primary hitl-inline-approve">通过</button>
         </div>
-        <div class="hitl-input-help hitl-inline-status"></div>
     `;
-    contentEl.appendChild(panel);
+}
 
+function autoResizeHitlTextarea(textarea) {
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.max(textarea.scrollHeight, textarea.offsetHeight || 0) + 'px';
+}
+
+function bindInlineHitlApproval(panel, data, opts) {
     const approveBtn = panel.querySelector('.hitl-inline-approve');
     const rejectBtn = panel.querySelector('.hitl-inline-reject');
     const commentInput = panel.querySelector('.hitl-inline-comment');
     const editInput = panel.querySelector('.hitl-inline-edit');
     const statusEl = panel.querySelector('.hitl-inline-status');
+    const allowEdit = opts && opts.allowEdit === true;
+    if (!approveBtn || !rejectBtn || !commentInput || !statusEl) return;
+
+    if (editInput) {
+        autoResizeHitlTextarea(editInput);
+        editInput.addEventListener('input', function () {
+            autoResizeHitlTextarea(editInput);
+        });
+    }
 
     const setBusy = function (busy) {
         approveBtn.disabled = busy;
@@ -3197,7 +3389,27 @@ function renderInlineHitlApproval(itemId, data) {
                 setBusy(false);
                 return;
             }
-            statusEl.textContent = decision === 'approve' ? '已通过，等待执行继续...' : '已拒绝，反馈已交给模型继续迭代...';
+            const msg = decision === 'approve' ? '已通过，等待执行继续...' : '已拒绝，反馈已交给模型继续迭代...';
+            const toolItem = panel.closest('.timeline-item-tool_call');
+            if (toolItem && toolItem.id) {
+                const state = toolCallDetailStateByItemId.get(toolItem.id) || {};
+                state.hitlData = Object.assign({}, state.hitlData || data, {
+                    resolved: true,
+                    decision: decision,
+                    decisionMessage: msg,
+                    comment: comment,
+                    editedArgs: editedArgs
+                });
+                if (decision === 'approve' && editedArgs && typeof editedArgs === 'object') {
+                    state.originalArgs = state.originalArgs || state.args || {};
+                    state.args = editedArgs;
+                    state.argsEditedByHitl = true;
+                }
+                state.pending = decision === 'approve';
+                setToolCallDetailState(toolItem, state);
+            }
+            statusEl.textContent = msg;
+            markInlineHitlDecision(panel, decision, msg);
             panel.classList.add('hitl-inline-done');
         } catch (e) {
             statusEl.textContent = '提交失败：' + (e && e.message ? e.message : 'unknown error');
@@ -3207,6 +3419,19 @@ function renderInlineHitlApproval(itemId, data) {
 
     approveBtn.onclick = function () { submit('approve'); };
     rejectBtn.onclick = function () { submit('reject'); };
+}
+
+function markInlineHitlDecision(panel, decision, message) {
+    if (!panel) return;
+    const ok = decision === 'approve';
+    panel.classList.add('hitl-inline-done');
+    panel.innerHTML = `
+        <div class="hitl-inline-decision hitl-inline-decision--${ok ? 'approve' : 'reject'}">
+            <span class="hitl-inline-decision-dot" aria-hidden="true"></span>
+            <strong>${escapeHtml(ok ? '审批通过' : '审批拒绝')}</strong>
+            <span>${escapeHtml(message || (ok ? '已通过，继续执行' : '已拒绝'))}</span>
+        </div>
+    `;
 }
 
 function renderInlineWorkflowHitlApproval(itemId, data) {
@@ -3228,15 +3453,28 @@ function renderInlineWorkflowHitlApproval(itemId, data) {
     const panel = document.createElement('div');
     panel.className = 'workflow-hitl-inline-approval hitl-inline-approval';
     panel.innerHTML = `
-        <div class="hitl-input-help"><strong>${escapeHtml(label)}</strong> 等待人工审批。</div>
-        ${prompt ? `<div class="hitl-input-help">${escapeHtml(prompt)}</div>` : ''}
-        <div class="hitl-input-help">备注（可选）</div>
-        <input class="hitl-config-input workflow-hitl-inline-comment" type="text" placeholder="审批意见">
-        <div class="hitl-pending-actions">
+        <div class="hitl-inline-header">
+            <div class="hitl-inline-title">
+                <span class="hitl-inline-icon" aria-hidden="true">!</span>
+                <span>工作流审批</span>
+            </div>
+            <div class="hitl-inline-badges">
+                <span class="hitl-tool-badge">${escapeHtml(label)}</span>
+                <span class="hitl-mode-tag hitl-mode-tag--approval">审批模式</span>
+            </div>
+        </div>
+        <div class="hitl-inline-body">
+            ${prompt ? `<div class="hitl-inline-note">${escapeHtml(prompt)}</div>` : '<div class="hitl-inline-note">工作流暂停，等待你确认是否继续。</div>'}
+            <label class="hitl-inline-field">
+                <span class="hitl-context-label">备注（可选）</span>
+                <input class="hitl-config-input workflow-hitl-inline-comment" type="text" placeholder="审批意见">
+            </label>
+        </div>
+        <div class="hitl-pending-actions hitl-inline-actions">
+            <div class="hitl-input-help workflow-hitl-inline-status" aria-live="polite"></div>
             <button class="btn-secondary workflow-hitl-inline-reject">拒绝</button>
             <button class="btn-primary workflow-hitl-inline-approve">通过</button>
         </div>
-        <div class="hitl-input-help workflow-hitl-inline-status"></div>
     `;
     contentEl.appendChild(panel);
 
@@ -3520,8 +3758,8 @@ async function restoreHitlInlineForConversation(conversationId) {
                 payload: payloadObj,
                 conversationId: item.conversationId || conversationId
             };
-            let hitlItemEl = detailsContainer.querySelector('[data-hitl-interrupt-id="' + hitlEscapeAttrSelector(String(item.id)) + '"]');
-            if (!hitlItemEl && item.toolCallId) {
+            let hitlItemEl = null;
+            if (item.toolCallId) {
                 hitlItemEl = detailsContainer.querySelector('[data-tool-call-id="' + hitlEscapeAttrSelector(String(item.toolCallId)) + '"]');
             }
             if (!hitlItemEl && item.toolName) {
@@ -3537,6 +3775,9 @@ async function restoreHitlInlineForConversation(conversationId) {
                         break;
                     }
                 }
+            }
+            if (!hitlItemEl) {
+                hitlItemEl = detailsContainer.querySelector('[data-hitl-interrupt-id="' + hitlEscapeAttrSelector(String(item.id)) + '"]');
             }
             if (!hitlItemEl) continue;
             renderInlineHitlApproval(hitlItemEl.id, hitlData);
@@ -3683,7 +3924,16 @@ async function attachRunningTaskEventStream(conversationId) {
                 if (eventData && eventData.type === 'done') {
                     replaySawDone = true;
                 }
-                handleStreamEvent(eventData, null, progressId, getAssistantIdFn, setAssistantIdFn, function () { return mcpIds; }, function (ids) { mcpIds = mergeMcpExecutionIDLists(mcpIds, ids || []); });
+                if (typeof window.currentConversationId === 'string' && window.currentConversationId !== conversationId) {
+                    return;
+                }
+                const eventConvId = eventData && eventData.data && eventData.data.conversationId
+                    ? String(eventData.data.conversationId)
+                    : '';
+                if (eventConvId && eventConvId !== conversationId) {
+                    return;
+                }
+                handleStreamEvent(eventData, null, progressId, getAssistantIdFn, setAssistantIdFn, function () { return mcpIds; }, function (ids) { mcpIds = mergeMcpExecutionIDLists(mcpIds, ids || []); }, { conversationId: conversationId });
             };
             while (true) {
                 const chunk = await reader.read();
@@ -3842,7 +4092,7 @@ function buildToolResultSectionHtml(data, opts) {
     };
     const execResultLabel = _t('timeline.executionResult');
     const execIdLabel = _t('timeline.executionId');
-    const waitingLabel = _t('timeline.running');
+    const waitingLabel = opts.pendingText || _t('timeline.running');
     if (opts.pending) {
         return (
             '<div class="tool-result-section pending">' +
@@ -3982,21 +4232,55 @@ async function renderToolCallDetailContent(item) {
             buildToolResultSectionHtml(state.resultData, { rawText: state.rawText }) +
             '</div>';
     } else if (state.pending !== false) {
+        let pendingOpts = { pending: true };
+        if (state.hitlData && state.hitlData.interruptId) {
+            pendingOpts = {
+                pending: true,
+                pendingText: state.hitlData.resolved ? '已通过，等待执行结果' : '等待审批，通过后执行'
+            };
+        }
         resultBlock = '<div class="tool-details tool-result-slot">' +
-            buildToolResultSectionHtml({}, { pending: true }) +
+            buildToolResultSectionHtml({}, pendingOpts) +
             '</div>';
     }
 
     const paramsLabel = typeof window.t === 'function' ? window.t('timeline.params') : '参数:';
+    const hitlEditedArgsLabel = state.argsEditedByHitl
+        ? '<span class="tool-args-hitl-edited">已按 HITL 改参执行</span>'
+        : '';
     const argsBlock = state.hideArgs ? '' :
         '<div class="tool-arg-section">' +
         '<strong data-i18n="timeline.params">' + escapeHtml(paramsLabel) + '</strong>' +
+        hitlEditedArgsLabel +
         '<pre class="tool-args">' + escapeHtml(JSON.stringify(args, null, 2)) + '</pre>' +
         '</div>';
-    content.innerHTML = '<div class="tool-details">' + argsBlock + resultBlock + '</div>';
+    let hitlBlock = '';
+    if (state.hitlData && state.hitlData.interruptId) {
+        const hitlPayload = state.hitlData.payload && typeof state.hitlData.payload === 'object' ? state.hitlData.payload : {};
+        let hitlMode = String(state.hitlData.mode || '').trim().toLowerCase();
+        if (hitlMode === 'feedback' || hitlMode === 'followup') hitlMode = 'approval';
+        const hitlAllowEdit = hitlMode === 'review_edit';
+        const hitlArgsObj = hitlPayload.argumentsObj && typeof hitlPayload.argumentsObj === 'object' ? hitlPayload.argumentsObj : args;
+        hitlBlock = '<div class="hitl-inline-approval hitl-inline-approval--merged">' +
+            buildInlineHitlApprovalHtml(state.hitlData, {
+                toolName: '',
+                mode: hitlMode,
+                modeLabel: hitlMode === 'review_edit' ? '审查编辑' : '审批模式',
+                allowEdit: hitlAllowEdit,
+                argsJSON: JSON.stringify(hitlArgsObj || {}, null, 2)
+            }) +
+            '</div>';
+    }
+    content.innerHTML = '<div class="tool-details">' + argsBlock + resultBlock + hitlBlock + '</div>';
     item.appendChild(content);
     item.classList.add('tool-call-detail-expanded');
     updateToolDetailToggleLabel(item);
+    const hitlPanel = content.querySelector('.hitl-inline-approval');
+    if (hitlPanel && state.hitlData) {
+        let bindMode = String(state.hitlData.mode || '').trim().toLowerCase();
+        if (bindMode === 'feedback' || bindMode === 'followup') bindMode = 'approval';
+        bindInlineHitlApproval(hitlPanel, state.hitlData, { allowEdit: bindMode === 'review_edit' });
+    }
 }
 
 if (typeof document !== 'undefined' && !document.__cyberStrikeToolCallDetailToggleBound) {

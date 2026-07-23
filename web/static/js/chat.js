@@ -80,11 +80,16 @@ let chatAttachmentSeq = 0;
 
 // 对话模式：eino_single = Eino ADK 单代理（/api/eino-agent/stream）；deep / plan_execute / supervisor = Eino 多代理（/api/multi-agent/stream，请求体 orchestration）
 const AGENT_MODE_STORAGE_KEY = 'cyberstrike-chat-agent-mode';
+const AI_CHANNEL_STORAGE_KEY = 'cyberstrike-chat-ai-channel';
 const REASONING_MODE_LS = 'cyberstrike-chat-reasoning-mode';
 const REASONING_EFFORT_LS = 'cyberstrike-chat-reasoning-effort';
+const CHAT_AI_CHANNEL_SUMMARY_NAME_MAX = 10;
 const CHAT_AGENT_MODE_EINO_SINGLE = 'eino_single';
 const CHAT_AGENT_EINO_MODES = ['deep', 'plan_execute', 'supervisor'];
 let multiAgentAPIEnabled = false;
+let chatAIChannels = {};
+let chatDefaultAIChannel = '';
+let chatAIChannelIdByNormalizedId = {};
 
 // 人机协同（HITL）会话级配置
 const HITL_STORAGE_PREFIX = 'cyberstrike-chat-hitl';
@@ -96,6 +101,190 @@ const HITL_MODE_APPROVAL = 'approval';
 const HITL_MODE_REVIEW_EDIT = 'review_edit';
 const HITL_MODE_OPTIONS = [HITL_MODE_OFF, HITL_MODE_APPROVAL, HITL_MODE_REVIEW_EDIT];
 let hitlApplyFeedbackTimer = null;
+let hitlAutoSaveTimer = null;
+const sessionSettingsSelects = new Map();
+let sessionSettingsSelectDocBound = false;
+
+function sessionSettingsSelectLabel(option) {
+    return option ? (option.textContent || option.label || option.value || '') : '';
+}
+
+function syncSessionSettingsSelect(select) {
+    const reg = sessionSettingsSelects.get(select);
+    if (!reg) return;
+    const selected = select.options[select.selectedIndex];
+    reg.value.textContent = sessionSettingsSelectLabel(selected);
+    reg.trigger.disabled = !!select.disabled;
+    reg.wrapper.classList.toggle('is-disabled', !!select.disabled);
+    reg.menu.innerHTML = '';
+
+    Array.prototype.forEach.call(select.options, function (option, index) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'session-settings-select-option';
+        item.setAttribute('role', 'option');
+        item.setAttribute('data-index', String(index));
+        item.setAttribute('aria-selected', option.selected ? 'true' : 'false');
+        item.disabled = !!option.disabled;
+        item.classList.toggle('is-selected', !!option.selected);
+
+        const label = document.createElement('span');
+        label.className = 'session-settings-select-option-label';
+        label.textContent = sessionSettingsSelectLabel(option);
+        item.appendChild(label);
+        reg.menu.appendChild(item);
+    });
+}
+
+function closeSessionSettingsSelect(select) {
+    const reg = sessionSettingsSelects.get(select);
+    if (!reg) return;
+    reg.wrapper.classList.remove('open');
+    reg.trigger.setAttribute('aria-expanded', 'false');
+}
+
+function closeAllSessionSettingsSelects() {
+    sessionSettingsSelects.forEach(function (_reg, select) {
+        closeSessionSettingsSelect(select);
+    });
+}
+
+function enhanceSessionSettingsSelect(select) {
+    if (!select || select.dataset.sessionSettingsSelect === '1') {
+        if (select) syncSessionSettingsSelect(select);
+        return;
+    }
+    const panel = select.closest && select.closest('.conversation-reasoning-card');
+    if (!panel) return;
+
+    select.dataset.sessionSettingsSelect = '1';
+    select.classList.add('session-settings-native-select');
+    select.tabIndex = -1;
+    select.setAttribute('aria-hidden', 'true');
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'session-settings-select';
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'session-settings-select-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+    const value = document.createElement('span');
+    value.className = 'session-settings-select-value';
+    const caret = document.createElement('span');
+    caret.className = 'session-settings-select-caret';
+    caret.setAttribute('aria-hidden', 'true');
+    caret.textContent = '⌄';
+    trigger.appendChild(value);
+    trigger.appendChild(caret);
+
+    const menu = document.createElement('div');
+    menu.className = 'session-settings-select-menu';
+    menu.setAttribute('role', 'listbox');
+
+    select.parentNode.insertBefore(wrapper, select);
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(menu);
+    wrapper.appendChild(select);
+    sessionSettingsSelects.set(select, { wrapper: wrapper, trigger: trigger, value: value, menu: menu });
+
+    trigger.addEventListener('click', function (event) {
+        event.stopPropagation();
+        if (select.disabled) return;
+        const willOpen = !wrapper.classList.contains('open');
+        closeAllSessionSettingsSelects();
+        wrapper.classList.toggle('open', willOpen);
+        trigger.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+
+    trigger.addEventListener('keydown', function (event) {
+        if (select.disabled) return;
+        const enabled = Array.prototype.filter.call(select.options, function (option) { return !option.disabled; });
+        if (!enabled.length) return;
+        const currentOption = select.options[select.selectedIndex];
+        const current = Math.max(0, enabled.indexOf(currentOption));
+        let next = current;
+        if (event.key === 'ArrowDown') next = Math.min(enabled.length - 1, current + 1);
+        else if (event.key === 'ArrowUp') next = Math.max(0, current - 1);
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = enabled.length - 1;
+        else if (event.key === 'Escape') {
+            closeSessionSettingsSelect(select);
+            return;
+        } else if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            wrapper.classList.add('open');
+            trigger.setAttribute('aria-expanded', 'true');
+            return;
+        } else {
+            return;
+        }
+        event.preventDefault();
+        const nextOption = enabled[next];
+        if (nextOption && select.value !== nextOption.value) {
+            select.value = nextOption.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        syncSessionSettingsSelect(select);
+    });
+
+    menu.addEventListener('click', function (event) {
+        const item = event.target.closest('.session-settings-select-option');
+        if (!item || item.disabled) return;
+        event.stopPropagation();
+        const option = select.options[Number(item.dataset.index)];
+        if (option && !option.disabled && select.value !== option.value) {
+            select.value = option.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        syncSessionSettingsSelect(select);
+        closeSessionSettingsSelect(select);
+    });
+
+    select.addEventListener('change', function () {
+        syncSessionSettingsSelect(select);
+    });
+    syncSessionSettingsSelect(select);
+}
+
+function initSessionSettingsSelects() {
+    const panel = document.getElementById('conversation-reasoning-body');
+    if (!panel) return;
+    panel.querySelectorAll('select').forEach(enhanceSessionSettingsSelect);
+    if (!sessionSettingsSelectDocBound) {
+        document.addEventListener('click', closeAllSessionSettingsSelects);
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') closeAllSessionSettingsSelects();
+        });
+        sessionSettingsSelectDocBound = true;
+    }
+}
+
+function refreshSessionSettingsSelects() {
+    sessionSettingsSelects.forEach(function (_reg, select) {
+        syncSessionSettingsSelect(select);
+    });
+}
+
+function syncChatReasoningBarHeight() {
+    const inputBar = document.getElementById('chat-input-container');
+    const reasoning = document.getElementById('chat-reasoning-wrapper');
+    if (!inputBar || !reasoning) return;
+    const h = Math.ceil(inputBar.getBoundingClientRect().height || 0);
+    if (h > 0) {
+        reasoning.style.setProperty('--chat-input-bar-height', h + 'px');
+    }
+}
+
+function initChatReasoningBarHeightSync() {
+    syncChatReasoningBarHeight();
+    window.addEventListener('resize', syncChatReasoningBarHeight);
+    const inputBar = document.getElementById('chat-input-container');
+    if (inputBar && typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(syncChatReasoningBarHeight);
+        ro.observe(inputBar);
+    }
+}
 
 /** 非阻塞提示（与 chat-files-toast 样式共用） */
 function showChatToast(message, type) {
@@ -391,7 +580,7 @@ function readHitlConfigFromForm() {
 }
 
 function updateHitlStatusUI(_cfg) {
-    /* 侧栏已改为「应用」按钮生效，不再用角标展示模式 */
+    /* 侧栏已改为自动保存，不再用角标展示模式 */
 }
 
 function applyHitlConfigToUI(cfg) {
@@ -409,6 +598,7 @@ function applyHitlConfigToUI(cfg) {
     }
     if (toolsEl) toolsEl.value = toolsVal;
     updateHitlStatusUI(conf);
+    refreshSessionSettingsSelects();
 }
 
 function bindHitlSidebarModeListener() {
@@ -417,6 +607,9 @@ function bindHitlSidebarModeListener() {
     modeEl.dataset.hitlModeBound = '1';
     modeEl.addEventListener('change', function () {
         applyHitlConfigToUI(readHitlConfigFromForm());
+        refreshSessionSettingsSelects();
+        scheduleHitlSidebarAutosave(0);
+        updateChatReasoningSummary();
     });
 }
 
@@ -458,7 +651,7 @@ function showHitlApplyFeedback(text, isError, partial) {
     }
 }
 
-/** 侧栏人机协同：修改模式/白名单后点此写入本地、合并展示并同步服务端 */
+/** 侧栏人机协同：自动写入本地、合并展示并尽量同步服务端 */
 async function applyHitlSidebarConfig() {
     const btn = document.getElementById('hitl-apply-btn');
     showHitlApplyFeedback('', false);
@@ -486,7 +679,7 @@ async function applyHitlSidebarConfig() {
             const ok = typeof window.t === 'function' ? window.t('chat.hitlApplyOkSync') : '人机协同配置已保存并同步到服务器。';
             showHitlApplyFeedback(ok, false);
         } else if (yamlMerged) {
-            const okYaml = typeof window.t === 'function' ? window.t('chat.hitlApplyOkWhitelistYaml') : '免审批工具已合并进 config.yaml 并生效。协同模式、超时等仍须选中会话后再点「应用」才会写入服务器。';
+            const okYaml = typeof window.t === 'function' ? window.t('chat.hitlApplyOkWhitelistYaml') : '免审批工具已合并进 config.yaml 并生效。会话配置会自动保存。';
             showHitlApplyFeedback(okYaml, false);
         } else {
             const localOnly = typeof window.t === 'function' ? window.t('chat.hitlApplyOkLocal') : '已保存到本浏览器。';
@@ -503,6 +696,29 @@ async function applyHitlSidebarConfig() {
     } finally {
         if (btn) btn.disabled = false;
     }
+}
+
+function scheduleHitlSidebarAutosave(delayMs) {
+    if (hitlAutoSaveTimer) {
+        clearTimeout(hitlAutoSaveTimer);
+        hitlAutoSaveTimer = null;
+    }
+    hitlAutoSaveTimer = setTimeout(function () {
+        hitlAutoSaveTimer = null;
+        applyHitlSidebarConfig();
+    }, typeof delayMs === 'number' ? delayMs : 500);
+}
+
+function bindHitlSensitiveToolsAutosaveListener() {
+    const toolsEl = document.getElementById('hitl-sensitive-tools');
+    if (!toolsEl || toolsEl.dataset.hitlAutosaveBound === '1') return;
+    toolsEl.dataset.hitlAutosaveBound = '1';
+    toolsEl.addEventListener('input', function () {
+        scheduleHitlSidebarAutosave(700);
+    });
+    toolsEl.addEventListener('blur', function () {
+        scheduleHitlSidebarAutosave(0);
+    });
 }
 
 /** 将 localStorage 规范为 eino_single | deep | plan_execute | supervisor */
@@ -536,6 +752,7 @@ if (typeof window !== 'undefined') {
     window.getHitlConfigForConversation = getHitlConfigForConversation;
     bindHitlSidebarModeListener();
     bindHitlReviewerToggleListeners();
+    bindHitlSensitiveToolsAutosaveListener();
     window.setHitlReviewerUI = setHitlReviewerUI;
     window.onHitlReviewerChanged = onHitlReviewerChanged;
     window.bindHitlReviewerToggleListeners = bindHitlReviewerToggleListeners;
@@ -638,8 +855,83 @@ function syncReasoningRowVisibility(modeVal) {
     if (!show) {
         closeChatReasoningPanel();
     } else {
+        syncChatReasoningBarHeight();
         updateChatReasoningSummary();
     }
+}
+
+function normalizeChatAIChannelId(s) {
+    return String(s || '').trim().toLowerCase().replace(/_/g, '-').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function resolveChatAIChannelId(id) {
+    const raw = String(id || '').trim();
+    if (!raw) return '';
+    if (chatAIChannels[raw]) return raw;
+    const normalized = normalizeChatAIChannelId(raw);
+    return normalized && chatAIChannelIdByNormalizedId[normalized] ? chatAIChannelIdByNormalizedId[normalized] : '';
+}
+
+function populateChatAIChannelSelect(ai) {
+    const select = document.getElementById('chat-ai-channel-select');
+    if (!select) return;
+    const cfg = ai && typeof ai === 'object' ? ai : {};
+    chatAIChannels = cfg.channels && typeof cfg.channels === 'object' ? cfg.channels : {};
+    chatAIChannelIdByNormalizedId = {};
+    Object.keys(chatAIChannels).forEach(function (id) {
+        const normalized = normalizeChatAIChannelId(id);
+        if (normalized && !chatAIChannelIdByNormalizedId[normalized]) {
+            chatAIChannelIdByNormalizedId[normalized] = id;
+        }
+    });
+    chatDefaultAIChannel = resolveChatAIChannelId(cfg.default_channel || '');
+    select.innerHTML = '';
+    const fallbackOpt = document.createElement('option');
+    fallbackOpt.value = '';
+    fallbackOpt.textContent = typeof window.t === 'function' ? window.t('chat.aiChannelDefault') : '跟随默认通道';
+    select.appendChild(fallbackOpt);
+    Object.keys(chatAIChannels).sort().forEach(function (id) {
+        const ch = chatAIChannels[id] || {};
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = (ch.name || id) + (ch.model ? ' · ' + ch.model : '');
+        select.appendChild(opt);
+    });
+    let stored = '';
+    try { stored = localStorage.getItem(AI_CHANNEL_STORAGE_KEY) || ''; } catch (e) {}
+    stored = resolveChatAIChannelId(stored);
+    select.value = stored || '';
+    refreshSessionSettingsSelects();
+    updateChatReasoningSummary();
+}
+
+function selectedChatAIChannelId() {
+    const select = document.getElementById('chat-ai-channel-select');
+    return resolveChatAIChannelId(select ? select.value : '');
+}
+
+function currentChatAIChannelLabel() {
+    const id = selectedChatAIChannelId() || chatDefaultAIChannel;
+    const ch = id ? chatAIChannels[id] : null;
+    if (!ch) {
+        return typeof window.t === 'function' ? window.t('chat.aiChannelDefaultShort') : '默认通道';
+    }
+    return ch.name || id;
+}
+
+function truncateChatAIChannelSummaryLabel(label) {
+    const chars = Array.from(String(label || ''));
+    if (chars.length <= CHAT_AI_CHANNEL_SUMMARY_NAME_MAX) return chars.join('');
+    return chars.slice(0, CHAT_AI_CHANNEL_SUMMARY_NAME_MAX).join('') + '...';
+}
+
+function persistChatAIChannelPref() {
+    const id = selectedChatAIChannelId();
+    try {
+        if (id) localStorage.setItem(AI_CHANNEL_STORAGE_KEY, id);
+        else localStorage.removeItem(AI_CHANNEL_STORAGE_KEY);
+    } catch (e) {}
+    updateChatReasoningSummary();
 }
 
 function reasoningSummaryModeLabel(mode) {
@@ -662,8 +954,18 @@ function updateChatReasoningSummary() {
     const effort = effEl && effEl.value ? String(effEl.value).trim() : '';
     const t = (typeof window.t === 'function') ? window.t : function (k) { return k; };
     const modePart = reasoningSummaryModeLabel(mode);
-    const effPart = effort || t('chat.reasoningSummaryDash');
-    el.textContent = modePart + ' / ' + effPart;
+    const reasoningPart = effort || modePart || t('chat.reasoningSummaryDash');
+    let hitlPart = '';
+    try {
+        const hitlCfg = readHitlConfigFromForm();
+        hitlPart = getHitlModeLabel(hitlCfg.mode);
+    } catch (e) {
+        hitlPart = '';
+    }
+    const channelPart = currentChatAIChannelLabel();
+    const parts = [truncateChatAIChannelSummaryLabel(channelPart), reasoningPart, hitlPart].filter(Boolean);
+    el.textContent = parts.join(' / ');
+    el.title = [channelPart, reasoningPart, hitlPart].filter(Boolean).join(' / ');
 }
 
 function closeChatReasoningPanel() {
@@ -677,6 +979,7 @@ function toggleConversationReasoningCard() {
     const wrap = document.getElementById('chat-reasoning-wrapper');
     const toggle = document.getElementById('conversation-reasoning-toggle');
     if (!wrap || !toggle) return;
+    syncChatReasoningBarHeight();
     wrap.classList.toggle('conversation-reasoning-collapsed');
     const collapsed = wrap.classList.contains('conversation-reasoning-collapsed');
     toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
@@ -711,6 +1014,7 @@ function restoreChatReasoningControlsFromStorage() {
                 e.value = v;
             }
         }
+        refreshSessionSettingsSelects();
         updateChatReasoningSummary();
     } catch (err) { /* ignore */ }
 }
@@ -721,6 +1025,7 @@ function persistChatReasoningPrefs() {
         const elEff = document.getElementById('chat-reasoning-effort');
         if (m) localStorage.setItem(REASONING_MODE_LS, m.value || 'default');
         if (elEff) localStorage.setItem(REASONING_EFFORT_LS, elEff.value || '');
+        refreshSessionSettingsSelects();
         updateChatReasoningSummary();
     } catch (err) { /* ignore */ }
 }
@@ -746,12 +1051,15 @@ function buildReasoningRequestPayload() {
 }
 
 if (typeof window !== 'undefined') {
+    window.persistChatAIChannelPref = persistChatAIChannelPref;
+    window.populateChatAIChannelSelect = populateChatAIChannelSelect;
     window.persistChatReasoningPrefs = persistChatReasoningPrefs;
     window.buildReasoningRequestPayload = buildReasoningRequestPayload;
     window.closeChatReasoningPanel = closeChatReasoningPanel;
     window.toggleChatReasoningPanel = toggleChatReasoningPanel;
     window.toggleConversationReasoningCard = toggleConversationReasoningCard;
     window.updateChatReasoningSummary = updateChatReasoningSummary;
+    window.refreshSessionSettingsSelects = refreshSessionSettingsSelects;
 }
 
 function closeAgentModePanel() {
@@ -826,6 +1134,7 @@ async function initChatAgentModeFromConfig() {
         if (!r.ok) return;
         const cfg = await r.json();
         multiAgentAPIEnabled = !!(cfg.multi_agent && cfg.multi_agent.enabled);
+        populateChatAIChannelSelect(cfg.ai || {});
         if (typeof window !== 'undefined') {
             window.__csaiMultiAgentPublic = cfg.multi_agent || null;
             const tw = cfg.hitl && cfg.hitl.tool_whitelist;
@@ -1042,9 +1351,19 @@ async function sendMessage() {
         conversationId: currentConversationId,
         role: typeof getCurrentRole === 'function' ? getCurrentRole() : ''
     };
+    let streamConversationId = body.conversationId ? String(body.conversationId) : null;
+    const isStreamStillVisibleForRequest = function () {
+        if (!document.getElementById(progressId)) return false;
+        if (!streamConversationId) return currentConversationId === body.conversationId;
+        return currentConversationId === streamConversationId;
+    };
     if (!currentConversationId && typeof getActiveProjectId === 'function') {
         const pid = getActiveProjectId();
         if (pid) body.projectId = pid;
+    }
+    const aiChannelId = selectedChatAIChannelId();
+    if (aiChannelId) {
+        body.aiChannelId = aiChannelId;
     }
     const hitlCfg = readHitlConfigFromForm();
     if (normalizeHitlMode(hitlCfg.mode) !== HITL_MODE_OFF) {
@@ -1078,7 +1397,7 @@ async function sendMessage() {
         window.CyberStrikeChatScroll.onUserSendMessage();
     }
     const progressElement = document.getElementById(progressId);
-    registerProgressTask(progressId, currentConversationId);
+    registerProgressTask(progressId, streamConversationId);
     loadActiveTasks();
     let assistantMessageId = null;
     let mcpExecutionIds = [];
@@ -1105,7 +1424,7 @@ async function sendMessage() {
 
         window.__csAgentLiveStream = {
             active: true,
-            conversationId: currentConversationId || null,
+            conversationId: streamConversationId || null,
             progressId: progressId
         };
         try {
@@ -1117,9 +1436,26 @@ async function sendMessage() {
                 if (eventData && eventData.type === 'done') {
                     streamSawDone = true;
                 }
+                const eventConvId = eventData && eventData.data && eventData.data.conversationId
+                    ? String(eventData.data.conversationId)
+                    : '';
+                let justBoundConversation = false;
+                if (eventConvId) {
+                    if (streamConversationId && streamConversationId !== eventConvId) {
+                        return;
+                    }
+                    if (!streamConversationId && eventData.type === 'conversation') {
+                        streamConversationId = eventConvId;
+                        justBoundConversation = true;
+                    }
+                }
+                if (!justBoundConversation && !isStreamStillVisibleForRequest()) {
+                    return;
+                }
                 handleStreamEvent(eventData, progressElement, progressId,
                     () => assistantMessageId, (id) => { assistantMessageId = id; },
-                    () => mcpExecutionIds, (ids) => { mcpExecutionIds = ids; });
+                    () => mcpExecutionIds, (ids) => { mcpExecutionIds = ids; },
+                    { conversationId: streamConversationId });
             };
             const processSseLines = typeof processSseDataLinesYielding === 'function'
                 ? processSseDataLinesYielding
@@ -1157,13 +1493,13 @@ async function sendMessage() {
                 if (typeof loadActiveTasks === 'function') {
                     loadActiveTasks();
                 }
-                const convId = currentConversationId || (body && body.conversationId) || null;
+                const convId = streamConversationId || (body && body.conversationId) || null;
                 let attached = false;
                 if (convId && typeof window.attachRunningTaskEventStream === 'function') {
                     window.__csAgentLiveStream = { active: false, conversationId: null, progressId: null };
                     attached = await window.attachRunningTaskEventStream(convId).catch(() => false);
                 }
-                if (!attached) {
+                if (!attached && isStreamStillVisibleForRequest()) {
                     const hint = typeof window.t === 'function'
                         ? window.t('chat.streamEndedWithoutDone')
                         : '连接提前结束，未收到任务完成信号。任务可能仍在后端执行，请查看顶部运行中任务或刷新当前对话。';
@@ -1186,6 +1522,12 @@ async function sendMessage() {
         }
         
     } catch (error) {
+        if (!isStreamStillVisibleForRequest()) {
+            if (typeof loadActiveTasks === 'function') {
+                loadActiveTasks();
+            }
+            return;
+        }
         removeMessage(progressId);
         const msg = error && error.message != null ? String(error.message) : String(error);
         const isNetwork = /network|fetch|Failed to fetch|aborted|AbortError|load failed|NetworkError/i.test(msg);
@@ -10201,6 +10543,8 @@ function applyCustomIcon() {
 
 // 自定义图标输入框回车键处理
 document.addEventListener('DOMContentLoaded', function() {
+    initSessionSettingsSelects();
+    initChatReasoningBarHeightSync();
     const customInput = document.getElementById('custom-icon-input');
     if (customInput) {
         customInput.addEventListener('keydown', function(e) {

@@ -29,6 +29,16 @@ var dashboardState = {
     lastProjectSummary: null,   // 最近一次项目仪表盘摘要（供 Tab 切换时重绘）
 };
 
+function dashboardProjectScopedUrl(url) {
+    try {
+        var pid = typeof getActiveProjectId === 'function' ? (getActiveProjectId() || '') : '';
+        if (!pid) return url;
+        return url + (url.indexOf('?') === -1 ? '?' : '&') + 'project_id=' + encodeURIComponent(pid);
+    } catch (e) {
+        return url;
+    }
+}
+
 async function refreshDashboard() {
     const runningEl = document.getElementById('dashboard-running-tasks');
     const vulnTotalEl = document.getElementById('dashboard-vuln-total');
@@ -143,11 +153,11 @@ async function refreshDashboard() {
             // External MCP 健康度
             fetchJson('/api/external-mcp/stats'),
             // WebShell 已建立的连接（pentest 落地后的 foothold，对运营场景非常关键）
-            fetchJson('/api/webshell/connections'),
+            fetchJson(dashboardProjectScopedUrl('/api/webshell/connections')),
             // C2 仪表盘条：监听器 / 会话 / 待处理任务（任务接口含 pending_queued_count）
-            fetchJson('/api/c2/listeners'),
-            fetchJson('/api/c2/sessions?limit=500'),
-            fetchJson('/api/c2/tasks?page=1&page_size=1'),
+            fetchJson(dashboardProjectScopedUrl('/api/c2/listeners')),
+            fetchJson(dashboardProjectScopedUrl('/api/c2/sessions?limit=500')),
+            fetchJson(dashboardProjectScopedUrl('/api/c2/tasks?page=1&page_size=1')),
             fetchJson('/api/projects/dashboard-summary?fact_limit=10'),
             selectedSeverityStatus ? fetchJson('/api/vulnerabilities/stats?status=' + encodeURIComponent(selectedSeverityStatus)) : Promise.resolve(null)
         ]);

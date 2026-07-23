@@ -868,7 +868,7 @@ async function openAssetProjectModal() {
     }
     const subtitle = document.getElementById('asset-project-subtitle');
     if (subtitle) subtitle.textContent = assetT('assets.bindProjectCount', `将更新 ${assets.length} 个资产`, { count: assets.length });
-    if (typeof openAppModal === 'function') openAppModal('asset-project-modal');
+    if (typeof openAppModal === 'function') openAppModal('asset-project-modal', { display: 'flex' });
     else document.getElementById('asset-project-modal').style.display = 'flex';
     if (select) select.focus();
 }

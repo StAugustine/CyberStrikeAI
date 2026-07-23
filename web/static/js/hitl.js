@@ -615,6 +615,28 @@ function reconcileHitlUiState() {
 
 let hitlFollowRunSeq = 0;
 
+function hitlAutoResizeTextarea(textarea) {
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.max(textarea.scrollHeight, textarea.offsetHeight || 0) + 'px';
+}
+
+function bindHitlAutoResizeTextareas(root) {
+    const scope = root || document;
+    if (!scope || !scope.querySelectorAll) return;
+    scope.querySelectorAll('.hitl-edit-args').forEach(function (textarea) {
+        if (textarea.__hitlAutoResizeBound) {
+            hitlAutoResizeTextarea(textarea);
+            return;
+        }
+        textarea.__hitlAutoResizeBound = true;
+        hitlAutoResizeTextarea(textarea);
+        textarea.addEventListener('input', function () {
+            hitlAutoResizeTextarea(textarea);
+        });
+    });
+}
+
 /**
  * 审批提交后原 SSE 已断开：轮询任务列表，运行中则拉取过程详情；任务结束后再整页加载会话以对齐终态。
  */
@@ -855,6 +877,7 @@ async function refreshHitlPending() {
         } else {
             container.innerHTML = workflowHtml + (workflowHtml && toolHtml ? '<div class="hitl-pending-section-divider"></div>' : '') + (toolHtml || '');
         }
+        bindHitlAutoResizeTextareas(container);
         renderHitlPendingPagination();
     } catch (e) {
         hitlPendingLoaded = false;

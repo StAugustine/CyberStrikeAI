@@ -622,7 +622,8 @@ function getWebshellConnections() {
     if (typeof apiFetch === 'undefined') {
         return Promise.resolve([]);
     }
-    return apiFetch('/api/webshell/connections', { method: 'GET' })
+    var url = '/api/webshell/connections';
+    return apiFetch(url, { method: 'GET' })
         .then(function (r) { return r.json(); })
         .then(function (list) { return Array.isArray(list) ? list : []; })
         .catch(function (e) {
@@ -631,11 +632,205 @@ function getWebshellConnections() {
         });
 }
 
+function webshellConnectionProjectId(conn) {
+    return (conn && (conn.project_id || conn.projectId) || '').trim();
+}
+
+function webshellProjectOptionsHtml(selectedId) {
+    var selected = String(selectedId || '').trim();
+    var html = '<option value="">' + escapeHtml(wsT('assets.unboundProject') || '暂不绑定') + '</option>';
+    var entries = [];
+    try {
+        if (typeof projectNameById !== 'undefined') entries = Object.entries(projectNameById);
+    } catch (e) {}
+    entries.sort(function (a, b) {
+        return String(a[1] || '').localeCompare(String(b[1] || ''), undefined, { sensitivity: 'base' });
+    });
+    entries.forEach(function (entry) {
+        var id = entry[0];
+        var name = entry[1] || id;
+        if (!id) return;
+        html += '<option value="' + escapeHtml(id) + '"' + (id === selected ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+    });
+    if (selected && !entries.some(function (entry) { return entry[0] === selected; })) {
+        html += '<option value="' + escapeHtml(selected) + '" selected>' + escapeHtml(selected) + '</option>';
+    }
+    return html;
+}
+
+var webshellFormSelectMap = {};
+var webshellFormSelectDocBound = false;
+var WEBSHELL_FORM_SELECT_CARET = '<span class="webshell-form-select-caret" aria-hidden="true"></span>';
+
+function closeAllWebshellFormSelects() {
+    Object.keys(webshellFormSelectMap).forEach(function (id) {
+        var reg = webshellFormSelectMap[id];
+        if (!reg || !reg.wrapper) return;
+        reg.wrapper.classList.remove('open');
+        if (reg.trigger) reg.trigger.setAttribute('aria-expanded', 'false');
+    });
+}
+
+function syncWebshellFormSelect(select) {
+    if (!select || !select.id) return;
+    var reg = webshellFormSelectMap[select.id];
+    if (!reg) return;
+    var dropdown = reg.dropdown;
+    var trigger = reg.trigger;
+    var valueSpan = trigger.querySelector('.webshell-form-select-value');
+    dropdown.innerHTML = '';
+    Array.prototype.forEach.call(select.options, function (opt) {
+        var item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'webshell-form-select-option';
+        item.setAttribute('role', 'option');
+        item.setAttribute('data-value', opt.value);
+        item.setAttribute('aria-selected', opt.value === select.value ? 'true' : 'false');
+        if (opt.value === select.value) item.classList.add('is-selected');
+
+        var check = document.createElement('span');
+        check.className = 'webshell-form-select-check';
+        check.textContent = '✓';
+        check.setAttribute('aria-hidden', 'true');
+
+        var label = document.createElement('span');
+        label.className = 'webshell-form-select-label';
+        label.textContent = opt.textContent;
+
+        item.appendChild(check);
+        item.appendChild(label);
+        dropdown.appendChild(item);
+    });
+    var selectedOpt = select.options[select.selectedIndex];
+    if (valueSpan) valueSpan.textContent = selectedOpt ? selectedOpt.textContent : '';
+    trigger.disabled = !!select.disabled;
+    reg.wrapper.classList.toggle('is-disabled', !!select.disabled);
+}
+
+function enhanceWebshellFormSelect(select) {
+    if (!select || !select.id) return;
+    var existing = webshellFormSelectMap[select.id];
+    if (existing && existing.select !== select) delete webshellFormSelectMap[select.id];
+    if (select.dataset.webshellFormCustom === '1') {
+        syncWebshellFormSelect(select);
+        return;
+    }
+
+    select.dataset.webshellFormCustom = '1';
+    select.classList.add('webshell-form-native-select');
+    select.tabIndex = -1;
+    select.setAttribute('aria-hidden', 'true');
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'webshell-form-select-ui';
+
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'webshell-form-select-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+
+    var valueSpan = document.createElement('span');
+    valueSpan.className = 'webshell-form-select-value';
+    trigger.appendChild(valueSpan);
+    trigger.insertAdjacentHTML('beforeend', WEBSHELL_FORM_SELECT_CARET);
+
+    var dropdown = document.createElement('div');
+    dropdown.className = 'webshell-form-select-dropdown';
+    dropdown.setAttribute('role', 'listbox');
+
+    var parent = select.parentNode;
+    parent.insertBefore(wrapper, select);
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(dropdown);
+    wrapper.appendChild(select);
+
+    webshellFormSelectMap[select.id] = { wrapper: wrapper, trigger: trigger, dropdown: dropdown, select: select };
+
+    trigger.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (select.disabled) return;
+        var open = wrapper.classList.contains('open');
+        closeAllWebshellFormSelects();
+        if (!open) {
+            wrapper.classList.add('open');
+            trigger.setAttribute('aria-expanded', 'true');
+        }
+    });
+
+    dropdown.addEventListener('click', function (e) {
+        var item = e.target.closest('.webshell-form-select-option');
+        if (!item) return;
+        e.stopPropagation();
+        var value = item.getAttribute('data-value');
+        if (value === null) return;
+        if (select.value !== value) {
+            select.value = value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        wrapper.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+        syncWebshellFormSelect(select);
+    });
+
+    select.addEventListener('change', function () {
+        syncWebshellFormSelect(select);
+    });
+
+    syncWebshellFormSelect(select);
+}
+
+function refreshWebshellFormSelects(root) {
+    var container = root || document.getElementById('webshell-modal');
+    if (!container) return;
+    Object.keys(webshellFormSelectMap).forEach(function (id) {
+        if (!document.getElementById(id)) delete webshellFormSelectMap[id];
+    });
+    container.querySelectorAll('select').forEach(enhanceWebshellFormSelect);
+    if (!webshellFormSelectDocBound) {
+        webshellFormSelectDocBound = true;
+        document.addEventListener('click', closeAllWebshellFormSelects);
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') closeAllWebshellFormSelects();
+        });
+    }
+}
+
+function populateWebshellProjectSelect(selectedId) {
+    var sel = document.getElementById('webshell-project-id');
+    if (!sel) return Promise.resolve();
+    var selected = String(selectedId || '').trim();
+    sel.innerHTML = webshellProjectOptionsHtml(selected);
+    sel.value = selected;
+    syncWebshellFormSelect(sel);
+    var loadPromise = Promise.resolve([]);
+    if (typeof ensureProjectsLoaded === 'function') {
+        loadPromise = ensureProjectsLoaded();
+    } else if (typeof fetchAllProjects === 'function') {
+        loadPromise = fetchAllProjects(false).then(function (list) {
+            if (typeof rebuildProjectNameMap === 'function') rebuildProjectNameMap(list || []);
+            return list || [];
+        });
+    }
+    return loadPromise.then(function () {
+        sel.innerHTML = webshellProjectOptionsHtml(selected);
+        sel.value = selected;
+        syncWebshellFormSelect(sel);
+    }).catch(function (e) {
+        console.warn('加载 WebShell 项目选项失败', e);
+    });
+}
+
 // 从服务端刷新连接列表并重绘侧栏
 function refreshWebshellConnectionsFromServer() {
     return getWebshellConnections().then(function (list) {
         webshellConnections = list;
         renderWebshellList();
+        if (typeof ensureProjectsLoaded === 'function') {
+            ensureProjectsLoaded().then(function () {
+                renderWebshellList();
+            }).catch(function () {});
+        }
         return list;
     });
 }
@@ -4636,11 +4831,19 @@ function showAddWebshellModal() {
     if (osSelEl) osSelEl.value = 'auto';
     var encSelEl = document.getElementById('webshell-encoding');
     if (encSelEl) encSelEl.value = 'auto';
+    var defaultProjectId = '';
+    try {
+        defaultProjectId = typeof getActiveProjectId === 'function' ? (getActiveProjectId() || '') : '';
+    } catch (e) {}
+    populateWebshellProjectSelect(defaultProjectId);
     document.getElementById('webshell-remark').value = '';
     var titleEl = document.getElementById('webshell-modal-title');
     if (titleEl) titleEl.textContent = wsT('webshell.addConnection');
     var modal = document.getElementById('webshell-modal');
-    if (modal) openAppModal(modal);
+    if (modal) {
+        openAppModal(modal);
+        refreshWebshellFormSelects(modal);
+    }
 }
 
 // 打开编辑连接弹窗（预填当前连接信息）
@@ -4662,7 +4865,9 @@ function showEditWebshellModal(connId) {
         if (osEditEl) osEditEl.value = normalizeWebshellOS(conn.os);
         var encEditEl = document.getElementById('webshell-encoding');
         if (encEditEl) encEditEl.value = normalizeWebshellEncoding(conn.encoding);
+        populateWebshellProjectSelect(webshellConnectionProjectId(conn));
         document.getElementById('webshell-remark').value = conn.remark || '';
+        refreshWebshellFormSelects(document.getElementById('webshell-modal'));
         document.getElementById('webshell-url')?.focus();
     });
 }
@@ -4961,7 +5166,9 @@ function saveWebshellConnection() {
 
     var editIdEl = document.getElementById('webshell-edit-id');
     var editId = editIdEl ? editIdEl.value.trim() : '';
-    var body = { url: url, password: password, type: type, method: method === 'get' ? 'get' : 'post', cmd_param: cmdParam, encoding: encoding, os: osTag, remark: remark || url };
+    var projectId = (document.getElementById('webshell-project-id') || {}).value || '';
+    if (projectId && typeof projectId.trim === 'function') projectId = projectId.trim(); else projectId = '';
+    var body = { url: url, password: password, type: type, method: method === 'get' ? 'get' : 'post', cmd_param: cmdParam, encoding: encoding, os: osTag, remark: remark || url, project_id: projectId };
     if (typeof apiFetch === 'undefined') return;
 
     var reqUrl = editId ? ('/api/webshell/connections/' + encodeURIComponent(editId)) : '/api/webshell/connections';
