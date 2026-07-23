@@ -27,11 +27,14 @@ import (
 const (
 	chatUploadsRootDirName       = "chat_uploads"
 	reductionRootDirName         = "tmp/reduction"
+	workspaceRootDirName         = "tmp/workspace"
 	artifactsRootDirName         = "data/conversation_artifacts"
 	reductionVirtualPrefix       = "__reduction__/"
+	workspaceVirtualPrefix       = "__workspace__/"
 	artifactVirtualPrefix        = "__conversation_artifact__/"
 	chatUploadSourceUpload       = "upload"
 	chatUploadSourceReduction    = "reduction"
+	chatUploadSourceWorkspace    = "workspace"
 	chatUploadSourceConversation = "conversation_artifact"
 	maxChatUploadEditBytes       = 2 * 1024 * 1024 // 文本编辑上限
 )
@@ -104,11 +107,34 @@ func (h *ChatUploadsHandler) reductionPathAllowed(c *gin.Context, scope, id stri
 
 func (h *ChatUploadsHandler) reductionVirtualPathAllowed(c *gin.Context, relativePath string) bool {
 	rel := strings.TrimPrefix(strings.TrimSpace(relativePath), reductionVirtualPrefix)
+	rel = strings.Trim(filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))), "/")
+	if rel == "projects" || rel == "conversations" {
+		_, ok := security.CurrentSession(c)
+		return ok
+	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	if len(parts) < 2 {
 		return false
 	}
 	return h.reductionPathAllowed(c, parts[0], parts[1])
+}
+
+func (h *ChatUploadsHandler) workspacePathAllowed(c *gin.Context, scope, id string) bool {
+	return h.reductionPathAllowed(c, scope, id)
+}
+
+func (h *ChatUploadsHandler) workspaceVirtualPathAllowed(c *gin.Context, relativePath string) bool {
+	rel := strings.TrimPrefix(strings.TrimSpace(relativePath), workspaceVirtualPrefix)
+	rel = strings.Trim(filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))), "/")
+	if rel == "projects" || rel == "conversations" {
+		_, ok := security.CurrentSession(c)
+		return ok
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) < 2 {
+		return false
+	}
+	return h.workspacePathAllowed(c, parts[0], parts[1])
 }
 
 func (h *ChatUploadsHandler) conversationArtifactPathAllowed(c *gin.Context, conversationID string) bool {
@@ -163,6 +189,26 @@ func (h *ChatUploadsHandler) absReductionRoot() (string, error) {
 	return filepath.Abs(filepath.Join(cwd, reductionRootDirName))
 }
 
+func (h *ChatUploadsHandler) absWorkspaceRoot() (string, error) {
+	if h.db != nil {
+		if base := strings.TrimSpace(h.db.EinoWorkspaceBaseDir()); base != "" {
+			if filepath.IsAbs(base) {
+				return filepath.Abs(base)
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			return filepath.Abs(filepath.Join(cwd, base))
+		}
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(filepath.Join(cwd, workspaceRootDirName))
+}
+
 func (h *ChatUploadsHandler) absConversationArtifactsRoot() (string, error) {
 	if h.db != nil {
 		if base := strings.TrimSpace(h.db.ConversationArtifactsBaseDir()); base != "" {
@@ -211,15 +257,17 @@ func (h *ChatUploadsHandler) resolveUnderChatUploads(relativePath string) (abs s
 
 // ChatUploadFileItem 列表项
 type ChatUploadFileItem struct {
-	RelativePath   string `json:"relativePath"`
-	AbsolutePath   string `json:"absolutePath"` // 服务器上的绝对路径，便于在对话中引用（与附件落盘路径一致）
-	Name           string `json:"name"`
-	Source         string `json:"source,omitempty"`
-	Size           int64  `json:"size"`
-	ModifiedUnix   int64  `json:"modifiedUnix"`
-	Date           string `json:"date"`
-	ConversationID string `json:"conversationId"`
-	ProjectID      string `json:"projectId,omitempty"`
+	RelativePath      string `json:"relativePath"`
+	AbsolutePath      string `json:"absolutePath"` // 服务器上的绝对路径，便于在对话中引用（与附件落盘路径一致）
+	Name              string `json:"name"`
+	Source            string `json:"source,omitempty"`
+	Size              int64  `json:"size"`
+	ModifiedUnix      int64  `json:"modifiedUnix"`
+	Date              string `json:"date"`
+	ConversationID    string `json:"conversationId"`
+	ConversationTitle string `json:"conversationTitle,omitempty"`
+	ProjectID         string `json:"projectId,omitempty"`
+	ProjectName       string `json:"projectName,omitempty"`
 	// SubPath 为日期、会话目录之下的子路径（不含文件名），如 date/conv/a/b/file 则为 "a/b"；无嵌套则为 ""。
 	SubPath string `json:"subPath"`
 }
@@ -240,6 +288,38 @@ func (h *ChatUploadsHandler) conversationProjectID(conversationID string, cache 
 	return projectID
 }
 
+func (h *ChatUploadsHandler) conversationTitle(conversationID string, cache map[string]string) string {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" || conversationID == "_manual" || conversationID == "_new" || h.db == nil {
+		return ""
+	}
+	if v, ok := cache[conversationID]; ok {
+		return v
+	}
+	title, err := h.db.GetConversationTitle(conversationID)
+	if err != nil {
+		title = ""
+	}
+	cache[conversationID] = title
+	return title
+}
+
+func (h *ChatUploadsHandler) projectName(projectID string, cache map[string]string) string {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" || h.db == nil {
+		return ""
+	}
+	if v, ok := cache[projectID]; ok {
+		return v
+	}
+	name, err := h.db.GetProjectName(projectID)
+	if err != nil {
+		name = ""
+	}
+	cache[projectID] = name
+	return name
+}
+
 func (h *ChatUploadsHandler) collectFiles(c *gin.Context, conversationFilter, projectFilter string) ([]ChatUploadFileItem, []string, error) {
 	root, err := h.absRoot()
 	if err != nil {
@@ -252,6 +332,8 @@ func (h *ChatUploadsHandler) collectFiles(c *gin.Context, conversationFilter, pr
 	var files []ChatUploadFileItem
 	var folders []string
 	projectCache := make(map[string]string)
+	projectNameCache := make(map[string]string)
+	conversationTitleCache := make(map[string]string)
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -293,16 +375,18 @@ func (h *ChatUploadsHandler) collectFiles(c *gin.Context, conversationFilter, pr
 		}
 		absPath, _ := filepath.Abs(path)
 		files = append(files, ChatUploadFileItem{
-			RelativePath:   relSlash,
-			AbsolutePath:   absPath,
-			Name:           d.Name(),
-			Source:         chatUploadSourceUpload,
-			Size:           info.Size(),
-			ModifiedUnix:   info.ModTime().Unix(),
-			Date:           dateStr,
-			ConversationID: convID,
-			ProjectID:      projectID,
-			SubPath:        subPath,
+			RelativePath:      relSlash,
+			AbsolutePath:      absPath,
+			Name:              d.Name(),
+			Source:            chatUploadSourceUpload,
+			Size:              info.Size(),
+			ModifiedUnix:      info.ModTime().Unix(),
+			Date:              dateStr,
+			ConversationID:    convID,
+			ConversationTitle: h.conversationTitle(convID, conversationTitleCache),
+			ProjectID:         projectID,
+			ProjectName:       h.projectName(projectID, projectNameCache),
+			SubPath:           subPath,
 		})
 		return nil
 	})
@@ -354,6 +438,12 @@ func (h *ChatUploadsHandler) collectFiles(c *gin.Context, conversationFilter, pr
 	} else if len(reductionFiles) > 0 {
 		files = append(files, reductionFiles...)
 	}
+	workspaceFiles, err := h.collectWorkspaceFiles(c, conversationFilter, projectFilter)
+	if err != nil {
+		h.logger.Warn("列举 workspace 产物失败", zap.Error(err))
+	} else if len(workspaceFiles) > 0 {
+		files = append(files, workspaceFiles...)
+	}
 	artifactFiles, err := h.collectConversationArtifactFiles(c, conversationFilter, projectFilter)
 	if err != nil {
 		h.logger.Warn("列举 conversation_artifacts 产物失败", zap.Error(err))
@@ -375,6 +465,8 @@ func (h *ChatUploadsHandler) collectReductionFiles(c *gin.Context, conversationF
 		return nil, nil
 	}
 	projectCache := make(map[string]string)
+	projectNameCache := make(map[string]string)
+	conversationTitleCache := make(map[string]string)
 	files := make([]ChatUploadFileItem, 0)
 	for _, scope := range []string{"conversations", "projects"} {
 		scopeRoot := filepath.Join(root, scope)
@@ -403,7 +495,10 @@ func (h *ChatUploadsHandler) collectReductionFiles(c *gin.Context, conversationF
 				projectID = ownerID
 			}
 			if conversationFilter != "" && convID != conversationFilter {
-				return nil
+				if scope != "projects" || h.conversationProjectID(conversationFilter, projectCache) != projectID {
+					return nil
+				}
+				convID = conversationFilter
 			}
 			if projectFilter != "" && projectID != projectFilter {
 				return nil
@@ -418,16 +513,90 @@ func (h *ChatUploadsHandler) collectReductionFiles(c *gin.Context, conversationF
 			}
 			abs, _ := filepath.Abs(path)
 			files = append(files, ChatUploadFileItem{
-				RelativePath:   reductionVirtualPrefix + relSlash,
-				AbsolutePath:   abs,
-				Name:           name,
-				Source:         chatUploadSourceReduction,
-				Size:           info.Size(),
-				ModifiedUnix:   info.ModTime().Unix(),
-				Date:           info.ModTime().Format("2006-01-02"),
-				ConversationID: convID,
-				ProjectID:      projectID,
-				SubPath:        strings.Join(parts[2:len(parts)-1], "/"),
+				RelativePath:      reductionVirtualPrefix + relSlash,
+				AbsolutePath:      abs,
+				Name:              name,
+				Source:            chatUploadSourceReduction,
+				Size:              info.Size(),
+				ModifiedUnix:      info.ModTime().Unix(),
+				Date:              info.ModTime().Format("2006-01-02"),
+				ConversationID:    convID,
+				ConversationTitle: h.conversationTitle(convID, conversationTitleCache),
+				ProjectID:         projectID,
+				ProjectName:       h.projectName(projectID, projectNameCache),
+				SubPath:           strings.Join(parts[2:len(parts)-1], "/"),
+			})
+			return nil
+		})
+	}
+	return files, nil
+}
+
+func (h *ChatUploadsHandler) collectWorkspaceFiles(c *gin.Context, conversationFilter, projectFilter string) ([]ChatUploadFileItem, error) {
+	root, err := h.absWorkspaceRoot()
+	if err != nil {
+		return nil, err
+	}
+	if st, err := os.Stat(root); err != nil || !st.IsDir() {
+		return nil, nil
+	}
+	projectCache := make(map[string]string)
+	projectNameCache := make(map[string]string)
+	conversationTitleCache := make(map[string]string)
+	files := make([]ChatUploadFileItem, 0)
+	for _, scope := range []string{"conversations", "projects"} {
+		scopeRoot := filepath.Join(root, scope)
+		_ = filepath.WalkDir(scopeRoot, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil || d == nil || d.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return nil
+			}
+			relSlash := filepath.ToSlash(rel)
+			parts := strings.Split(relSlash, "/")
+			if len(parts) < 3 {
+				return nil
+			}
+			ownerID := parts[1]
+			if !h.workspacePathAllowed(c, scope, ownerID) {
+				return nil
+			}
+			var convID, projectID string
+			if scope == "conversations" {
+				convID = ownerID
+				projectID = h.conversationProjectID(convID, projectCache)
+			} else {
+				projectID = ownerID
+			}
+			if conversationFilter != "" && convID != conversationFilter {
+				if scope != "projects" || h.conversationProjectID(conversationFilter, projectCache) != projectID {
+					return nil
+				}
+				convID = conversationFilter
+			}
+			if projectFilter != "" && projectID != projectFilter {
+				return nil
+			}
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			abs, _ := filepath.Abs(path)
+			files = append(files, ChatUploadFileItem{
+				RelativePath:      workspaceVirtualPrefix + relSlash,
+				AbsolutePath:      abs,
+				Name:              d.Name(),
+				Source:            chatUploadSourceWorkspace,
+				Size:              info.Size(),
+				ModifiedUnix:      info.ModTime().Unix(),
+				Date:              info.ModTime().Format("2006-01-02"),
+				ConversationID:    convID,
+				ConversationTitle: h.conversationTitle(convID, conversationTitleCache),
+				ProjectID:         projectID,
+				ProjectName:       h.projectName(projectID, projectNameCache),
+				SubPath:           strings.Join(parts[2:len(parts)-1], "/"),
 			})
 			return nil
 		})
@@ -444,6 +613,8 @@ func (h *ChatUploadsHandler) collectConversationArtifactFiles(c *gin.Context, co
 		return nil, nil
 	}
 	projectCache := make(map[string]string)
+	projectNameCache := make(map[string]string)
+	conversationTitleCache := make(map[string]string)
 	files := make([]ChatUploadFileItem, 0)
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil || d == nil || d.IsDir() {
@@ -479,16 +650,18 @@ func (h *ChatUploadsHandler) collectConversationArtifactFiles(c *gin.Context, co
 		}
 		abs, _ := filepath.Abs(path)
 		files = append(files, ChatUploadFileItem{
-			RelativePath:   artifactVirtualPrefix + relSlash,
-			AbsolutePath:   abs,
-			Name:           name,
-			Source:         chatUploadSourceConversation,
-			Size:           info.Size(),
-			ModifiedUnix:   info.ModTime().Unix(),
-			Date:           info.ModTime().Format("2006-01-02"),
-			ConversationID: convID,
-			ProjectID:      projectID,
-			SubPath:        strings.Join(parts[1:len(parts)-1], "/"),
+			RelativePath:      artifactVirtualPrefix + relSlash,
+			AbsolutePath:      abs,
+			Name:              name,
+			Source:            chatUploadSourceConversation,
+			Size:              info.Size(),
+			ModifiedUnix:      info.ModTime().Unix(),
+			Date:              info.ModTime().Format("2006-01-02"),
+			ConversationID:    convID,
+			ConversationTitle: h.conversationTitle(convID, conversationTitleCache),
+			ProjectID:         projectID,
+			ProjectName:       h.projectName(projectID, projectNameCache),
+			SubPath:           strings.Join(parts[1:len(parts)-1], "/"),
 		})
 		return nil
 	})
@@ -516,6 +689,27 @@ func (h *ChatUploadsHandler) resolveReductionVirtualPath(relativePath string) (s
 	return full, nil
 }
 
+func (h *ChatUploadsHandler) resolveWorkspaceVirtualPath(relativePath string) (string, error) {
+	rel := strings.TrimPrefix(strings.TrimSpace(relativePath), workspaceVirtualPrefix)
+	rel = filepath.Clean(filepath.FromSlash(rel))
+	if rel == "." || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("invalid path")
+	}
+	root, err := h.absWorkspaceRoot()
+	if err != nil {
+		return "", err
+	}
+	full, err := filepath.Abs(filepath.Join(root, rel))
+	if err != nil {
+		return "", err
+	}
+	rootAbs, _ := filepath.Abs(root)
+	if full != rootAbs && !strings.HasPrefix(full, rootAbs+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes workspace root")
+	}
+	return full, nil
+}
+
 func (h *ChatUploadsHandler) resolveConversationArtifactVirtualPath(relativePath string) (string, error) {
 	rel := strings.TrimPrefix(strings.TrimSpace(relativePath), artifactVirtualPrefix)
 	rel = filepath.Clean(filepath.FromSlash(rel))
@@ -539,8 +733,10 @@ func (h *ChatUploadsHandler) resolveConversationArtifactVirtualPath(relativePath
 
 func chatUploadItemIsInternal(item ChatUploadFileItem) bool {
 	return item.Source == chatUploadSourceReduction ||
+		item.Source == chatUploadSourceWorkspace ||
 		item.Source == chatUploadSourceConversation ||
 		strings.HasPrefix(item.RelativePath, reductionVirtualPrefix) ||
+		strings.HasPrefix(item.RelativePath, workspaceVirtualPrefix) ||
 		strings.HasPrefix(item.RelativePath, artifactVirtualPrefix)
 }
 
@@ -548,6 +744,8 @@ func (h *ChatUploadsHandler) resolveListedFilePath(item ChatUploadFileItem) (str
 	switch {
 	case item.Source == chatUploadSourceReduction || strings.HasPrefix(item.RelativePath, reductionVirtualPrefix):
 		return h.resolveReductionVirtualPath(item.RelativePath)
+	case item.Source == chatUploadSourceWorkspace || strings.HasPrefix(item.RelativePath, workspaceVirtualPrefix):
+		return h.resolveWorkspaceVirtualPath(item.RelativePath)
 	case item.Source == chatUploadSourceConversation || strings.HasPrefix(item.RelativePath, artifactVirtualPrefix):
 		return h.resolveConversationArtifactVirtualPath(item.RelativePath)
 	default:
@@ -705,7 +903,7 @@ func (h *ChatUploadsHandler) Export(c *gin.Context) {
 		"fileCount":       len(files),
 		"files":           files,
 		"layout":          "chat uploads are stored under conversations/<conversationId>/; internal outputs are stored under internal/<source>/",
-		"sourceDirectory": []string{chatUploadsRootDirName, reductionRootDirName, artifactsRootDirName},
+		"sourceDirectory": []string{chatUploadsRootDirName, reductionRootDirName, workspaceRootDirName, artifactsRootDirName},
 	}
 	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
 	mw, err := zw.Create("manifest.json")
@@ -732,6 +930,9 @@ func (h *ChatUploadsHandler) Export(c *gin.Context) {
 			if filepath.Ext(zipName) == "" {
 				zipName += ".txt"
 			}
+		} else if item.Source == chatUploadSourceWorkspace || strings.HasPrefix(item.RelativePath, workspaceVirtualPrefix) {
+			rel := strings.TrimPrefix(item.RelativePath, workspaceVirtualPrefix)
+			zipName = filepath.ToSlash(filepath.Join("internal", "workspace", rel))
 		} else if item.Source == chatUploadSourceConversation || strings.HasPrefix(item.RelativePath, artifactVirtualPrefix) {
 			rel := strings.TrimPrefix(item.RelativePath, artifactVirtualPrefix)
 			zipName = filepath.ToSlash(filepath.Join("internal", "conversation_artifacts", rel))
@@ -800,6 +1001,24 @@ func (h *ChatUploadsHandler) Download(c *gin.Context) {
 		c.FileAttachment(abs, name)
 		return
 	}
+	if strings.HasPrefix(strings.TrimSpace(p), workspaceVirtualPrefix) {
+		if !h.workspaceVirtualPathAllowed(c, p) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+			return
+		}
+		abs, err := h.resolveWorkspaceVirtualPath(p)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		st, err := os.Stat(abs)
+		if err != nil || st.IsDir() {
+			c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+			return
+		}
+		c.FileAttachment(abs, filepath.Base(abs))
+		return
+	}
 	if strings.HasPrefix(strings.TrimSpace(p), artifactVirtualPrefix) {
 		if !h.conversationArtifactVirtualPathAllowed(c, p) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
@@ -837,6 +1056,93 @@ func (h *ChatUploadsHandler) Download(c *gin.Context) {
 		return
 	}
 	c.FileAttachment(abs, filepath.Base(abs))
+}
+
+// ResolvePath GET /api/chat-uploads/path?path=...&kind=file|directory
+func (h *ChatUploadsHandler) ResolvePath(c *gin.Context) {
+	p := strings.TrimSpace(c.Query("path"))
+	kind := strings.TrimSpace(c.Query("kind"))
+	if kind == "" {
+		kind = "file"
+	}
+	var abs string
+	var err error
+	switch {
+	case strings.HasPrefix(p, reductionVirtualPrefix):
+		if strings.Trim(strings.TrimPrefix(p, reductionVirtualPrefix), "/") == "" {
+			if _, ok := security.CurrentSession(c); !ok {
+				c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+				return
+			}
+			abs, err = h.absReductionRoot()
+			break
+		}
+		if !h.reductionVirtualPathAllowed(c, p) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+			return
+		}
+		abs, err = h.resolveReductionVirtualPath(p)
+	case strings.HasPrefix(p, workspaceVirtualPrefix):
+		if strings.Trim(strings.TrimPrefix(p, workspaceVirtualPrefix), "/") == "" {
+			if _, ok := security.CurrentSession(c); !ok {
+				c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+				return
+			}
+			abs, err = h.absWorkspaceRoot()
+			break
+		}
+		if !h.workspaceVirtualPathAllowed(c, p) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+			return
+		}
+		abs, err = h.resolveWorkspaceVirtualPath(p)
+	case strings.HasPrefix(p, artifactVirtualPrefix):
+		if strings.Trim(strings.TrimPrefix(p, artifactVirtualPrefix), "/") == "" {
+			if _, ok := security.CurrentSession(c); !ok {
+				c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+				return
+			}
+			abs, err = h.absConversationArtifactsRoot()
+			break
+		}
+		if !h.conversationArtifactVirtualPathAllowed(c, p) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+			return
+		}
+		abs, err = h.resolveConversationArtifactVirtualPath(p)
+	default:
+		if p == "" || p == "." {
+			if _, ok := security.CurrentSession(c); !ok {
+				c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+				return
+			}
+			abs, err = h.absRoot()
+			break
+		}
+		if !h.pathAllowed(c, p) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+			return
+		}
+		abs, err = h.resolveUnderChatUploads(p)
+	}
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	st, err := os.Stat(abs)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "path not found"})
+		return
+	}
+	if kind == "directory" && !st.IsDir() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "not a directory"})
+		return
+	}
+	if kind != "directory" && st.IsDir() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "not a file"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"absolutePath": abs, "isDir": st.IsDir()})
 }
 
 type chatUploadPathBody struct {

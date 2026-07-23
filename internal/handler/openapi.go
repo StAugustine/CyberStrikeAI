@@ -5803,7 +5803,7 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 					"parameters": []map[string]interface{}{
 						{"name": "conversation", "in": "query", "required": false, "description": "按对话ID过滤", "schema": map[string]interface{}{"type": "string"}},
 						{"name": "project", "in": "query", "required": false, "description": "按项目ID过滤", "schema": map[string]interface{}{"type": "string"}},
-						{"name": "source", "in": "query", "required": false, "description": "按来源过滤：upload/reduction/conversation_artifact/all", "schema": map[string]interface{}{"type": "string", "enum": []string{"all", "upload", "reduction", "conversation_artifact"}}},
+						{"name": "source", "in": "query", "required": false, "description": "按来源过滤：upload/reduction/workspace/conversation_artifact/all", "schema": map[string]interface{}{"type": "string", "enum": []string{"all", "upload", "reduction", "workspace", "conversation_artifact"}}},
 						{"name": "search", "in": "query", "required": false, "description": "按文件名或子路径搜索", "schema": map[string]interface{}{"type": "string"}},
 						{"name": "page", "in": "query", "required": false, "description": "页码，从1开始", "schema": map[string]interface{}{"type": "integer", "default": 1}},
 						{"name": "pageSize", "in": "query", "required": false, "description": "每页数量，传 all 返回全部", "schema": map[string]interface{}{"oneOf": []map[string]interface{}{{"type": "integer"}, {"type": "string", "enum": []string{"all"}}}}},
@@ -5821,16 +5821,18 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 												"items": map[string]interface{}{
 													"type": "object",
 													"properties": map[string]interface{}{
-														"relativePath":   map[string]interface{}{"type": "string"},
-														"absolutePath":   map[string]interface{}{"type": "string"},
-														"name":           map[string]interface{}{"type": "string"},
-														"size":           map[string]interface{}{"type": "integer"},
-														"modifiedUnix":   map[string]interface{}{"type": "integer"},
-														"date":           map[string]interface{}{"type": "string"},
-														"conversationId": map[string]interface{}{"type": "string"},
-														"projectId":      map[string]interface{}{"type": "string"},
-														"subPath":        map[string]interface{}{"type": "string"},
-														"source":         map[string]interface{}{"type": "string", "description": "upload/reduction/conversation_artifact"},
+														"relativePath":      map[string]interface{}{"type": "string"},
+														"absolutePath":      map[string]interface{}{"type": "string"},
+														"name":              map[string]interface{}{"type": "string"},
+														"size":              map[string]interface{}{"type": "integer"},
+														"modifiedUnix":      map[string]interface{}{"type": "integer"},
+														"date":              map[string]interface{}{"type": "string"},
+														"conversationId":    map[string]interface{}{"type": "string"},
+														"conversationTitle": map[string]interface{}{"type": "string"},
+														"projectId":         map[string]interface{}{"type": "string"},
+														"projectName":       map[string]interface{}{"type": "string"},
+														"subPath":           map[string]interface{}{"type": "string"},
+														"source":            map[string]interface{}{"type": "string", "description": "upload/reduction/workspace/conversation_artifact"},
 													},
 												},
 											},
@@ -5923,7 +5925,7 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 					"parameters": []map[string]interface{}{
 						{"name": "conversation", "in": "query", "required": false, "description": "按对话ID过滤", "schema": map[string]interface{}{"type": "string"}},
 						{"name": "project", "in": "query", "required": false, "description": "按项目ID过滤", "schema": map[string]interface{}{"type": "string"}},
-						{"name": "source", "in": "query", "required": false, "description": "按来源过滤：upload/reduction/conversation_artifact/all", "schema": map[string]interface{}{"type": "string", "enum": []string{"all", "upload", "reduction", "conversation_artifact"}}},
+						{"name": "source", "in": "query", "required": false, "description": "按来源过滤：upload/reduction/workspace/conversation_artifact/all", "schema": map[string]interface{}{"type": "string", "enum": []string{"all", "upload", "reduction", "workspace", "conversation_artifact"}}},
 						{"name": "search", "in": "query", "required": false, "description": "按文件名或子路径搜索", "schema": map[string]interface{}{"type": "string"}},
 					},
 					"responses": map[string]interface{}{
@@ -5959,6 +5961,37 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 						},
 						"401": map[string]interface{}{"description": "未授权"},
 						"404": map[string]interface{}{"description": "文件不存在"},
+					},
+				},
+			},
+			"/api/chat-uploads/path": map[string]interface{}{
+				"get": map[string]interface{}{
+					"tags":        []string{"对话附件"},
+					"summary":     "解析附件路径",
+					"description": "将文件管理中的相对路径或内部虚拟路径解析为服务器绝对路径，用于复制文件/目录路径。",
+					"operationId": "resolveChatUploadPath",
+					"parameters": []map[string]interface{}{
+						{"name": "path", "in": "query", "required": true, "description": "相对路径或虚拟路径（如 __workspace__/projects/<id>/csv）", "schema": map[string]interface{}{"type": "string"}},
+						{"name": "kind", "in": "query", "required": false, "description": "路径类型：file/directory，默认 file", "schema": map[string]interface{}{"type": "string", "enum": []string{"file", "directory"}}},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "解析成功",
+							"content": map[string]interface{}{
+								"application/json": map[string]interface{}{
+									"schema": map[string]interface{}{
+										"type": "object",
+										"properties": map[string]interface{}{
+											"absolutePath": map[string]interface{}{"type": "string"},
+											"isDir":        map[string]interface{}{"type": "boolean"},
+										},
+									},
+								},
+							},
+						},
+						"401": map[string]interface{}{"description": "未授权"},
+						"403": map[string]interface{}{"description": "无权访问"},
+						"404": map[string]interface{}{"description": "路径不存在"},
 					},
 				},
 			},

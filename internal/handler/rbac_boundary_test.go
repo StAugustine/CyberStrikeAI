@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -143,6 +145,131 @@ func TestChatUploadPathAuthorizationFollowsConversationAccess(t *testing.T) {
 	}
 	if h.pathAllowed(c, "2026-07-10/_manual/secret.txt") {
 		t.Fatal("unowned manual attachment should fail closed")
+	}
+}
+
+func TestChatUploadsListIncludesAuthorizedProjectWorkspaceFiles(t *testing.T) {
+	db, user := setupConversationRBACTest(t)
+	fsBase := t.TempDir()
+	workspaceBase := filepath.Join(fsBase, "workspace")
+	reductionBase := filepath.Join(fsBase, "reduction")
+	db.SetEinoConversationDirs("", "", reductionBase, workspaceBase)
+	allowedProject, _ := db.CreateProject(&database.Project{Name: "allowed"})
+	hiddenProject, _ := db.CreateProject(&database.Project{Name: "hidden"})
+	conversation, _ := db.CreateConversation("project conversation", database.ConversationCreateMeta{ProjectID: allowedProject.ID})
+	if err := db.AssignResourceToUser(user.ID, "project", allowedProject.ID); err != nil {
+		t.Fatal(err)
+	}
+	allowedFile := filepath.Join(workspaceBase, "projects", allowedProject.ID, "csv", "assets.csv")
+	hiddenFile := filepath.Join(workspaceBase, "projects", hiddenProject.ID, "csv", "secret.csv")
+	for _, path := range []string{allowedFile, hiddenFile} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("name\nexample\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h := NewChatUploadsHandler(zap.NewNop(), db)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/chat-uploads?source=workspace&pageSize=all&conversation="+conversation.ID, nil)
+	c.Set(security.ContextSessionKey, security.Session{UserID: user.ID, Scope: database.RBACScopeAssigned})
+	h.List(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Files []ChatUploadFileItem `json:"files"`
+		Total int                  `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Total != 1 || len(response.Files) != 1 {
+		t.Fatalf("files = %#v, total = %d, want only authorized workspace file", response.Files, response.Total)
+	}
+	got := response.Files[0]
+	if got.Source != chatUploadSourceWorkspace || got.Name != "assets.csv" || got.ProjectID != allowedProject.ID {
+		t.Fatalf("workspace file = %#v", got)
+	}
+	if got.ProjectName != allowedProject.Name {
+		t.Fatalf("projectName = %q, want %q", got.ProjectName, allowedProject.Name)
+	}
+	if got.ConversationID != conversation.ID {
+		t.Fatalf("conversationId = %q, want %q", got.ConversationID, conversation.ID)
+	}
+	if got.ConversationTitle != conversation.Title {
+		t.Fatalf("conversationTitle = %q, want %q", got.ConversationTitle, conversation.Title)
+	}
+	if got.AbsolutePath != allowedFile {
+		t.Fatalf("absolutePath = %q, want %q", got.AbsolutePath, allowedFile)
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	resolveURL := "/api/chat-uploads/path?kind=directory&path=__workspace__%2Fprojects%2F" + allowedProject.ID
+	c.Request = httptest.NewRequest(http.MethodGet, resolveURL, nil)
+	c.Set(security.ContextSessionKey, security.Session{UserID: user.ID, Scope: database.RBACScopeAssigned})
+	h.ResolvePath(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var resolved struct {
+		AbsolutePath string `json:"absolutePath"`
+		IsDir        bool   `json:"isDir"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	wantDir := filepath.Join(workspaceBase, "projects", allowedProject.ID)
+	if !resolved.IsDir || resolved.AbsolutePath != wantDir {
+		t.Fatalf("resolved = %#v, want dir %q", resolved, wantDir)
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/chat-uploads/path?kind=directory&path=__workspace__%2Fprojects", nil)
+	c.Set(security.ContextSessionKey, security.Session{UserID: user.ID, Scope: database.RBACScopeAssigned})
+	h.ResolvePath(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("resolve projects container status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	wantContainer := filepath.Join(workspaceBase, "projects")
+	if !resolved.IsDir || resolved.AbsolutePath != wantContainer {
+		t.Fatalf("resolved container = %#v, want dir %q", resolved, wantContainer)
+	}
+
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"__workspace__/", workspaceBase},
+		{"__reduction__/", reductionBase},
+		{"__conversation_artifact__/", db.ConversationArtifactsBaseDir()},
+	} {
+		if err := os.MkdirAll(tc.want, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		w = httptest.NewRecorder()
+		c, _ = gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/chat-uploads/path?kind=directory&path="+url.QueryEscape(tc.path), nil)
+		c.Set(security.ContextSessionKey, security.Session{UserID: user.ID, Scope: database.RBACScopeAssigned})
+		h.ResolvePath(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("resolve root %q status = %d, want 200: %s", tc.path, w.Code, w.Body.String())
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resolved); err != nil {
+			t.Fatal(err)
+		}
+		wantAbs, _ := filepath.Abs(tc.want)
+		if !resolved.IsDir || resolved.AbsolutePath != wantAbs {
+			t.Fatalf("resolved root %q = %#v, want dir %q", tc.path, resolved, wantAbs)
+		}
 	}
 }
 
