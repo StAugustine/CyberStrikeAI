@@ -111,6 +111,19 @@ func (db *DB) GetProject(id string) (*Project, error) {
 	return &p, nil
 }
 
+// GetProjectName returns a project display name without loading the full record.
+func (db *DB) GetProjectName(id string) (string, error) {
+	var name string
+	err := db.QueryRow(`SELECT name FROM projects WHERE id = ?`, id).Scan(&name)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("项目不存在")
+		}
+		return "", fmt.Errorf("获取项目名称失败: %w", err)
+	}
+	return strings.TrimSpace(name), nil
+}
+
 func projectListSearchPattern(q string) string {
 	q = strings.TrimSpace(q)
 	if q == "" {
