@@ -3446,23 +3446,27 @@
                                         <div class="ai-channel-manager-header">
                                             <div>
                                                 <h4 data-i18n="settingsBasic.openaiConfig">AI 通道配置</h4>
-                                                <p id="ai-channel-save-hint" class="ai-channel-manager-hint" data-i18n="settingsBasic.aiChannelHint">已保存的通道会显示在左侧；保存后写入 ai.channels，默认通道用于新对话和未指定通道的任务。</p>
+                                                <p id="ai-channel-save-hint" class="ai-channel-manager-hint" data-i18n="settingsBasic.aiChannelHint">通过下拉切换已保存通道；保存后写入 ai.channels，默认通道用于新对话和未指定通道的任务。</p>
                                             </div>
-                                            <button type="button" class="btn-primary ai-channel-save-btn" onclick="saveSelectedAIChannel()" data-i18n="settingsBasic.aiChannelSave">保存更改</button>
+                                            <div class="ai-channel-header-actions">
+                                                <button type="button" class="btn-secondary" onclick="createAIChannelFromForm()" data-i18n="settingsBasic.aiChannelNew">新增</button>
+                                                <button type="button" class="btn-primary ai-channel-save-btn" onclick="saveSelectedAIChannel()" data-i18n="settingsBasic.aiChannelSave">保存更改</button>
+                                            </div>
                                         </div>
                                         <div class="ai-channel-manager-body">
-                                            <aside class="ai-channel-sidebar" aria-label="AI 通道列表" data-i18n="settingsBasic.aiChannelListAria" data-i18n-attr="aria-label">
-                                                <div class="ai-channel-sidebar-head">
-                                                    <span data-i18n="settingsBasic.aiChannelSavedList">已保存通道</span>
-                                                    <div class="ai-channel-bulk-actions">
-                                                        <button type="button" class="ai-channel-bulk-btn" onclick="probeSelectedAIChannels()" title="检测所选或全部完整通道是否可用">批量探活</button>
-                                                        <button type="button" class="ai-channel-bulk-btn danger" onclick="deleteCheckedAIChannels()" title="删除已勾选的非默认通道">删除所选</button>
-                                                        <button type="button" class="ai-channel-icon-btn" onclick="createAIChannelFromForm()" title="新增通道" aria-label="新增通道">+</button>
-                                                    </div>
+                                            <div class="ai-channel-switcher" aria-label="AI 通道选择" data-i18n="settingsBasic.aiChannelListAria" data-i18n-attr="aria-label">
+                                                <div class="ai-channel-switcher-field">
+                                                    <label for="ai-channel-select" data-i18n="settingsBasic.aiChannelCurrent">当前通道</label>
+                                                    <select id="ai-channel-select" class="ai-channel-switch-select" onchange="selectAIChannelForEditing(this.value)"></select>
                                                 </div>
-                                                <select id="ai-channel-select" class="ai-channel-native-select" onchange="selectAIChannelForEditing(this.value)" aria-hidden="true" tabindex="-1"></select>
+                                                <div class="ai-channel-switcher-actions">
+                                                    <button type="button" class="btn-secondary" onclick="probeSelectedAIChannels()" data-i18n="settingsBasic.aiChannelBulkProbe" data-i18n-title="settingsBasic.aiChannelBulkProbeTitle" data-i18n-attr="title">批量探活</button>
+                                                    <button type="button" class="btn-secondary" onclick="copyAIChannelFromForm()" data-i18n="settingsBasic.aiChannelCopy">复制</button>
+                                                    <button type="button" class="btn-secondary" onclick="setSelectedAIChannelDefault()" data-i18n="settingsBasic.aiChannelSetDefault">设为默认</button>
+                                                    <button type="button" class="btn-secondary danger" onclick="deleteSelectedAIChannel()" data-i18n="settingsBasic.aiChannelDelete">删除</button>
+                                                </div>
                                                 <div id="ai-channel-list" class="ai-channel-list" aria-live="polite"></div>
-                                            </aside>
+                                            </div>
                                             <div class="ai-channel-editor">
                                                 <div class="ai-channel-editor-head">
                                                     <div>
@@ -3470,91 +3474,118 @@
                                                         <h5 id="ai-channel-editor-title">-</h5>
                                                         <p id="ai-channel-editor-meta">-</p>
                                                     </div>
-                                                    <div class="ai-channel-editor-actions">
-                                                        <button type="button" class="btn-secondary" onclick="setSelectedAIChannelDefault()" data-i18n="settingsBasic.aiChannelSetDefault">设为默认</button>
-                                                        <button type="button" class="btn-secondary" onclick="copyAIChannelFromForm()" data-i18n="settingsBasic.aiChannelCopy">复制</button>
-                                                        <button type="button" class="btn-secondary danger" onclick="deleteSelectedAIChannel()" data-i18n="settingsBasic.aiChannelDelete">删除</button>
-                                                    </div>
                                                 </div>
                                                 <div class="settings-form ai-channel-editor-form">
-                                        <div class="form-group">
-                                            <label for="ai-channel-name" data-i18n="settingsBasic.aiChannelName">通道名称</label>
-                                            <input type="text" id="ai-channel-name" placeholder="Qwen Max" maxlength="24" />
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="openai-provider" data-i18n="settingsBasic.apiProvider">API 提供商</label>
-	                                            <select id="openai-provider" style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border-color, #e2e8f0); border-radius: 6px; background: var(--card-bg, #fff); color: var(--text-color, #2d3748); font-size: 0.875rem;">
-	                                                <option value="openai_compatible" data-i18n="settingsBasic.providerOpenAI">OpenAI / 兼容 OpenAI 协议</option>
-	                                                <option value="claude" data-i18n="settingsBasic.providerClaude">Claude (Anthropic Messages API)</option>
-	                                            </select>
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="openai-base-url">Base URL <span style="color: red;">*</span></label>
-                                            <input type="text" id="openai-base-url" data-i18n="settingsBasic.openaiBaseUrlPlaceholder" data-i18n-attr="placeholder" placeholder="https://api.openai.com/v1" required />
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="openai-api-key">API Key <span style="color: red;">*</span></label>
-                                            <input type="password" id="openai-api-key" data-i18n="settingsBasic.openaiApiKeyPlaceholder" data-i18n-attr="placeholder" placeholder="输入OpenAI API Key" required />
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="openai-model"><span data-i18n="settingsBasic.model">模型</span> <span style="color: red;">*</span></label>
-                                            <div class="model-pick-row">
-                                                <input type="text" id="openai-model" class="model-pick-input" data-i18n="settingsBasic.modelPlaceholder" data-i18n-attr="placeholder" placeholder="gpt-4" required />
-                                                <select id="openai-model-select" class="model-pick-native" style="display: none;" title="" aria-hidden="true" tabindex="-1">
-                                                    <option value="" disabled data-i18n="settingsBasic.modelsListSelectPlaceholder">请选择模型</option>
-                                                </select>
-                                                <a href="javascript:void(0)" id="fetch-openai-models-btn" class="model-pick-fetch-link" onclick="fetchModelList('openai')" data-i18n="settingsBasic.fetchModels">获取列表</a>
-                                            </div>
-                                            <small id="fetch-openai-models-hint" class="form-hint" style="display: none; font-size: 0.75rem; margin-top: 4px;"></small>
-                                            <span id="fetch-openai-models-result" style="font-size: 0.75rem; margin-top: 2px; display: block;"></span>
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="openai-max-total-tokens"><span data-i18n="settingsBasic.maxTotalTokens">最大上下文 Token 数</span></label>
-                                            <input type="number" id="openai-max-total-tokens" data-i18n="settingsBasic.maxTotalTokensPlaceholder" data-i18n-attr="placeholder" placeholder="120000" min="1000" step="1000" />
-                                            <small style="color: var(--text-muted, #718096); font-size: 0.75rem;" data-i18n="settingsBasic.maxTotalTokensHint">内存压缩和攻击链构建共用此配置，默认 120000</small>
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="openai-max-completion-tokens"><span data-i18n="settingsBasic.maxCompletionTokens">最大输出 Token 数</span></label>
-                                            <input type="number" id="openai-max-completion-tokens" data-i18n="settingsBasic.maxCompletionTokensPlaceholder" data-i18n-attr="placeholder" placeholder="16384" min="1" step="256" />
-                                            <small style="color: var(--text-muted, #718096); font-size: 0.75rem;" data-i18n="settingsBasic.maxCompletionTokensHint">单次模型回复的输出上限，默认 16384</small>
-                                        </div>
-                                        <div class="form-group">
-                                            <label data-i18n="settingsBasic.openaiReasoningTitle">推理设置</label>
-                                            <small class="form-hint" data-i18n="settingsBasic.openaiReasoningHint">作为该 AI 通道的默认推理设置；对话页「会话设置」可覆盖。</small>
-                                            <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; align-items: center;">
-                                                <label for="openai-reasoning-mode" style="font-size: 0.8125rem;" data-i18n="chat.reasoningModeLabel">模式</label>
-                                                <select id="openai-reasoning-mode" style="min-width: 140px; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border-color, #e2e8f0);">
-                                                    <option value="auto" data-i18n="chat.reasoningModeAuto">自动</option>
-                                                    <option value="on" data-i18n="chat.reasoningModeOn">开启</option>
-                                                    <option value="off" data-i18n="chat.reasoningModeOff">关闭</option>
-                                                </select>
-                                                <label for="openai-reasoning-effort" style="font-size: 0.8125rem;" data-i18n="chat.reasoningEffortLabel">强度</label>
-                                                <select id="openai-reasoning-effort" style="min-width: 140px; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border-color, #e2e8f0);">
-                                                    <option value="" data-i18n="chat.reasoningEffortUnset">不指定</option>
-                                                    <option value="low">low</option>
-                                                    <option value="medium">medium</option>
-                                                    <option value="high">high</option>
-                                                    <option value="xhigh">xhigh</option>
-                                                    <option value="max">max</option>
-                                                </select>
-                                                <label for="openai-reasoning-profile" style="font-size: 0.8125rem;" data-i18n="settingsBasic.openaiReasoningProfile">线路</label>
-                                                <select id="openai-reasoning-profile" style="min-width: 220px; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border-color, #e2e8f0);">
-                                                    <option value="auto">auto</option>
-                                                    <option value="deepseek_compat">deepseek_compat</option>
-                                                    <option value="openai_compat">openai_compat</option>
-                                                    <option value="output_config_effort">output_config_effort</option>
-                                                </select>
-                                            </div>
-                                            <label class="checkbox-label" style="margin-top: 8px;">
-                                                <input type="checkbox" id="openai-reasoning-allow-client" class="modern-checkbox" checked />
-                                                <span class="checkbox-custom"></span>
-                                                <span class="checkbox-text" data-i18n="settingsBasic.openaiReasoningAllowClient">允许对话页覆盖推理选项</span>
-                                            </label>
-                                        </div>
-                                        <div style="display: flex; align-items: center; gap: 8px; margin-top: 2px;">
-                                            <a href="javascript:void(0)" id="test-openai-btn" onclick="testOpenAIConnection()" style="font-size: 0.8125rem; color: var(--accent-color, #3182ce); text-decoration: none; cursor: pointer; user-select: none;" data-i18n="settingsBasic.testConnection">测试连接</a>
-                                            <span id="test-openai-result" style="font-size: 0.8125rem;"></span>
-                                        </div>
+                                                    <section class="ai-channel-form-section">
+                                                        <div class="ai-channel-form-section-head">
+                                                            <div>
+                                                                <h6 data-i18n="settingsBasic.aiChannelConnectionSection">连接信息</h6>
+                                                                <p data-i18n="settingsBasic.aiChannelConnectionHint">先确认服务商、地址、密钥和模型，测试连接会使用这些信息。</p>
+                                                            </div>
+                                                            <div class="ai-channel-section-actions">
+                                                                <button type="button" id="test-openai-btn" class="btn-secondary" onclick="testOpenAIConnection()" data-i18n="settingsBasic.testConnection">测试连接</button>
+                                                                <span id="test-openai-result" class="form-inline-result connection-test-result"></span>
+                                                            </div>
+                                                        </div>
+                                                        <div class="ai-channel-form-grid">
+                                                            <div class="form-group">
+                                                                <label for="ai-channel-name" data-i18n="settingsBasic.aiChannelName">通道名称</label>
+                                                                <input type="text" id="ai-channel-name" placeholder="Qwen Max" maxlength="24" />
+                                                            </div>
+                                                            <div class="form-group">
+                                                                <label for="openai-provider" data-i18n="settingsBasic.apiProvider">API 提供商</label>
+                                                                <select id="openai-provider">
+                                                                    <option value="openai_compatible" data-i18n="settingsBasic.providerOpenAI">OpenAI / 兼容 OpenAI 协议</option>
+                                                                    <option value="claude" data-i18n="settingsBasic.providerClaude">Claude (Anthropic Messages API)</option>
+                                                                </select>
+                                                            </div>
+                                                            <div class="form-group span-2">
+                                                                <label for="openai-base-url">Base URL <span class="required-mark">*</span></label>
+                                                                <input type="text" id="openai-base-url" data-i18n="settingsBasic.openaiBaseUrlPlaceholder" data-i18n-attr="placeholder" placeholder="https://api.openai.com/v1" required />
+                                                            </div>
+                                                            <div class="form-group span-2">
+                                                                <label for="openai-api-key">API Key <span class="required-mark">*</span></label>
+                                                                <input type="password" id="openai-api-key" data-i18n="settingsBasic.openaiApiKeyPlaceholder" data-i18n-attr="placeholder" placeholder="输入OpenAI API Key" required />
+                                                            </div>
+                                                            <div class="form-group span-2">
+                                                                <label for="openai-model"><span data-i18n="settingsBasic.model">模型</span> <span class="required-mark">*</span></label>
+                                                                <div class="model-pick-row">
+                                                                    <input type="text" id="openai-model" class="model-pick-input" data-i18n="settingsBasic.modelPlaceholder" data-i18n-attr="placeholder" placeholder="gpt-4" required />
+                                                                    <select id="openai-model-select" class="model-pick-native" style="display: none;" title="" aria-hidden="true" tabindex="-1">
+                                                                        <option value="" disabled data-i18n="settingsBasic.modelsListSelectPlaceholder">请选择模型</option>
+                                                                    </select>
+                                                                    <a href="javascript:void(0)" id="fetch-openai-models-btn" class="model-pick-fetch-link" onclick="fetchModelList('openai')" data-i18n="settingsBasic.fetchModels">获取列表</a>
+                                                                </div>
+                                                                <small id="fetch-openai-models-hint" class="form-hint" style="display: none;"></small>
+                                                                <span id="fetch-openai-models-result" class="form-inline-result"></span>
+                                                            </div>
+                                                        </div>
+                                                    </section>
+
+                                                    <section class="ai-channel-form-section">
+                                                        <div class="ai-channel-form-section-head">
+                                                            <div>
+                                                                <h6 data-i18n="settingsBasic.aiChannelLimitsSection">额度设置</h6>
+                                                                <p data-i18n="settingsBasic.aiChannelLimitsHint">Token 上限控制上下文窗口和单次输出。</p>
+                                                            </div>
+                                                        </div>
+                                                        <div class="ai-channel-form-grid">
+                                                            <div class="form-group">
+                                                                <label for="openai-max-total-tokens"><span data-i18n="settingsBasic.maxTotalTokens">最大上下文 Token 数</span></label>
+                                                                <input type="number" id="openai-max-total-tokens" data-i18n="settingsBasic.maxTotalTokensPlaceholder" data-i18n-attr="placeholder" placeholder="120000" min="1000" step="1000" />
+                                                                <small class="form-hint" data-i18n="settingsBasic.maxTotalTokensHint">内存压缩和攻击链构建共用此配置，默认 120000</small>
+                                                            </div>
+                                                            <div class="form-group">
+                                                                <label for="openai-max-completion-tokens"><span data-i18n="settingsBasic.maxCompletionTokens">最大输出 Token 数</span></label>
+                                                                <input type="number" id="openai-max-completion-tokens" data-i18n="settingsBasic.maxCompletionTokensPlaceholder" data-i18n-attr="placeholder" placeholder="16384" min="1" step="256" />
+                                                                <small class="form-hint" data-i18n="settingsBasic.maxCompletionTokensHint">单次模型回复的输出上限，默认 16384</small>
+                                                            </div>
+                                                        </div>
+                                                    </section>
+
+                                                    <details class="ai-channel-form-section ai-channel-advanced-section">
+                                                        <summary>
+                                                            <span>
+                                                                <strong data-i18n="settingsBasic.openaiReasoningTitle">推理设置</strong>
+                                                                <small data-i18n="settingsBasic.openaiReasoningHint">作为该 AI 通道的默认推理设置；对话页「会话设置」可覆盖。</small>
+                                                            </span>
+                                                        </summary>
+                                                        <div class="ai-channel-reasoning-grid">
+                                                            <div class="form-group">
+                                                                <label for="openai-reasoning-mode" data-i18n="chat.reasoningModeLabel">模式</label>
+                                                                <select id="openai-reasoning-mode">
+                                                                    <option value="auto" data-i18n="chat.reasoningModeAuto">自动</option>
+                                                                    <option value="on" data-i18n="chat.reasoningModeOn">开启</option>
+                                                                    <option value="off" data-i18n="chat.reasoningModeOff">关闭</option>
+                                                                </select>
+                                                            </div>
+                                                            <div class="form-group">
+                                                                <label for="openai-reasoning-effort" data-i18n="chat.reasoningEffortLabel">强度</label>
+                                                                <select id="openai-reasoning-effort">
+                                                                    <option value="" data-i18n="chat.reasoningEffortUnset">不指定</option>
+                                                                    <option value="low">low</option>
+                                                                    <option value="medium">medium</option>
+                                                                    <option value="high">high</option>
+                                                                    <option value="xhigh">xhigh</option>
+                                                                    <option value="max">max</option>
+                                                                </select>
+                                                            </div>
+                                                            <div class="form-group">
+                                                                <label for="openai-reasoning-profile" data-i18n="settingsBasic.openaiReasoningProfile">线路</label>
+                                                                <select id="openai-reasoning-profile">
+                                                                    <option value="auto">auto</option>
+                                                                    <option value="deepseek_compat">deepseek_compat</option>
+                                                                    <option value="openai_compat">openai_compat</option>
+                                                                    <option value="output_config_effort">output_config_effort</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                        <label class="checkbox-label ai-channel-reasoning-toggle">
+                                                            <input type="checkbox" id="openai-reasoning-allow-client" class="modern-checkbox" checked />
+                                                            <span class="checkbox-custom"></span>
+                                                            <span class="checkbox-text" data-i18n="settingsBasic.openaiReasoningAllowClient">允许对话页覆盖推理选项</span>
+                                                        </label>
+                                                    </details>
                                                 </div>
                                             </div>
                                         </div>
