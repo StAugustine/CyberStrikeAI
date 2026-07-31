@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -45,6 +46,8 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	t.Cleanup(upstream.Close)
 	externalMCP, externalMCPCalls := newDesktopFakeMCP(t)
 	t.Cleanup(externalMCP.Close)
+	infoCollect := newDesktopFakeInfoCollect(t)
+	t.Cleanup(infoCollect.Close)
 	credentialStore := newRecordingCredentialStore()
 	credentialStore.values["desktop-knowledge"] = "desktop-embedding-secret"
 	resourceDir := writeTestResources(t, root, "test-version")
@@ -232,6 +235,14 @@ openai:
 			t.Fatalf("excluded desktop route %s /%s status = %d, want 404", request.method, request.path, status)
 		}
 	}
+	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/fofa/search", token, map[string]interface{}{
+		"provider": "fofa",
+		"query":    `domain="desktop.example.test"`,
+	})
+	need, _ := body["need"].([]interface{})
+	if status != http.StatusBadRequest || len(need) != 1 || need[0] != "fofa.api_key" {
+		t.Fatalf("unconfigured desktop info collection status = %d, body = %#v", status, body)
+	}
 
 	status, body = desktopJSONRequest(t, http.MethodPut, ready.URL+"api/config", token, map[string]interface{}{
 		"ai": map[string]interface{}{
@@ -251,11 +262,38 @@ openai:
 		"multi_agent": map[string]interface{}{
 			"enabled": true,
 		},
+		"fofa": map[string]interface{}{
+			"base_url": infoCollect.URL + "/fofa",
+			"api_key":  "desktop-fofa-secret",
+		},
+		"zoomeye": map[string]interface{}{
+			"base_url": infoCollect.URL + "/zoomeye",
+			"api_key":  "desktop-zoomeye-secret",
+		},
+		"quake": map[string]interface{}{
+			"base_url": infoCollect.URL + "/quake",
+			"api_key":  "desktop-quake-secret",
+		},
+		"shodan": map[string]interface{}{
+			"base_url": infoCollect.URL,
+			"api_key":  "desktop-shodan-secret",
+		},
 	})
 	if status != http.StatusOK {
 		t.Fatalf("desktop AI config update status = %d, body = %#v", status, body)
 	}
-	if len(credentialStore.values) != 2 || credentialStore.values["desktop-knowledge"] != "desktop-embedding-secret" || !desktopCredentialStoreContains(credentialStore, "stream-secret") {
+	for _, secret := range []string{
+		"stream-secret",
+		"desktop-fofa-secret",
+		"desktop-zoomeye-secret",
+		"desktop-quake-secret",
+		"desktop-shodan-secret",
+	} {
+		if !desktopCredentialStoreContains(credentialStore, secret) {
+			t.Fatalf("desktop credential store does not contain %q: %#v", secret, credentialStore.values)
+		}
+	}
+	if len(credentialStore.values) != 6 || credentialStore.values["desktop-knowledge"] != "desktop-embedding-secret" {
 		t.Fatalf("desktop AI credential store values = %#v", credentialStore.values)
 	}
 	configPath := filepath.Join(options.Roots.ConfigDir, "config.yaml")
@@ -263,9 +301,19 @@ openai:
 	if err != nil {
 		t.Fatalf("read protected desktop config: %v", err)
 	}
-	if bytes.Contains(configData, []byte("stream-secret")) || bytes.Contains(configData, []byte("desktop-embedding-secret")) {
-		t.Fatal("desktop AI configuration persisted plaintext")
+	for _, secret := range []string{
+		"stream-secret",
+		"desktop-embedding-secret",
+		"desktop-fofa-secret",
+		"desktop-zoomeye-secret",
+		"desktop-quake-secret",
+		"desktop-shodan-secret",
+	} {
+		if bytes.Contains(configData, []byte(secret)) {
+			t.Fatalf("desktop configuration persisted plaintext secret %q", secret)
+		}
 	}
+	desktopAssertInfoCollect(t, ready.URL, token)
 
 	events := desktopSSERequest(t, ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
 		"message": "Reply with a short desktop streaming confirmation.",
@@ -924,6 +972,7 @@ openai:
 	if restartedToken == "" {
 		t.Fatalf("post-restart local admin login did not return a token: %#v", restartedLogin)
 	}
+	desktopAssertInfoCollect(t, restarted.URL, restartedToken)
 	status, body = desktopJSONRequest(t, http.MethodGet, restarted.URL+"api/conversations/"+conversationID, restartedToken, nil)
 	if status != http.StatusOK {
 		t.Fatalf("persisted conversation after core restart status = %d, body = %#v", status, body)
@@ -1175,6 +1224,158 @@ func newDesktopFakeMCP(t *testing.T) (*httptest.Server, <-chan string) {
 		}
 		streamable.ServeHTTP(response, request)
 	})), calls
+}
+
+func newDesktopFakeInfoCollect(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/fofa":
+			if request.URL.Query().Get("key") != "desktop-fofa-secret" || request.URL.Query().Get("email") != "" {
+				t.Error("desktop fake FOFA request used unexpected credential fields")
+				http.Error(response, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			queryData, err := base64.StdEncoding.DecodeString(request.URL.Query().Get("qbase64"))
+			if err != nil {
+				t.Errorf("decode desktop fake FOFA query: %v", err)
+				http.Error(response, `{"error":"invalid query"}`, http.StatusBadRequest)
+				return
+			}
+			switch string(queryData) {
+			case "desktop-info-failure":
+				response.WriteHeader(http.StatusTooManyRequests)
+				_, _ = io.WriteString(response, `{"error":"desktop-fofa-secret upstream detail"}`)
+				return
+			case "desktop-info-malformed":
+				_, _ = io.WriteString(response, `{`)
+				return
+			}
+			_ = json.NewEncoder(response).Encode(map[string]interface{}{
+				"error":   false,
+				"size":    1,
+				"page":    1,
+				"total":   1,
+				"results": [][]interface{}{{"https://desktop.example.test", "192.0.2.10"}},
+			})
+		case "/zoomeye":
+			if request.Header.Get("API-KEY") != "desktop-zoomeye-secret" {
+				t.Errorf("desktop fake ZoomEye API key = %q", request.Header.Get("API-KEY"))
+				http.Error(response, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			_ = json.NewEncoder(response).Encode(map[string]interface{}{
+				"code":     60000,
+				"query":    `domain="desktop.example.test"`,
+				"total":    1,
+				"page":     1,
+				"pagesize": 1,
+				"data": []map[string]interface{}{{
+					"ip":   "192.0.2.11",
+					"port": 443,
+				}},
+			})
+		case "/quake":
+			if request.Header.Get("X-QuakeToken") != "desktop-quake-secret" {
+				t.Errorf("desktop fake Quake API key = %q", request.Header.Get("X-QuakeToken"))
+				http.Error(response, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			_ = json.NewEncoder(response).Encode(map[string]interface{}{
+				"code":        0,
+				"total_count": 1,
+				"data": []map[string]interface{}{{
+					"ip":   "192.0.2.12",
+					"port": 8443,
+				}},
+			})
+		case "/shodan/host/search":
+			if request.URL.Query().Get("key") != "desktop-shodan-secret" {
+				t.Errorf("desktop fake Shodan key = %q", request.URL.Query().Get("key"))
+				http.Error(response, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			_ = json.NewEncoder(response).Encode(map[string]interface{}{
+				"total": 1,
+				"matches": []map[string]interface{}{{
+					"ip_str": "192.0.2.13",
+					"port":   9443,
+				}},
+			})
+		default:
+			t.Errorf("desktop fake info collection path = %q", request.URL.Path)
+			http.NotFound(response, request)
+		}
+	}))
+}
+
+func desktopAssertInfoCollect(t *testing.T, baseURL, token string) {
+	t.Helper()
+	for _, testCase := range []struct {
+		provider string
+		query    string
+		fields   string
+	}{
+		{provider: "fofa", query: `domain="desktop.example.test"`, fields: "host,ip"},
+		{provider: "zoomeye", query: `domain="desktop.example.test"`, fields: "ip,port"},
+		{provider: "quake", query: `domain:"desktop.example.test"`, fields: "ip,port"},
+		{provider: "shodan", query: "hostname:desktop.example.test", fields: "ip_str,port"},
+	} {
+		status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/fofa/search", token, map[string]interface{}{
+			"provider": testCase.provider,
+			"query":    testCase.query,
+			"fields":   testCase.fields,
+			"size":     1,
+			"page":     1,
+			"full":     true,
+		})
+		results, _ := body["results"].([]interface{})
+		if status != http.StatusOK ||
+			body["provider"] != testCase.provider ||
+			body["results_count"] != float64(1) ||
+			len(results) != 1 {
+			t.Fatalf("desktop %s info collection status = %d, body = %#v", testCase.provider, status, body)
+		}
+	}
+
+	for _, testCase := range []struct {
+		query       string
+		wantMessage string
+	}{
+		{query: "desktop-info-failure", wantMessage: "429"},
+		{query: "desktop-info-malformed", wantMessage: "解析 FOFA 响应失败"},
+	} {
+		status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/fofa/search", token, map[string]interface{}{
+			"provider": "fofa",
+			"query":    testCase.query,
+			"fields":   "host,ip",
+		})
+		errorText, _ := body["error"].(string)
+		data, _ := json.Marshal(body)
+		if status != http.StatusBadGateway ||
+			!strings.Contains(errorText, testCase.wantMessage) ||
+			bytes.Contains(data, []byte("desktop-fofa-secret")) {
+			t.Fatalf("desktop FOFA failure status = %d, body = %#v", status, body)
+		}
+	}
+
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/config", token, nil)
+	credentialStatus, _ := body["credential_status"].(map[string]interface{})
+	if status != http.StatusOK {
+		t.Fatalf("desktop info collection credential status = %d, body = %#v", status, body)
+	}
+	for _, path := range []string{"fofa.api_key", "zoomeye.api_key", "quake.api_key", "shodan.api_key"} {
+		if credentialStatus[path] != true {
+			t.Fatalf("desktop info collection credential %s not configured: %#v", path, credentialStatus)
+		}
+	}
+	data, _ := json.Marshal(body)
+	for _, secret := range []string{"desktop-fofa-secret", "desktop-zoomeye-secret", "desktop-quake-secret", "desktop-shodan-secret"} {
+		if bytes.Contains(data, []byte(secret)) {
+			t.Fatalf("desktop config API exposed info collection secret %q", secret)
+		}
+	}
 }
 
 func desktopWriteToolCallResponse(response http.ResponseWriter, payload map[string]interface{}, callID, name, arguments string) {
