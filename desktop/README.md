@@ -1,24 +1,24 @@
-# CyberStrikeAI Desktop D1 PoC
+# CyberStrikeAI Desktop
 
-This directory contains the D1 protocol proof of concept only. It does not yet host the production application or migrate any business module.
+This directory contains the Tauri v2 shell for the local CyberStrikeAI desktop client. The shell builds `cmd/desktop-core` as the `cyberstrike-core` sidecar, resolves all writable platform directories to absolute paths, and passes only those paths plus the application version as process arguments.
 
-The PoC fixes exact Tauri dependency versions, builds `cmd/desktop-poc-sidecar` as the `cyberstrike-go-poc` binary for the current Rust target, starts it as a packaged sidecar, accepts only a versioned `READY` message containing an app version and explicit random `127.0.0.1` HTTP URL, and navigates the WebView to that origin. The shared v1 contract is recorded in `protocol/handshake.schema.json`; unknown fields remain forward-compatible. Closing the application requests graceful shutdown over stdin and force-kills the child only after a five-second timeout.
+The sidecar reports versioned `BOOTSTRAP_REQUIRED` and `READY` messages on stdout. On a fresh profile, a separate local bootstrap window is the only window permitted to submit the initial administrator password. The password is sent as a versioned JSON line over inherited stdin; it is not placed in process arguments, environment variables, URLs, configuration, or logs. After `READY`, the main WebView is restricted to the exact random `127.0.0.1` origin reported by the core.
 
 From this directory:
 
 ```sh
 npm install --ignore-scripts
-npm run poc:dev
+npm run desktop:dev
 ```
 
-Use `npm run poc:build` for an unbundled debug build. A Rust stable toolchain, the platform's native build prerequisites, Go, Node.js, and npm are required. D1 is not complete until this behavior has been built and run on Windows x64, macOS arm64, and macOS x64.
+Development mode stages bundled defaults and an isolated disposable profile under the repository `.tmp/` directory. Use `npm run desktop:build` for an unbundled debug build. A pinned Rust toolchain, the platform's native build prerequisites, a CGO-capable Go toolchain, Node.js, and npm are required.
 
-After an unbundled debug build, the automated native smokes are:
+After an unbundled debug build, the native integration smokes are:
 
 ```sh
-npm run poc:smoke
-npm run poc:smoke:single-instance
-npm run poc:smoke:failures
+npm run desktop:smoke
+npm run desktop:smoke:single-instance
+npm run desktop:smoke:failures
 ```
 
-The normal smoke exits only after the WebView reports successful REST, EventSource, WebSocket and external-navigation rejection, and after Tauri has intercepted and cancelled a test download. Cancelling that download is intentional: the PoC must not write to the user's Downloads directory. The failure smoke expects exit code 1 for an unexpected sidecar crash and a non-zero exit after the five-second forced-shutdown fallback.
+The lifecycle smoke creates an isolated profile under the repository `.tmp/` directory, completes first-launch bootstrap through the same stdin protocol, reaches the real core health gate, shuts down cleanly, and verifies that the test password was not persisted. The failure smoke verifies that invalid bundled resources fail closed with a non-zero application exit.

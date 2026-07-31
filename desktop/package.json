@@ -4,12 +4,12 @@
   "private": true,
   "scripts": {
     "resources:manifest": "node scripts/generate-resource-manifest.mjs",
-    "poc:sidecar": "node scripts/build-sidecar.mjs",
-    "poc:dev": "node scripts/build-sidecar.mjs && tauri dev",
-    "poc:build": "node scripts/build-sidecar.mjs && tauri build --debug --no-bundle",
-    "poc:smoke": "node scripts/smoke-runtime.mjs",
-    "poc:smoke:single-instance": "node scripts/smoke-single-instance.mjs",
-    "poc:smoke:failures": "node scripts/smoke-failures.mjs"
+    "desktop:sidecar": "node scripts/build-sidecar.mjs",
+    "desktop:dev": "node scripts/run-dev.mjs",
+    "desktop:build": "node scripts/build-sidecar.mjs && tauri build --debug --no-bundle",
+    "desktop:smoke": "node scripts/smoke-runtime.mjs",
+    "desktop:smoke:single-instance": "node scripts/smoke-single-instance.mjs",
+    "desktop:smoke:failures": "node scripts/smoke-failures.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4"

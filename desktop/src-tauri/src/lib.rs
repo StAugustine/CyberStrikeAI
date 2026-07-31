@@ -1,7 +1,9 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicI32, Ordering},
+        atomic::{AtomicI32, Ordering},
         Mutex,
     },
     thread,
@@ -9,81 +11,86 @@ use std::{
 };
 use tauri::{
     webview::{DownloadEvent, NewWindowResponse},
-    AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
 
-const SIDECAR_NAME: &str = "cyberstrike-go-poc";
-const READY_PROTOCOL_VERSION: u32 = 1;
+const SIDECAR_NAME: &str = "cyberstrike-core";
+const DESKTOP_PROTOCOL_VERSION: u32 = 1;
 const FORCE_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+const SMOKE_BOOTSTRAP_PASSWORD: &str = "desktop-smoke-password";
 static DESIRED_EXIT_CODE: AtomicI32 = AtomicI32::new(0);
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum StartupPhase {
+    #[default]
+    Starting,
+    BootstrapRequired,
+    Bootstrapping,
+    Ready,
+    ShuttingDown,
+    Failed,
+}
 
 #[derive(Default)]
 struct SidecarState {
     child: Mutex<Option<CommandChild>>,
     allowed_origin: Mutex<Option<String>>,
-    shutting_down: AtomicBool,
-    failed: AtomicBool,
-    protocol_verified: AtomicBool,
-    download_intercepted: AtomicBool,
+    phase: Mutex<StartupPhase>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ReadyMessage {
+struct HandshakeMessage {
     #[serde(rename = "type")]
     kind: String,
     protocol_version: u32,
-    url: String,
+    url: Option<String>,
     app_version: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct PocResultMessage {
+#[derive(Debug, Eq, PartialEq)]
+enum Handshake {
+    BootstrapRequired,
+    Ready(tauri::Url),
+}
+
+#[derive(Serialize)]
+struct BootstrapCommand<'a> {
     #[serde(rename = "type")]
-    kind: String,
-    rest: bool,
-    sse: bool,
-    websocket: bool,
-    external_navigation_blocked: bool,
+    kind: &'static str,
+    protocol_version: u32,
+    password: &'a str,
+}
+
+#[derive(Debug)]
+struct DesktopPaths {
+    data_dir: PathBuf,
+    config_dir: PathBuf,
+    cache_dir: PathBuf,
+    log_dir: PathBuf,
+    temp_dir: PathBuf,
+    resource_dir: PathBuf,
 }
 
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            eprintln!("desktop PoC existing instance focused");
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            eprintln!("desktop existing instance focused");
+            focus_active_window(app);
         }))
         .plugin(tauri_plugin_shell::init())
         .manage(SidecarState::default())
+        .invoke_handler(tauri::generate_handler![submit_bootstrap_password])
         .setup(|app| {
             let navigation_handle = app.handle().clone();
-            let download_handle = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("CyberStrikeAI Desktop PoC")
-                .inner_size(960.0, 720.0)
-                .min_inner_size(720.0, 520.0)
+                .title("CyberStrikeAI Desktop")
+                .inner_size(1120.0, 760.0)
+                .min_inner_size(800.0, 560.0)
                 .center()
                 .on_navigation(move |url| navigation_allowed(&navigation_handle, url))
                 .on_new_window(|_url, _features| NewWindowResponse::Deny)
-                .on_download(move |_webview, event| match event {
-                    DownloadEvent::Requested { url, .. } => {
-                        let allowed = url.path() == "/api/poc/download"
-                            && navigation_allowed(&download_handle, &url);
-                        if allowed {
-                            eprintln!("desktop PoC download intercepted");
-                            download_handle
-                                .state::<SidecarState>()
-                                .download_intercepted
-                                .store(true, Ordering::SeqCst);
-                        }
-                        false
-                    }
-                    _ => true,
-                })
+                .on_download(|_webview, event| !matches!(event, DownloadEvent::Requested { .. }))
                 .build()?;
             start_sidecar(app.handle())?;
             #[cfg(debug_assertions)]
@@ -91,15 +98,17 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("failed to build CyberStrikeAI desktop PoC");
+        .expect("failed to build CyberStrikeAI desktop");
 
     let exit_code = app.run_return(|handle, event| {
         if let RunEvent::ExitRequested { api, .. } = event {
-            if handle
+            let terminal = handle
                 .state::<SidecarState>()
-                .shutting_down
-                .load(Ordering::SeqCst)
-            {
+                .phase
+                .lock()
+                .map(|phase| matches!(*phase, StartupPhase::ShuttingDown | StartupPhase::Failed))
+                .unwrap_or(true);
+            if terminal {
                 return;
             }
             api.prevent_exit();
@@ -114,8 +123,27 @@ pub fn run() {
     });
 }
 
+#[tauri::command]
+fn submit_bootstrap_password(
+    window: WebviewWindow,
+    mut password: String,
+) -> Result<(), String> {
+    if window.label() != "bootstrap" {
+        clear_string(&mut password);
+        return Err("bootstrap command is not available to this window".to_string());
+    }
+    send_bootstrap_password(window.app_handle(), &mut password)
+}
+
 fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut events, child) = handle.shell().sidecar(SIDECAR_NAME)?.spawn()?;
+    let paths = resolve_desktop_paths(handle)?;
+    let app_version = handle.package_info().version.to_string();
+    let arguments = sidecar_arguments(&paths, &app_version);
+    let (mut events, child) = handle
+        .shell()
+        .sidecar(SIDECAR_NAME)?
+        .args(arguments)
+        .spawn()?;
     handle
         .state::<SidecarState>()
         .child
@@ -125,53 +153,60 @@ fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     let task_handle = handle.clone();
     tauri::async_runtime::spawn(async move {
-        let mut ready = false;
         while let Some(event) = events.recv().await {
             match event {
-                CommandEvent::Stdout(line) if !ready => match parse_ready(&line) {
-                    Ok(url) => {
-                        ready = true;
-                        let origin = url.origin().ascii_serialization();
-                        let state = task_handle.state::<SidecarState>();
-                        let Ok(mut allowed_origin) = state.allowed_origin.lock() else {
-                            fail_sidecar(&task_handle, "allowed origin state lock poisoned");
-                            return;
-                        };
-                        allowed_origin.replace(origin);
-                        drop(allowed_origin);
-                        if let Some(window) = task_handle.get_webview_window("main") {
-                            if let Err(error) = window.navigate(url) {
-                                fail_sidecar(
-                                    &task_handle,
-                                    &format!("navigate to sidecar: {error}"),
-                                );
-                                return;
-                            }
-                        } else {
-                            fail_sidecar(&task_handle, "main window is missing");
+                CommandEvent::Stdout(line) => {
+                    let handshake = match parse_handshake(&line, &app_version) {
+                        Ok(handshake) => handshake,
+                        Err(error) => {
+                            fail_sidecar(&task_handle, &error);
                             return;
                         }
+                    };
+                    let action = {
+                        let state = task_handle.state::<SidecarState>();
+                        let Ok(mut phase) = state.phase.lock() else {
+                            fail_sidecar(&task_handle, "startup phase lock poisoned");
+                            return;
+                        };
+                        match apply_handshake(&mut phase, handshake) {
+                            Ok(action) => action,
+                            Err(error) => {
+                                drop(phase);
+                                fail_sidecar(&task_handle, &error);
+                                return;
+                            }
+                        }
+                    };
+                    match action {
+                        Handshake::BootstrapRequired => {
+                            eprintln!("desktop core bootstrap required");
+                            if let Err(error) = show_bootstrap_window(&task_handle) {
+                                fail_sidecar(&task_handle, &error);
+                                return;
+                            }
+                            #[cfg(debug_assertions)]
+                            if smoke_enabled() {
+                                let mut password = SMOKE_BOOTSTRAP_PASSWORD.to_string();
+                                if let Err(error) =
+                                    send_bootstrap_password(&task_handle, &mut password)
+                                {
+                                    fail_sidecar(&task_handle, &error);
+                                    return;
+                                }
+                            }
+                        }
+                        Handshake::Ready(url) => {
+                            if let Err(error) = show_main_window(&task_handle, url) {
+                                fail_sidecar(&task_handle, &error);
+                                return;
+                            }
+                            eprintln!("desktop core ready");
+                        }
                     }
-                    Err(error) => {
-                        fail_sidecar(&task_handle, &error);
-                        return;
-                    }
-                },
-                CommandEvent::Stdout(line) => match parse_poc_result(&line) {
-                    Ok(()) => {
-                        eprintln!("desktop PoC browser protocols verified");
-                        task_handle
-                            .state::<SidecarState>()
-                            .protocol_verified
-                            .store(true, Ordering::SeqCst);
-                    }
-                    Err(error) => {
-                        fail_sidecar(&task_handle, &error);
-                        return;
-                    }
-                },
+                }
                 CommandEvent::Stderr(line) => {
-                    eprintln!("desktop PoC sidecar: {}", String::from_utf8_lossy(&line));
+                    eprintln!("desktop core: {}", String::from_utf8_lossy(&line));
                 }
                 CommandEvent::Error(error) => {
                     fail_sidecar(&task_handle, &format!("sidecar process error: {error}"));
@@ -182,26 +217,14 @@ fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     if let Ok(mut child) = state.child.lock() {
                         child.take();
                     }
-                    if payload.code != Some(0) {
-                        eprintln!(
-                            "desktop PoC sidecar terminated with failure: {:?}",
-                            payload.code
-                        );
-                        state.failed.store(true, Ordering::SeqCst);
-                        state.shutting_down.store(true, Ordering::SeqCst);
-                        record_failure_exit_code(1);
-                        task_handle.exit(1);
-                    } else if state.failed.load(Ordering::SeqCst) {
-                        task_handle.exit(1);
-                    } else if state.shutting_down.load(Ordering::SeqCst) {
+                    let phase = state.phase.lock().map(|phase| *phase).unwrap_or(StartupPhase::Failed);
+                    if payload.code == Some(0) && phase == StartupPhase::ShuttingDown {
                         task_handle.exit(0);
                     } else {
-                        eprintln!(
-                            "desktop PoC sidecar terminated unexpectedly: {:?}",
-                            payload.code
-                        );
-                        state.failed.store(true, Ordering::SeqCst);
-                        state.shutting_down.store(true, Ordering::SeqCst);
+                        eprintln!("desktop core terminated unexpectedly: {:?}", payload.code);
+                        if let Ok(mut phase) = state.phase.lock() {
+                            *phase = StartupPhase::Failed;
+                        }
                         record_failure_exit_code(1);
                         task_handle.exit(1);
                     }
@@ -210,58 +233,192 @@ fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 _ => {}
             }
         }
+        fail_sidecar(&task_handle, "sidecar event stream closed unexpectedly");
     });
 
     Ok(())
 }
 
-fn parse_ready(line: &[u8]) -> Result<tauri::Url, String> {
-    let message: ReadyMessage = serde_json::from_slice(line)
-        .map_err(|error| format!("invalid READY handshake: {error}"))?;
-    if message.kind != "READY" {
-        return Err(format!("unexpected sidecar message type: {}", message.kind));
-    }
-    if message.protocol_version != READY_PROTOCOL_VERSION {
+fn parse_handshake(line: &[u8], expected_app_version: &str) -> Result<Handshake, String> {
+    let message: HandshakeMessage = serde_json::from_slice(line)
+        .map_err(|error| format!("invalid desktop handshake: {error}"))?;
+    if message.protocol_version != DESKTOP_PROTOCOL_VERSION {
         return Err(format!(
-            "unsupported READY protocol version: {}",
+            "unsupported desktop protocol version: {}",
             message.protocol_version
         ));
     }
-    if message.app_version.trim().is_empty() {
-        return Err("READY app version must not be empty".to_string());
-    }
-
-    let url: tauri::Url = message
-        .url
-        .parse()
-        .map_err(|error| format!("invalid READY URL: {error}"))?;
-    if url.scheme() != "http"
-        || url.host_str() != Some("127.0.0.1")
-        || url.port().is_none()
-        || url.username() != ""
-        || url.password().is_some()
-        || url.path() != "/"
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err("READY URL must be an explicit IPv4 loopback HTTP origin".to_string());
-    }
-    Ok(url)
-}
-
-fn parse_poc_result(line: &[u8]) -> Result<(), String> {
-    let message: PocResultMessage = serde_json::from_slice(line)
-        .map_err(|error| format!("invalid browser protocol result: {error}"))?;
-    if message.kind != "POC_RESULT" {
-        return Err(format!("unexpected sidecar message type: {}", message.kind));
-    }
-    if !message.rest || !message.sse || !message.websocket || !message.external_navigation_blocked {
+    if message.app_version != expected_app_version {
         return Err(format!(
-            "browser protocol verification failed: REST={} SSE={} WebSocket={} ExternalNavigationBlocked={}",
-            message.rest, message.sse, message.websocket, message.external_navigation_blocked
+            "desktop core version {} does not match shell version {}",
+            message.app_version, expected_app_version
         ));
     }
+    match message.kind.as_str() {
+        "BOOTSTRAP_REQUIRED" => {
+            if message.url.is_some() {
+                return Err("BOOTSTRAP_REQUIRED must not include a URL".to_string());
+            }
+            Ok(Handshake::BootstrapRequired)
+        }
+        "READY" => {
+            let raw_url = message.url.ok_or("READY must include a URL")?;
+            let url: tauri::Url = raw_url
+                .parse()
+                .map_err(|error| format!("invalid READY URL: {error}"))?;
+            if !is_exact_loopback_origin(&url) {
+                return Err("READY URL must be an explicit IPv4 loopback HTTP origin".to_string());
+            }
+            Ok(Handshake::Ready(url))
+        }
+        _ => Err(format!(
+            "unexpected desktop handshake type: {}",
+            message.kind
+        )),
+    }
+}
+
+fn apply_handshake(phase: &mut StartupPhase, handshake: Handshake) -> Result<Handshake, String> {
+    match (*phase, &handshake) {
+        (StartupPhase::Starting, Handshake::BootstrapRequired) => {
+            *phase = StartupPhase::BootstrapRequired;
+        }
+        (StartupPhase::Starting | StartupPhase::Bootstrapping, Handshake::Ready(_)) => {
+            *phase = StartupPhase::Ready;
+        }
+        _ => {
+            return Err(format!(
+                "unexpected desktop handshake {:?} while in phase {:?}",
+                handshake, phase
+            ));
+        }
+    }
+    Ok(handshake)
+}
+
+fn send_bootstrap_password(handle: &AppHandle, password: &mut String) -> Result<(), String> {
+    if password.trim().len() < 8 {
+        clear_string(password);
+        return Err("password must contain at least 8 characters".to_string());
+    }
+
+    let state = handle.state::<SidecarState>();
+    let mut phase = state
+        .phase
+        .lock()
+        .map_err(|_| "bootstrap state is unavailable".to_string())?;
+    if *phase != StartupPhase::BootstrapRequired {
+        clear_string(password);
+        return Err("bootstrap password is not currently requested".to_string());
+    }
+
+    let mut command = serde_json::to_vec(&BootstrapCommand {
+        kind: "BOOTSTRAP",
+        protocol_version: DESKTOP_PROTOCOL_VERSION,
+        password,
+    })
+    .map_err(|_| "failed to encode bootstrap command".to_string())?;
+    command.push(b'\n');
+    clear_string(password);
+
+    let write_result = state
+        .child
+        .lock()
+        .map_err(|_| "desktop core is unavailable".to_string())?
+        .as_mut()
+        .ok_or_else(|| "desktop core is unavailable".to_string())?
+        .write(&command)
+        .map_err(|_| "failed to submit bootstrap password".to_string());
+    command.fill(0);
+    write_result?;
+    *phase = StartupPhase::Bootstrapping;
     Ok(())
+}
+
+fn clear_string(value: &mut String) {
+    // SAFETY: bytes are overwritten without changing their length or violating UTF-8;
+    // the string is cleared immediately afterwards.
+    unsafe {
+        value.as_mut_vec().fill(0);
+    }
+    value.clear();
+}
+
+fn show_bootstrap_window(handle: &AppHandle) -> Result<(), String> {
+    if let Some(main) = handle.get_webview_window("main") {
+        main.hide()
+            .map_err(|error| format!("hide main window: {error}"))?;
+    }
+    if let Some(window) = handle.get_webview_window("bootstrap") {
+        window
+            .show()
+            .map_err(|error| format!("show bootstrap window: {error}"))?;
+        window
+            .set_focus()
+            .map_err(|error| format!("focus bootstrap window: {error}"))?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(handle, "bootstrap", WebviewUrl::App("bootstrap.html".into()))
+        .title("Initialize CyberStrikeAI")
+        .inner_size(480.0, 500.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .closable(false)
+        .center()
+        .on_navigation(is_app_asset_url)
+        .on_new_window(|_url, _features| NewWindowResponse::Deny)
+        .on_download(|_webview, event| !matches!(event, DownloadEvent::Requested { .. }))
+        .build()
+        .map_err(|error| format!("create bootstrap window: {error}"))?;
+    Ok(())
+}
+
+fn show_main_window(handle: &AppHandle, url: tauri::Url) -> Result<(), String> {
+    let origin = url.origin().ascii_serialization();
+    handle
+        .state::<SidecarState>()
+        .allowed_origin
+        .lock()
+        .map_err(|_| "allowed origin state lock poisoned".to_string())?
+        .replace(origin);
+    let window = handle
+        .get_webview_window("main")
+        .ok_or_else(|| "main window is missing".to_string())?;
+    window
+        .navigate(url)
+        .map_err(|error| format!("navigate to desktop core: {error}"))?;
+    if let Some(bootstrap) = handle.get_webview_window("bootstrap") {
+        bootstrap
+            .destroy()
+            .map_err(|error| format!("destroy bootstrap window: {error}"))?;
+    }
+    window
+        .show()
+        .map_err(|error| format!("show main window: {error}"))?;
+    window
+        .set_focus()
+        .map_err(|error| format!("focus main window: {error}"))?;
+    Ok(())
+}
+
+fn focus_active_window(handle: &AppHandle) {
+    let phase = handle
+        .state::<SidecarState>()
+        .phase
+        .lock()
+        .map(|phase| *phase)
+        .unwrap_or(StartupPhase::Failed);
+    let label = if matches!(phase, StartupPhase::BootstrapRequired | StartupPhase::Bootstrapping) {
+        "bootstrap"
+    } else {
+        "main"
+    };
+    if let Some(window) = handle.get_webview_window(label) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 fn navigation_allowed(handle: &AppHandle, url: &tauri::Url) -> bool {
@@ -276,27 +433,112 @@ fn navigation_allowed(handle: &AppHandle, url: &tauri::Url) -> bool {
 }
 
 fn is_allowed_url(url: &tauri::Url, allowed_origin: Option<&str>) -> bool {
-    let app_asset = (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
-        || ((url.scheme() == "http" || url.scheme() == "https")
-            && url.host_str() == Some("tauri.localhost"));
-    app_asset
+    is_app_asset_url(url)
         || allowed_origin
             .map(|origin| url.origin().ascii_serialization() == origin)
             .unwrap_or(false)
 }
 
+fn is_app_asset_url(url: &tauri::Url) -> bool {
+    (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
+        || ((url.scheme() == "http" || url.scheme() == "https")
+            && url.host_str() == Some("tauri.localhost"))
+}
+
+fn is_exact_loopback_origin(url: &tauri::Url) -> bool {
+    url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+        && url.port().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
+
+fn resolve_desktop_paths(handle: &AppHandle) -> Result<DesktopPaths, Box<dyn std::error::Error>> {
+    #[cfg(debug_assertions)]
+    if let Ok(root_value) = std::env::var("CYBERSTRIKE_DESKTOP_TEST_ROOT") {
+        let root = PathBuf::from(root_value);
+        let resource_dir = PathBuf::from(std::env::var("CYBERSTRIKE_DESKTOP_RESOURCE_DIR")?);
+        if !root.is_absolute() || !resource_dir.is_absolute() {
+            return Err("desktop test paths must be absolute".into());
+        }
+        return Ok(DesktopPaths {
+            data_dir: root.join("data"),
+            config_dir: root.join("config"),
+            cache_dir: root.join("cache"),
+            log_dir: root.join("logs"),
+            temp_dir: root.join("temp"),
+            resource_dir,
+        });
+    }
+
+    let resolver = handle.path();
+    let cache_dir = resolver.app_cache_dir()?;
+    let paths = DesktopPaths {
+        data_dir: resolver.app_data_dir()?,
+        config_dir: resolver.app_config_dir()?,
+        cache_dir,
+        log_dir: resolver.app_log_dir()?,
+        temp_dir: resolver.temp_dir()?.join("cyberstrikeai-desktop"),
+        resource_dir: resolver.resource_dir()?.join("defaults"),
+    };
+    for path in [
+        &paths.data_dir,
+        &paths.config_dir,
+        &paths.cache_dir,
+        &paths.log_dir,
+        &paths.temp_dir,
+        &paths.resource_dir,
+    ] {
+        if !path.is_absolute() {
+            return Err(format!("desktop path is not absolute: {}", path.display()).into());
+        }
+    }
+    Ok(paths)
+}
+
+fn sidecar_arguments(paths: &DesktopPaths, app_version: &str) -> Vec<OsString> {
+    let mut arguments = Vec::with_capacity(14);
+    push_path_argument(&mut arguments, "--data-dir", &paths.data_dir);
+    push_path_argument(&mut arguments, "--config-dir", &paths.config_dir);
+    push_path_argument(&mut arguments, "--cache-dir", &paths.cache_dir);
+    push_path_argument(&mut arguments, "--log-dir", &paths.log_dir);
+    push_path_argument(&mut arguments, "--temp-dir", &paths.temp_dir);
+    push_path_argument(&mut arguments, "--resource-dir", &paths.resource_dir);
+    arguments.push(OsString::from("--app-version"));
+    arguments.push(OsString::from(app_version));
+    arguments
+}
+
+fn push_path_argument(arguments: &mut Vec<OsString>, name: &str, path: &Path) {
+    arguments.push(OsString::from(name));
+    arguments.push(path.as_os_str().to_os_string());
+}
+
 fn request_shutdown(handle: &AppHandle) {
     let state = handle.state::<SidecarState>();
-    if state.shutting_down.swap(true, Ordering::SeqCst) {
+    let Ok(mut phase) = state.phase.lock() else {
+        record_failure_exit_code(2);
+        handle.exit(2);
+        return;
+    };
+    if matches!(*phase, StartupPhase::ShuttingDown | StartupPhase::Failed) {
         return;
     }
+    *phase = StartupPhase::ShuttingDown;
+    drop(phase);
 
     let mut has_child = false;
     if let Ok(mut child) = state.child.lock() {
         if let Some(child) = child.as_mut() {
             has_child = true;
-            if let Err(error) = child.write(b"SHUTDOWN\n") {
-                eprintln!("failed to request sidecar shutdown: {error}");
+            if child
+                .write(b"{\"type\":\"SHUTDOWN\",\"protocol_version\":1}\n")
+                .is_err()
+            {
+                eprintln!("failed to request desktop core shutdown");
             }
         }
     }
@@ -312,7 +554,6 @@ fn request_shutdown(handle: &AppHandle) {
         let mut forced = false;
         if let Ok(mut child) = state.child.lock() {
             if let Some(child) = child.take() {
-                state.failed.store(true, Ordering::SeqCst);
                 record_failure_exit_code(2);
                 let _ = child.kill();
                 forced = true;
@@ -323,10 +564,11 @@ fn request_shutdown(handle: &AppHandle) {
 }
 
 fn fail_sidecar(handle: &AppHandle, message: &str) {
-    eprintln!("desktop PoC startup failed: {message}");
+    eprintln!("desktop core startup failed: {message}");
     let state = handle.state::<SidecarState>();
-    state.failed.store(true, Ordering::SeqCst);
-    state.shutting_down.store(true, Ordering::SeqCst);
+    if let Ok(mut phase) = state.phase.lock() {
+        *phase = StartupPhase::Failed;
+    }
     record_failure_exit_code(1);
     if let Ok(mut child) = state.child.lock() {
         if let Some(child) = child.take() {
@@ -341,17 +583,22 @@ fn record_failure_exit_code(code: i32) {
 }
 
 #[cfg(debug_assertions)]
+fn smoke_enabled() -> bool {
+    std::env::var("CYBERSTRIKE_DESKTOP_SMOKE_TIMEOUT_MS").is_ok()
+}
+
+#[cfg(debug_assertions)]
 fn schedule_automatic_exit(handle: &AppHandle) {
-    let Ok(value) = std::env::var("CYBERSTRIKE_DESKTOP_POC_SMOKE_TIMEOUT_MS") else {
+    let Ok(value) = std::env::var("CYBERSTRIKE_DESKTOP_SMOKE_TIMEOUT_MS") else {
         return;
     };
     let Ok(milliseconds) = value.parse::<u64>() else {
-        eprintln!("ignoring invalid CYBERSTRIKE_DESKTOP_POC_SMOKE_TIMEOUT_MS");
+        eprintln!("ignoring invalid CYBERSTRIKE_DESKTOP_SMOKE_TIMEOUT_MS");
         return;
     };
     let exit_handle = handle.clone();
     thread::spawn(move || {
-        let hold_after_verify = std::env::var("CYBERSTRIKE_DESKTOP_POC_HOLD_AFTER_VERIFY_MS")
+        let hold_after_ready = std::env::var("CYBERSTRIKE_DESKTOP_HOLD_AFTER_READY_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .map(Duration::from_millis)
@@ -359,87 +606,133 @@ fn schedule_automatic_exit(handle: &AppHandle) {
         let timeout = Duration::from_millis(milliseconds);
         let started = Instant::now();
         while started.elapsed() < timeout {
-            let state = exit_handle.state::<SidecarState>();
-            if state.protocol_verified.load(Ordering::SeqCst)
-                && state.download_intercepted.load(Ordering::SeqCst)
-            {
-                thread::sleep(Duration::from_millis(250));
-                thread::sleep(hold_after_verify);
+            let ready = exit_handle
+                .state::<SidecarState>()
+                .phase
+                .lock()
+                .map(|phase| *phase == StartupPhase::Ready)
+                .unwrap_or(false);
+            if ready {
+                thread::sleep(Duration::from_millis(500));
+                thread::sleep(hold_after_ready);
                 request_shutdown(&exit_handle);
                 return;
             }
             thread::sleep(Duration::from_millis(25));
         }
-        fail_sidecar(&exit_handle, "browser protocol verification timed out");
+        fail_sidecar(&exit_handle, "desktop core readiness timed out");
     });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_allowed_url, parse_poc_result, parse_ready};
+    use super::{
+        apply_handshake, is_allowed_url, parse_handshake, sidecar_arguments, DesktopPaths,
+        Handshake, StartupPhase,
+    };
+    use std::path::PathBuf;
 
     #[test]
-    fn accepts_versioned_ipv4_loopback_ready() {
-        let url = parse_ready(
-            br#"{"type":"READY","protocol_version":1,"url":"http://127.0.0.1:43123/","app_version":"d1-poc"}"#,
+    fn accepts_versioned_bootstrap_and_ready_messages() {
+        let bootstrap = parse_handshake(
+            br#"{"type":"BOOTSTRAP_REQUIRED","protocol_version":1,"app_version":"0.1.0"}"#,
+            "0.1.0",
+        )
+        .expect("valid bootstrap message");
+        assert_eq!(bootstrap, Handshake::BootstrapRequired);
+
+        let ready = parse_handshake(
+            br#"{"type":"READY","protocol_version":1,"url":"http://127.0.0.1:43123/","app_version":"0.1.0"}"#,
+            "0.1.0",
         )
         .expect("valid READY message");
-        assert_eq!(url.as_str(), "http://127.0.0.1:43123/");
+        assert!(matches!(ready, Handshake::Ready(_)));
     }
 
     #[test]
-    fn rejects_non_loopback_ready_url() {
-        let error = parse_ready(
-            br#"{"type":"READY","protocol_version":1,"url":"http://localhost:43123/","app_version":"d1-poc"}"#,
+    fn rejects_non_loopback_or_incompatible_ready_messages() {
+        let non_loopback = parse_handshake(
+            br#"{"type":"READY","protocol_version":1,"url":"http://localhost:43123/","app_version":"0.1.0"}"#,
+            "0.1.0",
         )
         .expect_err("localhost must not pass the exact IPv4 loopback gate");
-        assert!(error.contains("IPv4 loopback"));
-    }
+        assert!(non_loopback.contains("IPv4 loopback"));
 
-    #[test]
-    fn rejects_incompatible_protocol() {
-        let error = parse_ready(
-            br#"{"type":"READY","protocol_version":2,"url":"http://127.0.0.1:43123/","app_version":"d1-poc"}"#,
+        let incompatible = parse_handshake(
+            br#"{"type":"READY","protocol_version":2,"url":"http://127.0.0.1:43123/","app_version":"0.1.0"}"#,
+            "0.1.0",
         )
         .expect_err("unknown protocol version must fail closed");
-        assert!(error.contains("protocol version"));
-    }
+        assert!(incompatible.contains("protocol version"));
 
-    #[test]
-    fn accepts_complete_browser_protocol_result() {
-        parse_poc_result(
-            br#"{"type":"POC_RESULT","rest":true,"sse":true,"websocket":true,"external_navigation_blocked":true}"#,
+        let version_mismatch = parse_handshake(
+            br#"{"type":"READY","protocol_version":1,"url":"http://127.0.0.1:43123/","app_version":"0.2.0"}"#,
+            "0.1.0",
         )
-        .expect("all browser protocols passed");
+        .expect_err("core and shell versions must match");
+        assert!(version_mismatch.contains("does not match"));
     }
 
     #[test]
-    fn rejects_failed_browser_protocol_result() {
-        let error = parse_poc_result(
-            br#"{"type":"POC_RESULT","rest":true,"sse":false,"websocket":true,"external_navigation_blocked":true}"#,
+    fn startup_state_machine_requires_bootstrap_before_post_bootstrap_ready() {
+        let mut phase = StartupPhase::Starting;
+        apply_handshake(&mut phase, Handshake::BootstrapRequired).expect("bootstrap transition");
+        assert_eq!(phase, StartupPhase::BootstrapRequired);
+        assert!(apply_handshake(
+            &mut phase,
+            Handshake::Ready("http://127.0.0.1:43123/".parse().expect("URL"))
         )
-        .expect_err("failed browser protocol must fail closed");
-        assert!(error.contains("SSE=false"));
+        .is_err());
+        phase = StartupPhase::Bootstrapping;
+        apply_handshake(
+            &mut phase,
+            Handshake::Ready("http://127.0.0.1:43123/".parse().expect("URL")),
+        )
+        .expect("READY transition");
+        assert_eq!(phase, StartupPhase::Ready);
     }
 
     #[test]
-    fn navigation_policy_allows_only_app_assets_and_current_sidecar_origin() {
+    fn navigation_policy_allows_only_app_assets_and_current_core_origin() {
         let origin = "http://127.0.0.1:43123";
         assert!(is_allowed_url(
             &"tauri://localhost/index.html".parse().expect("app URL"),
             None
         ));
         assert!(is_allowed_url(
-            &"http://127.0.0.1:43123/api/poc/ping"
+            &"http://127.0.0.1:43123/api/health"
                 .parse()
-                .expect("sidecar URL"),
+                .expect("core URL"),
             Some(origin)
         ));
         assert!(!is_allowed_url(
-            &"https://example.invalid/desktop-poc"
+            &"https://example.invalid/desktop"
                 .parse()
                 .expect("external URL"),
             Some(origin)
         ));
+    }
+
+    #[test]
+    fn sidecar_arguments_contain_only_paths_and_version() {
+        let root = PathBuf::from("/tmp/cyberstrike-desktop-test");
+        let paths = DesktopPaths {
+            data_dir: root.join("data"),
+            config_dir: root.join("config"),
+            cache_dir: root.join("cache"),
+            log_dir: root.join("logs"),
+            temp_dir: root.join("temp"),
+            resource_dir: root.join("resources"),
+        };
+        let arguments = sidecar_arguments(&paths, "0.1.0");
+        let rendered = arguments
+            .iter()
+            .map(|value| value.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(rendered.contains("--data-dir"));
+        assert!(rendered.contains("--resource-dir"));
+        assert!(rendered.contains("--app-version 0.1.0"));
+        assert!(!rendered.to_lowercase().contains("password"));
     }
 }

@@ -16,24 +16,29 @@ const targets = {
 };
 const target = targets[targetTriple];
 if (!target) {
-  throw new Error(`unsupported desktop PoC target: ${targetTriple}`);
+  throw new Error(`unsupported desktop target: ${targetTriple}`);
 }
 
 const binaryDirectory = resolve(desktopDirectory, 'src-tauri', 'binaries');
-const output = resolve(binaryDirectory, `cyberstrike-go-poc-${targetTriple}${target.extension}`);
+const output = resolve(binaryDirectory, `cyberstrike-core-${targetTriple}${target.extension}`);
+const goBinary = process.env.CYBERSTRIKE_DESKTOP_GO || 'go';
+const buildEnvironment = {
+  ...process.env,
+  CGO_ENABLED: '1',
+  GOOS: target.goos,
+  GOARCH: target.goarch
+};
+if (process.env.CYBERSTRIKE_DESKTOP_GO) {
+  delete buildEnvironment.GOROOT;
+}
 mkdirSync(binaryDirectory, { recursive: true });
 
 const result = spawnSync(
-  'go',
-  ['build', '-trimpath', '-o', output, './cmd/desktop-poc-sidecar'],
+  goBinary,
+  ['build', '-trimpath', '-o', output, './cmd/desktop-core'],
   {
     cwd: repositoryDirectory,
-    env: {
-      ...process.env,
-      CGO_ENABLED: '0',
-      GOOS: target.goos,
-      GOARCH: target.goarch
-    },
+    env: buildEnvironment,
     stdio: 'inherit'
   }
 );
@@ -44,4 +49,4 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-console.log(`built desktop PoC sidecar: ${output}`);
+console.log(`built desktop core sidecar: ${output}`);

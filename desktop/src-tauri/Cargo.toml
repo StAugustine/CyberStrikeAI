@@ -1,11 +1,11 @@
 [package]
-name = "cyberstrike-desktop-poc"
+name = "cyberstrike-desktop"
 version = "0.1.0"
-description = "CyberStrikeAI desktop protocol proof of concept"
+description = "CyberStrikeAI desktop client"
 edition = "2021"
 
 [lib]
-name = "cyberstrike_desktop_poc_lib"
+name = "cyberstrike_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

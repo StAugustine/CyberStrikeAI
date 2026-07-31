@@ -1,3 +1,3 @@
 fn main() {
-    cyberstrike_desktop_poc_lib::run();
+    cyberstrike_desktop_lib::run();
 }

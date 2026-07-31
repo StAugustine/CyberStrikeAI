@@ -1,15 +1,17 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "CyberStrikeAI Desktop PoC",
+  "productName": "CyberStrikeAI Desktop",
   "version": "0.1.0",
-  "identifier": "com.cyberstrikeai.desktop.poc",
+  "identifier": "com.cyberstrikeai.desktop",
   "build": {
     "frontendDist": "../loading"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; script-src 'self'; style-src 'self'",
+      "capabilities": ["bootstrap"]
     }
   },
   "bundle": {
@@ -28,7 +30,7 @@
       "../../knowledge_base/": "defaults/knowledge_base"
     },
     "externalBin": [
-      "binaries/cyberstrike-go-poc"
+      "binaries/cyberstrike-core"
     ]
   }
 }

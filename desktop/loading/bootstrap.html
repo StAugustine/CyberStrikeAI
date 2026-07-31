@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Initialize CyberStrikeAI</title>
+  <link rel="stylesheet" href="loading.css">
+  <script src="bootstrap.js" defer></script>
+</head>
+<body>
+  <main class="bootstrap-card">
+    <p class="eyebrow">First launch</p>
+    <h1>Create your local password</h1>
+    <p>This password protects the administrator account stored on this device. It is sent directly to the local core and is never written to configuration or logs.</p>
+    <form id="bootstrap-form">
+      <label>
+        Password
+        <input id="password" name="password" type="password" minlength="8" autocomplete="new-password" required autofocus>
+      </label>
+      <label>
+        Confirm password
+        <input id="confirmation" name="confirmation" type="password" minlength="8" autocomplete="new-password" required>
+      </label>
+      <button id="submit" type="submit">Initialize secure workspace</button>
+    </form>
+    <p id="message" class="message" role="alert" aria-live="polite"></p>
+  </main>
+</body>
+</html>
