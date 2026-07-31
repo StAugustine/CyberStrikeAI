@@ -27,7 +27,17 @@ import (
 func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	root := t.TempDir()
 	cancelRequestStarted := make(chan struct{}, 1)
-	upstream := newDesktopFakeAI(t, cancelRequestStarted)
+	liveResponseStarted := make(chan struct{}, 1)
+	releaseLiveResponse := make(chan struct{})
+	releaseLive := func() {
+		select {
+		case <-releaseLiveResponse:
+		default:
+			close(releaseLiveResponse)
+		}
+	}
+	t.Cleanup(releaseLive)
+	upstream := newDesktopFakeAI(t, cancelRequestStarted, liveResponseStarted, releaseLiveResponse)
 	t.Cleanup(upstream.Close)
 	resourceDir := writeTestResources(t, root, "test-version")
 	appendTestResourceConfig(t, resourceDir, "test-version", `multi_agent:
@@ -49,6 +59,10 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 		ResourceDir:     resourceDir,
 		AppVersion:      "test-version",
 		CredentialStore: credentialStore,
+	}
+	type sseResult struct {
+		events []map[string]interface{}
+		err    error
 	}
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter, err := os.Pipe()
@@ -258,6 +272,92 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	if bytes.Contains(eventData, []byte("stream-secret")) {
 		t.Fatal("desktop SSE exposed the AI credential")
 	}
+	liveBody, err := json.Marshal(map[string]interface{}{
+		"message": "desktop-live-sse",
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveRequest, err := http.NewRequest(http.MethodPost, ready.URL+"api/eino-agent/stream", bytes.NewReader(liveBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveRequest.Header.Set("Authorization", "Bearer "+token)
+	liveRequest.Header.Set("Content-Type", "application/json")
+	type httpResult struct {
+		response *http.Response
+		err      error
+	}
+	liveHTTPResult := make(chan httpResult, 1)
+	go func() {
+		response, requestErr := http.DefaultClient.Do(liveRequest)
+		liveHTTPResult <- httpResult{response: response, err: requestErr}
+	}()
+	select {
+	case <-liveResponseStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop live SSE upstream did not start")
+	}
+	var liveResponse *http.Response
+	select {
+	case result := <-liveHTTPResult:
+		if result.err != nil {
+			t.Fatalf("open desktop live SSE: %v", result.err)
+		}
+		liveResponse = result.response
+	case <-time.After(2 * time.Second):
+		t.Fatal("desktop live SSE response was buffered before model completion")
+	}
+	if liveResponse.StatusCode != http.StatusOK || !strings.HasPrefix(liveResponse.Header.Get("Content-Type"), "text/event-stream") {
+		_ = liveResponse.Body.Close()
+		t.Fatalf("desktop live SSE status = %d, content type = %q", liveResponse.StatusCode, liveResponse.Header.Get("Content-Type"))
+	}
+	firstLiveEvent := make(chan map[string]interface{}, 1)
+	liveStreamDone := make(chan sseResult, 1)
+	go func() {
+		defer liveResponse.Body.Close()
+		events := make([]map[string]interface{}, 0, 8)
+		scanner := bufio.NewScanner(liveResponse.Body)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			var event map[string]interface{}
+			if decodeErr := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); decodeErr != nil {
+				liveStreamDone <- sseResult{err: decodeErr}
+				return
+			}
+			events = append(events, event)
+			select {
+			case firstLiveEvent <- event:
+			default:
+			}
+		}
+		liveStreamDone <- sseResult{events: events, err: scanner.Err()}
+	}()
+	select {
+	case event := <-firstLiveEvent:
+		if event["type"] == "done" {
+			t.Fatalf("desktop live SSE completed before release: %#v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("desktop live SSE emitted no event before model completion")
+	}
+	releaseLive()
+	var liveResult sseResult
+	select {
+	case liveResult = <-liveStreamDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop live SSE did not complete after release")
+	}
+	if liveResult.err != nil || !desktopSSEHasEvent(liveResult.events, "response") || !desktopSSEHasEvent(liveResult.events, "done") {
+		logData, _ := os.ReadFile(filepath.Join(options.Roots.LogDir, "cyberstrike-ai.log"))
+		t.Fatalf("desktop live SSE result = %#v, error = %v, log = %s", liveResult.events, liveResult.err, logData)
+	}
 	for _, mode := range []string{"deep", "plan_execute", "supervisor"} {
 		events := desktopSSERequest(t, ready.URL+"api/multi-agent/stream", token, map[string]interface{}{
 			"message":       "desktop-" + mode + "-mode",
@@ -370,10 +470,6 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	cancelConversationID, _ := body["id"].(string)
 	if cancelConversationID == "" {
 		t.Fatalf("create cancellation conversation did not return an id: %#v", body)
-	}
-	type sseResult struct {
-		events []map[string]interface{}
-		err    error
 	}
 	cancelStreamResult := make(chan sseResult, 1)
 	go func() {
@@ -649,7 +745,7 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	}
 }
 
-func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}) *httptest.Server {
+func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveResponseStarted chan<- struct{}, releaseLiveResponse <-chan struct{}) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/v1/chat/completions" {
@@ -683,6 +779,26 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}) *httpt
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusUnauthorized)
 			_, _ = io.WriteString(response, `{"error":{"message":"upstream-secret-marker"}}`)
+			return
+		}
+		if streaming, _ := payload["stream"].(bool); bytes.Contains(requestData, []byte("desktop-live-sse")) && streaming {
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop-live\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
+			if flusher, ok := response.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			select {
+			case liveResponseStarted <- struct{}{}:
+			default:
+			}
+			select {
+			case <-releaseLiveResponse:
+			case <-request.Context().Done():
+				return
+			}
+			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop-live\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"desktop live reply\"},\"finish_reason\":null}]}\n\n")
+			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop-live\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+			_, _ = io.WriteString(response, "data: [DONE]\n\n")
 			return
 		}
 		if bytes.Contains(requestData, []byte("desktop-cancel-running-agent")) {
