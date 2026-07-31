@@ -42,6 +42,7 @@ func TestCuratedEmbeddedWebAssetsServeWithoutWorkingDirectory(t *testing.T) {
 		`/static/js/terminal.js`,
 		`/static/js/webshell.js`,
 		`id="robot-account-binding-modal"`,
+		`id="dashboard-section-access"`,
 		`window.open('/api-docs'`,
 		`window.open('https://github.com/Ed1s0nZ/CyberStrikeAI'`,
 	} {
@@ -68,6 +69,7 @@ func TestCuratedEmbeddedWebAssetsServeWithoutWorkingDirectory(t *testing.T) {
 		`/static/js/terminal.js`,
 		`/static/js/webshell.js`,
 		`id="robot-account-binding-modal"`,
+		`id="dashboard-section-access"`,
 		`window.open('/api-docs'`,
 		`window.open('https://github.com/Ed1s0nZ/CyberStrikeAI'`,
 	} {

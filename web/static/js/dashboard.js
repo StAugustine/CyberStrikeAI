@@ -111,6 +111,10 @@ async function refreshDashboard() {
             .catch(function () { return null; });
     };
 
+    // desktop 模板不渲染已排除的 C2/WebShell 概览，因此也不能轮询对应 API。
+    var accessOverviewEnabled = !!document.getElementById('dashboard-section-access');
+    var fetchAccessJson = accessOverviewEnabled ? fetchJson : function () { return Promise.resolve(null); };
+
     try {
         var selectedSeverityStatus = getDashboardSeverityStatusFilter();
         // /api/vulnerabilities/stats 只给出 by_severity 与 by_status 两个独立维度，
@@ -153,11 +157,11 @@ async function refreshDashboard() {
             // External MCP 健康度
             fetchJson('/api/external-mcp/stats'),
             // WebShell 已建立的连接（pentest 落地后的 foothold，对运营场景非常关键）
-            fetchJson(dashboardProjectScopedUrl('/api/webshell/connections')),
+            fetchAccessJson(dashboardProjectScopedUrl('/api/webshell/connections')),
             // C2 仪表盘条：监听器 / 会话 / 待处理任务（任务接口含 pending_queued_count）
-            fetchJson(dashboardProjectScopedUrl('/api/c2/listeners')),
-            fetchJson(dashboardProjectScopedUrl('/api/c2/sessions?limit=500')),
-            fetchJson(dashboardProjectScopedUrl('/api/c2/tasks?page=1&page_size=1')),
+            fetchAccessJson(dashboardProjectScopedUrl('/api/c2/listeners')),
+            fetchAccessJson(dashboardProjectScopedUrl('/api/c2/sessions?limit=500')),
+            fetchAccessJson(dashboardProjectScopedUrl('/api/c2/tasks?page=1&page_size=1')),
             fetchJson('/api/projects/dashboard-summary?fact_limit=10'),
             selectedSeverityStatus ? fetchJson('/api/vulnerabilities/stats?status=' + encodeURIComponent(selectedSeverityStatus)) : Promise.resolve(null)
         ]);

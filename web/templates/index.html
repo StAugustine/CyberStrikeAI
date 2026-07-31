@@ -774,6 +774,7 @@
                                             </div>
                                         </div>
                                     </section>
+                                    {{if not .DesktopMode}}
                                     <!-- 接入概览：C2 / WebShell Tab 切换（样式同「最近漏洞 / 近期事实」） -->
                                     <section class="dashboard-section dashboard-section-access" id="dashboard-section-access" hidden>
                                         <div class="dashboard-section-header dashboard-section-header--tabs">
@@ -809,6 +810,7 @@
                                             <div class="dashboard-webshell-recent" id="dashboard-webshell-recent" hidden></div>
                                         </div>
                                     </section>
+                                    {{end}}
                                     <!-- 推荐操作：基于当前数据状态智能生成（如「修复 4 个待处理严重漏洞」「审批 2 个 HITL」），
                                          比纯静态导航更有意义；当没有任何推荐时整个 section 隐藏 -->
                                     <section class="dashboard-section dashboard-section-recommend" id="dashboard-section-recommend" hidden>
