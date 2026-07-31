@@ -41,7 +41,24 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	t.Cleanup(releaseLive)
 	upstream := newDesktopFakeAI(t, cancelRequestStarted, liveResponseStarted, releaseLiveResponse)
 	t.Cleanup(upstream.Close)
+	credentialStore := newRecordingCredentialStore()
+	credentialStore.values["desktop-knowledge"] = "desktop-embedding-secret"
 	resourceDir := writeTestResources(t, root, "test-version")
+	replaceTestResourceConfig(t, resourceDir, "test-version", "knowledge:\n  enabled: false\n", fmt.Sprintf(`knowledge:
+  enabled: true
+  embedding:
+    provider: openai
+    model: text-embedding-3-small
+    base_url: %s/v1
+    api_key: keyring://desktop-knowledge
+  indexing:
+    max_retries: 1
+    retry_delay_ms: 1
+openai:
+  base_url: %s/v1
+  api_key: keyring://desktop-knowledge
+  model: desktop-test-model
+`, upstream.URL, upstream.URL))
 	appendTestResourceConfig(t, resourceDir, "test-version", `multi_agent:
   eino_middleware:
     run_retry_max_attempts: 1
@@ -52,7 +69,6 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
       description: Verifies the desktop multi-Agent runtime.
       instruction: Return a concise desktop confirmation.
 `)
-	credentialStore := newRecordingCredentialStore()
 	options := runOptions{
 		Roots: desktopruntime.Roots{
 			DataDir:   filepath.Join(root, "data"),
@@ -235,7 +251,7 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("desktop AI config update status = %d, body = %#v", status, body)
 	}
-	if len(credentialStore.values) != 1 {
+	if len(credentialStore.values) != 2 || credentialStore.values["desktop-knowledge"] != "desktop-embedding-secret" || !desktopCredentialStoreContains(credentialStore, "stream-secret") {
 		t.Fatalf("desktop AI credential store values = %#v", credentialStore.values)
 	}
 	configPath := filepath.Join(options.Roots.ConfigDir, "config.yaml")
@@ -243,7 +259,7 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read protected desktop config: %v", err)
 	}
-	if bytes.Contains(configData, []byte("stream-secret")) {
+	if bytes.Contains(configData, []byte("stream-secret")) || bytes.Contains(configData, []byte("desktop-embedding-secret")) {
 		t.Fatal("desktop AI configuration persisted plaintext")
 	}
 
@@ -377,6 +393,7 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 		t.Fatalf("out-of-root desktop attachment events = %#v", outsideAttachmentEvents)
 	}
 	managementFixture := desktopCreateManagementFixture(t, ready.URL, token, conversationID)
+	extensionFixture := desktopCreateExtensionFixture(t, ready.URL, token, filepath.Join(options.Roots.DataDir, "resources"))
 	liveBody, err := json.Marshal(map[string]interface{}{
 		"message": "desktop-live-sse",
 		"finalization": map[string]interface{}{
@@ -912,6 +929,8 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 		t.Fatalf("persisted desktop attachment after core restart status = %d, body = %#v", status, body)
 	}
 	desktopAssertManagementFixture(t, restarted.URL, restartedToken, conversationID, managementFixture)
+	desktopAssertExtensionFixture(t, restarted.URL, restartedToken, extensionFixture)
+	desktopDeleteExtensionFixture(t, restarted.URL, restartedToken, extensionFixture)
 	desktopDeleteManagementFixture(t, restarted.URL, restartedToken, conversationID, managementFixture)
 	status, body = desktopJSONRequest(t, http.MethodDelete, restarted.URL+"api/groups/"+groupID+"/conversations/"+conversationID, restartedToken, nil)
 	if status != http.StatusOK {
@@ -949,6 +968,39 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveResponseStarted chan<- struct{}, releaseLiveResponse <-chan struct{}) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/v1/embeddings" {
+			if request.Header.Get("Authorization") != "Bearer desktop-embedding-secret" {
+				t.Errorf("desktop fake embedding authorization = %q", request.Header.Get("Authorization"))
+				http.Error(response, "unexpected authorization", http.StatusUnauthorized)
+				return
+			}
+			var payload map[string]interface{}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Errorf("decode desktop fake embedding request: %v", err)
+				http.Error(response, "invalid request", http.StatusBadRequest)
+				return
+			}
+			inputCount := 1
+			if inputs, ok := payload["input"].([]interface{}); ok && len(inputs) > 0 {
+				inputCount = len(inputs)
+			}
+			data := make([]map[string]interface{}, inputCount)
+			for index := range data {
+				data[index] = map[string]interface{}{
+					"object":    "embedding",
+					"embedding": []float64{1, 0, 0},
+					"index":     index,
+				}
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]interface{}{
+				"object": "list",
+				"data":   data,
+				"model":  "text-embedding-3-small",
+				"usage":  map[string]int{"prompt_tokens": inputCount, "total_tokens": inputCount},
+			})
+			return
+		}
 		if request.URL.Path != "/v1/chat/completions" {
 			t.Errorf("desktop fake AI path = %q", request.URL.Path)
 			http.Error(response, "unexpected path", http.StatusBadRequest)
@@ -1385,6 +1437,298 @@ func desktopDeleteManagementFixture(t *testing.T, baseURL, token, conversationID
 	}
 }
 
+type desktopExtensionFixture struct {
+	roleName          string
+	rolePath          string
+	skillName         string
+	skillPath         string
+	agentFilename     string
+	agentPath         string
+	workflowID        string
+	knowledgeItemID   string
+	knowledgeItemPath string
+}
+
+func desktopCreateExtensionFixture(t *testing.T, baseURL, token, managedResourcesRoot string) desktopExtensionFixture {
+	t.Helper()
+	fixture := desktopExtensionFixture{
+		roleName:      "desktop-golden-role",
+		skillName:     "desktop-golden-skill",
+		agentFilename: "desktop-golden-agent.md",
+		workflowID:    "desktop-golden-workflow",
+	}
+	workflowGraph := map[string]interface{}{
+		"nodes": []map[string]interface{}{
+			{"id": "start-1", "type": "start", "label": "Start", "position": map[string]int{"x": 0, "y": 0}, "config": map[string]interface{}{}},
+			{"id": "output-1", "type": "output", "label": "Output", "position": map[string]int{"x": 0, "y": 120}, "config": map[string]interface{}{
+				"output_key":     "result",
+				"source_binding": map[string]string{"from": "inputs", "field": "message"},
+			}},
+		},
+		"edges":  []map[string]string{{"id": "edge-1", "source": "start-1", "target": "output-1"}},
+		"config": map[string]int{"schema_version": 1},
+	}
+	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/workflows/validate", token, map[string]interface{}{"graph": workflowGraph})
+	if status != http.StatusOK || body["ok"] != true {
+		t.Fatalf("validate desktop workflow status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/workflows/dry-run", token, map[string]interface{}{
+		"graph":  workflowGraph,
+		"inputs": map[string]string{"message": "desktop workflow input"},
+	})
+	if status != http.StatusOK || body["result"] == nil {
+		t.Fatalf("dry-run desktop workflow status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/workflows", token, map[string]interface{}{
+		"id":          fixture.workflowID,
+		"name":        "Desktop Golden Workflow",
+		"description": "Desktop workflow persistence check",
+		"version":     1,
+		"enabled":     true,
+		"graph":       workflowGraph,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create desktop workflow status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/workflows/"+fixture.workflowID, token, map[string]interface{}{
+		"name":        "Desktop Persistent Workflow",
+		"description": "Desktop workflow updated before restart",
+		"version":     2,
+		"enabled":     true,
+		"graph":       workflowGraph,
+	})
+	workflow, _ := body["workflow"].(map[string]interface{})
+	if status != http.StatusOK || workflow["name"] != "Desktop Persistent Workflow" || workflow["version"] != float64(2) {
+		t.Fatalf("update desktop workflow status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/roles", token, map[string]interface{}{
+		"name":             fixture.roleName,
+		"description":      "Desktop role persistence check",
+		"user_prompt":      "Use the desktop golden workflow.",
+		"tools":            []string{"query_assets"},
+		"workflow_id":      fixture.workflowID,
+		"workflow_version": "latest",
+		"workflow_policy":  "auto",
+		"enabled":          true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create desktop role status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/roles/"+url.PathEscape(fixture.roleName), token, map[string]interface{}{
+		"name":             fixture.roleName,
+		"description":      "Desktop Persistent Role",
+		"user_prompt":      "Use the persisted desktop golden workflow.",
+		"tools":            []string{"query_assets"},
+		"workflow_id":      fixture.workflowID,
+		"workflow_version": "latest",
+		"workflow_policy":  "auto",
+		"enabled":          true,
+	})
+	role, _ := body["role"].(map[string]interface{})
+	if status != http.StatusOK || role["description"] != "Desktop Persistent Role" {
+		t.Fatalf("update desktop role status = %d, body = %#v", status, body)
+	}
+	fixture.rolePath = filepath.Join(managedResourcesRoot, "roles", fixture.roleName+".yaml")
+	desktopAssertManagedPath(t, managedResourcesRoot, fixture.rolePath)
+	if _, err := os.Stat(fixture.rolePath); err != nil {
+		t.Fatalf("stat managed desktop role: %v", err)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/skills", token, map[string]string{
+		"name":        fixture.skillName,
+		"description": "Desktop skill persistence check",
+		"content":     "# Desktop Golden Skill\n\nFollow the initial desktop procedure.",
+	})
+	skill, _ := body["skill"].(map[string]interface{})
+	fixture.skillPath, _ = skill["path"].(string)
+	if status != http.StatusOK || fixture.skillPath == "" {
+		t.Fatalf("create desktop skill status = %d, body = %#v", status, body)
+	}
+	desktopAssertManagedPath(t, managedResourcesRoot, fixture.skillPath)
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/skills/"+fixture.skillName, token, map[string]string{
+		"description": "Desktop Persistent Skill",
+		"content":     "# Desktop Persistent Skill\n\nFollow the persisted desktop procedure.",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("update desktop skill status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/skills/"+fixture.skillName+"/file", token, map[string]string{
+		"path":    "references/desktop.md",
+		"content": "desktop skill reference",
+	})
+	if status != http.StatusOK || body["path"] != "references/desktop.md" {
+		t.Fatalf("write desktop skill package file status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/multi-agent/markdown-agents", token, nil)
+	agentsDir, _ := body["dir"].(string)
+	if status != http.StatusOK || agentsDir == "" {
+		t.Fatalf("list desktop markdown agents status = %d, body = %#v", status, body)
+	}
+	desktopAssertManagedPath(t, managedResourcesRoot, agentsDir)
+	fixture.agentPath = filepath.Join(agentsDir, fixture.agentFilename)
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/multi-agent/markdown-agents", token, map[string]interface{}{
+		"filename":       fixture.agentFilename,
+		"id":             "desktop-golden-agent",
+		"name":           "Desktop Golden Agent",
+		"description":    "Desktop Agent persistence check",
+		"tools":          []string{"query_assets"},
+		"instruction":    "Verify the initial desktop state.",
+		"bind_role":      fixture.roleName,
+		"max_iterations": 3,
+	})
+	if status != http.StatusOK || body["filename"] != fixture.agentFilename {
+		t.Fatalf("create desktop markdown agent status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/multi-agent/markdown-agents/"+fixture.agentFilename, token, map[string]interface{}{
+		"id":             "desktop-golden-agent",
+		"name":           "Desktop Persistent Agent",
+		"description":    "Desktop Agent updated before restart",
+		"tools":          []string{"query_assets"},
+		"instruction":    "Verify the persisted desktop state.",
+		"bind_role":      fixture.roleName,
+		"max_iterations": 4,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("update desktop markdown agent status = %d, body = %#v", status, body)
+	}
+	desktopAssertManagedPath(t, managedResourcesRoot, fixture.agentPath)
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/knowledge/items", token, map[string]string{
+		"category": "desktop-golden",
+		"title":    "desktop-golden-note",
+		"content":  "Initial desktop knowledge content.",
+	})
+	fixture.knowledgeItemID, _ = body["id"].(string)
+	if status != http.StatusOK || fixture.knowledgeItemID == "" {
+		t.Fatalf("create desktop knowledge item status = %d, body = %#v", status, body)
+	}
+	desktopWaitForKnowledgeIndex(t, baseURL, token, fixture.knowledgeItemID)
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/knowledge/items/"+fixture.knowledgeItemID, token, map[string]string{
+		"category": "desktop-golden",
+		"title":    "desktop-persistent-note",
+		"content":  "Persisted desktop knowledge content.",
+	})
+	fixture.knowledgeItemPath, _ = body["filePath"].(string)
+	if status != http.StatusOK || body["title"] != "desktop-persistent-note" || fixture.knowledgeItemPath == "" {
+		t.Fatalf("update desktop knowledge item status = %d, body = %#v", status, body)
+	}
+	desktopAssertManagedPath(t, managedResourcesRoot, fixture.knowledgeItemPath)
+	desktopWaitForKnowledgeIndex(t, baseURL, token, fixture.knowledgeItemID)
+
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs?category=workflow&resource_id="+url.QueryEscape(fixture.workflowID), token, nil)
+	auditTotal, _ := body["total"].(float64)
+	if status != http.StatusOK || auditTotal < 2 || desktopNestedItem(body, "logs", "resourceId", fixture.workflowID) == nil {
+		t.Fatalf("desktop workflow audit status = %d, body = %#v", status, body)
+	}
+	return fixture
+}
+
+func desktopAssertExtensionFixture(t *testing.T, baseURL, token string, fixture desktopExtensionFixture) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/workflows/"+fixture.workflowID, token, nil)
+	workflow, _ := body["workflow"].(map[string]interface{})
+	if status != http.StatusOK || workflow["name"] != "Desktop Persistent Workflow" || workflow["version"] != float64(2) {
+		t.Fatalf("persisted desktop workflow status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/roles/"+url.PathEscape(fixture.roleName), token, nil)
+	role, _ := body["role"].(map[string]interface{})
+	if status != http.StatusOK || role["description"] != "Desktop Persistent Role" || role["workflow_id"] != fixture.workflowID {
+		t.Fatalf("persisted desktop role status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/skills/"+fixture.skillName, token, nil)
+	skill, _ := body["skill"].(map[string]interface{})
+	content, _ := skill["content"].(string)
+	if status != http.StatusOK || skill["description"] != "Desktop Persistent Skill" || skill["path"] != fixture.skillPath || !strings.Contains(content, "persisted desktop procedure") {
+		t.Fatalf("persisted desktop skill status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/skills/"+fixture.skillName+"/file?path=references%2Fdesktop.md", token, nil)
+	if status != http.StatusOK || body["content"] != "desktop skill reference" {
+		t.Fatalf("persisted desktop skill package file status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/multi-agent/markdown-agents/"+fixture.agentFilename, token, nil)
+	if status != http.StatusOK || body["name"] != "Desktop Persistent Agent" || body["bind_role"] != fixture.roleName || body["max_iterations"] != float64(4) {
+		t.Fatalf("persisted desktop markdown agent status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/items/"+fixture.knowledgeItemID, token, nil)
+	if status != http.StatusOK || body["title"] != "desktop-persistent-note" || body["content"] != "Persisted desktop knowledge content." || body["filePath"] != fixture.knowledgeItemPath {
+		t.Fatalf("persisted desktop knowledge item status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/stats", token, nil)
+	knowledgeTotal, _ := body["total_items"].(float64)
+	if status != http.StatusOK || body["enabled"] != true || knowledgeTotal < 1 {
+		t.Fatalf("persisted desktop knowledge stats status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs?category=workflow&resource_id="+url.QueryEscape(fixture.workflowID), token, nil)
+	auditTotal, _ := body["total"].(float64)
+	if status != http.StatusOK || auditTotal < 2 {
+		t.Fatalf("persisted desktop audit status = %d, body = %#v", status, body)
+	}
+}
+
+func desktopDeleteExtensionFixture(t *testing.T, baseURL, token string, fixture desktopExtensionFixture) {
+	t.Helper()
+	for _, request := range []struct {
+		target string
+	}{
+		{target: baseURL + "api/knowledge/items/" + fixture.knowledgeItemID},
+		{target: baseURL + "api/multi-agent/markdown-agents/" + fixture.agentFilename},
+		{target: baseURL + "api/skills/" + fixture.skillName},
+		{target: baseURL + "api/roles/" + url.PathEscape(fixture.roleName)},
+		{target: baseURL + "api/workflows/" + fixture.workflowID},
+	} {
+		status, body := desktopJSONRequest(t, http.MethodDelete, request.target, token, nil)
+		if status != http.StatusOK {
+			t.Fatalf("delete desktop extension fixture %s status = %d, body = %#v", request.target, status, body)
+		}
+	}
+	for _, request := range []struct {
+		target string
+	}{
+		{target: baseURL + "api/knowledge/items/" + fixture.knowledgeItemID},
+		{target: baseURL + "api/multi-agent/markdown-agents/" + fixture.agentFilename},
+		{target: baseURL + "api/skills/" + fixture.skillName},
+		{target: baseURL + "api/roles/" + url.PathEscape(fixture.roleName)},
+		{target: baseURL + "api/workflows/" + fixture.workflowID},
+	} {
+		status, _ := desktopJSONRequest(t, http.MethodGet, request.target, token, nil)
+		if status != http.StatusNotFound {
+			t.Fatalf("deleted desktop extension resource %s status = %d, want 404", request.target, status)
+		}
+	}
+	for _, path := range []string{fixture.rolePath, fixture.skillPath, fixture.agentPath, fixture.knowledgeItemPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("deleted desktop managed resource remains at %q: %v", path, err)
+		}
+	}
+}
+
+func desktopAssertManagedPath(t *testing.T, root, path string) {
+	t.Helper()
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("desktop managed path escaped root %q: %q", root, path)
+	}
+}
+
+func desktopWaitForKnowledgeIndex(t *testing.T, baseURL, token, itemID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/index-status", token, nil)
+		if status == http.StatusOK && body["indexed_items"] == float64(1) && body["is_complete"] == true {
+			return
+		}
+		if body["last_error"] != nil {
+			t.Fatalf("index desktop knowledge item %s: %#v", itemID, body)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/index-status", token, nil)
+	t.Fatalf("desktop knowledge item %s was not indexed: status = %d, body = %#v", itemID, status, body)
+}
+
 func desktopNestedItems(body map[string]interface{}, key string) []interface{} {
 	items, _ := body[key].([]interface{})
 	return items
@@ -1771,6 +2115,15 @@ func (s *recordingCredentialStore) Delete(account string) error {
 	return nil
 }
 
+func desktopCredentialStoreContains(store *recordingCredentialStore, secret string) bool {
+	for _, value := range store.values {
+		if value == secret {
+			return true
+		}
+	}
+	return false
+}
+
 type emptyReader struct{}
 
 func (emptyReader) Read([]byte) (int, error) { return 0, io.EOF }
@@ -1843,6 +2196,23 @@ func appendTestResourceConfig(t *testing.T, resourceDir, version, extra string) 
 	if err := os.WriteFile(filepath.Join(resourceDir, "manifest.json"), manifestData, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func replaceTestResourceConfig(t *testing.T, resourceDir, version, oldValue, newValue string) {
+	t.Helper()
+	configPath := filepath.Join(resourceDir, "config.example.yaml")
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(configData), oldValue, newValue, 1)
+	if updated == string(configData) {
+		t.Fatalf("test resource config does not contain %q", oldValue)
+	}
+	if err := os.WriteFile(configPath, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	appendTestResourceConfig(t, resourceDir, version, "")
 }
 
 func decodeWithTimeout(t *testing.T, decoder *json.Decoder, target any) {

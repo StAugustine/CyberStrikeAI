@@ -389,7 +389,7 @@ CyberStrikeAI/
 
 ### D5：R1 管理与扩展功能兼容
 
-执行状态：进行中。能力边界前置门禁已完成；项目、项目事实图、资产和漏洞已通过创建、更新、关联查询、core 重启持久化与删除的桌面黄金路径。desktop 模式已从活动服务、HTTP 路由、Agent 工具、导航、设置、页面、仪表盘轮询和脚本加载中排除 Terminal、WebShell、C2、机器人和平台多用户 RBAC，并在 R1 隐藏 R2 API 文档入口；共享 server 模式保持原行为。
+执行状态：进行中。能力边界前置门禁已完成；项目、项目事实图、资产和漏洞已通过创建、更新、关联查询、core 重启持久化与删除的桌面黄金路径。工作流已覆盖校验、dry-run 和 CRUD，Agent 角色、Skills/包文件、Markdown Agents 与知识库已覆盖受管目录 CRUD、本地 embedding 索引、core 重启持久化和清理，相关审计记录也已验证跨重启可查询。desktop 模式已从活动服务、HTTP 路由、Agent 工具、导航、设置、页面、仪表盘轮询和脚本加载中排除 Terminal、WebShell、C2、机器人和平台多用户 RBAC，并在 R1 隐藏 R2 API 文档入口；共享 server 模式保持原行为。
 
 范围：项目、事实图、资产、信息收集、漏洞、批量任务、知识库、工作流、Agent 角色、Skills、Agents、外部 MCP、文件管理和审计。
 
