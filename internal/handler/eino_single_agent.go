@@ -352,7 +352,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		h.logger.Error("Eino ADK 单代理执行失败", zap.Error(runErr))
 		taskStatus = "failed"
 		h.tasks.UpdateTaskStatus(conversationID, taskStatus)
-		errMsg := "执行失败: " + runErr.Error()
+		errMsg := multiagent.SafeEinoRunErrorMessage(runErr)
 		if assistantMessageID != "" {
 			_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", errMsg, time.Now(), assistantMessageID)
 			_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
@@ -471,7 +471,8 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 			if shouldPersistEinoAgentTraceAfterRunError(baseCtx) {
 				h.persistEinoAgentTraceForResume(prep.ConversationID, result)
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": runErr.Error()})
+			h.logger.Error("Eino ADK 单代理非流式执行失败", zap.Error(runErr))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": multiagent.SafeEinoRunErrorMessage(runErr)})
 			return
 		}
 		mw := &h.config.MultiAgent.EinoMiddleware

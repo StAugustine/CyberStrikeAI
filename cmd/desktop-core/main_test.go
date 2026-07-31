@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +25,10 @@ import (
 
 func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	root := t.TempDir()
+	upstream := newDesktopFakeAI(t)
+	defer upstream.Close()
 	resourceDir := writeTestResources(t, root, "test-version")
+	credentialStore := newRecordingCredentialStore()
 	options := runOptions{
 		Roots: desktopruntime.Roots{
 			DataDir:   filepath.Join(root, "data"),
@@ -32,8 +37,9 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 			LogDir:    filepath.Join(root, "logs"),
 			TempDir:   filepath.Join(root, "temp"),
 		},
-		ResourceDir: resourceDir,
-		AppVersion:  "test-version",
+		ResourceDir:     resourceDir,
+		AppVersion:      "test-version",
+		CredentialStore: credentialStore,
 	}
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter, err := os.Pipe()
@@ -86,7 +92,7 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 		t.Fatalf("health ready status = %d", response.StatusCode)
 	}
 
-	status, _ := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/conversations", "", nil)
+	status, body := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/conversations", "", nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated conversations status = %d", status)
 	}
@@ -130,7 +136,117 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 		}
 	}
 
-	status, body := desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/logout", token, nil)
+	status, body = desktopJSONRequest(t, http.MethodPut, ready.URL+"api/config", token, map[string]interface{}{
+		"ai": map[string]interface{}{
+			"default_channel": "desktop-test",
+			"channels": map[string]interface{}{
+				"desktop-test": map[string]interface{}{
+					"name":                  "Desktop Test",
+					"provider":              "openai_compatible",
+					"base_url":              upstream.URL + "/v1",
+					"api_key":               "stream-secret",
+					"model":                 "desktop-test-model",
+					"max_total_tokens":      4096,
+					"max_completion_tokens": 256,
+				},
+			},
+		},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("desktop AI config update status = %d, body = %#v", status, body)
+	}
+	if len(credentialStore.values) != 1 {
+		t.Fatalf("desktop AI credential store values = %#v", credentialStore.values)
+	}
+	configPath := filepath.Join(options.Roots.ConfigDir, "config.yaml")
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read protected desktop config: %v", err)
+	}
+	if bytes.Contains(configData, []byte("stream-secret")) {
+		t.Fatal("desktop AI configuration persisted plaintext")
+	}
+
+	events := desktopSSERequest(t, ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
+		"message": "Reply with a short desktop streaming confirmation.",
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	conversationID := ""
+	foundResponse := false
+	foundDone := false
+	for _, event := range events {
+		eventType, _ := event["type"].(string)
+		switch eventType {
+		case "conversation":
+			data, _ := event["data"].(map[string]interface{})
+			conversationID, _ = data["conversationId"].(string)
+		case "response":
+			foundResponse = true
+		case "done":
+			foundDone = true
+		}
+	}
+	if conversationID == "" || !foundResponse || !foundDone {
+		t.Fatalf("desktop SSE golden path events = %#v", events)
+	}
+	eventData, err := json.Marshal(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(eventData, []byte("stream-secret")) {
+		t.Fatal("desktop SSE exposed the AI credential")
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/conversations/"+conversationID, token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("persisted desktop conversation status = %d, body = %#v", status, body)
+	}
+	failureEvents := desktopSSERequest(t, ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
+		"message": "desktop-auth-failure",
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	foundError := false
+	foundFailureDone := false
+	failureConversationID := ""
+	for _, event := range failureEvents {
+		switch event["type"] {
+		case "conversation":
+			data, _ := event["data"].(map[string]interface{})
+			failureConversationID, _ = data["conversationId"].(string)
+		case "error":
+			foundError = true
+		case "done":
+			foundFailureDone = true
+		case "response":
+			t.Fatalf("authentication-failed desktop SSE returned a success response: %#v", failureEvents)
+		}
+	}
+	if failureConversationID == "" || !foundError || !foundFailureDone {
+		t.Fatalf("authentication-failed desktop SSE events = %#v", failureEvents)
+	}
+	failureData, err := json.Marshal(failureEvents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(failureData, []byte("stream-secret")) || bytes.Contains(failureData, []byte("upstream-secret-marker")) {
+		t.Fatalf("authentication-failed desktop SSE exposed upstream data: %s", failureData)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/conversations/"+failureConversationID, token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("failed desktop conversation status = %d, body = %#v", status, body)
+	}
+	persistedFailure, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(persistedFailure, []byte("stream-secret")) || bytes.Contains(persistedFailure, []byte("upstream-secret-marker")) {
+		t.Fatalf("failed desktop conversation persisted upstream data: %s", persistedFailure)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/logout", token, nil)
 	if status != http.StatusOK {
 		t.Fatalf("local admin logout status = %d, body = %#v", status, body)
 	}
@@ -170,6 +286,93 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 		t.Fatal("bootstrap password leaked to desktop stdout")
 	}
 	assertSecretNotPersisted(t, root, "desktop-secret")
+}
+
+func newDesktopFakeAI(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/chat/completions" {
+			t.Errorf("desktop fake AI path = %q", request.URL.Path)
+			http.Error(response, "unexpected path", http.StatusBadRequest)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer stream-secret" {
+			t.Errorf("desktop fake AI authorization = %q", request.Header.Get("Authorization"))
+			http.Error(response, "unexpected authorization", http.StatusUnauthorized)
+			return
+		}
+		var payload map[string]interface{}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Errorf("decode desktop fake AI request: %v", err)
+			http.Error(response, "invalid request", http.StatusBadRequest)
+			return
+		}
+		requestData, err := json.Marshal(payload)
+		if err != nil {
+			t.Errorf("encode desktop fake AI request: %v", err)
+			http.Error(response, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if bytes.Contains(requestData, []byte("desktop-auth-failure")) {
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(response, `{"error":{"message":"upstream-secret-marker"}}`)
+			return
+		}
+		if streaming, _ := payload["stream"].(bool); streaming {
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
+			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"desktop streamed reply\"},\"finish_reason\":null}]}\n\n")
+			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+			_, _ = io.WriteString(response, "data: [DONE]\n\n")
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response, `{"id":"chatcmpl-desktop","object":"chat.completion","model":"desktop-test-model","choices":[{"index":0,"message":{"role":"assistant","content":"desktop streamed reply"},"finish_reason":"stop"}]}`)
+	}))
+}
+
+func desktopSSERequest(t *testing.T, target, token string, body interface{}) []map[string]interface{} {
+	t.Helper()
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("encode desktop SSE request: %v", err)
+	}
+	request, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(encoded))
+	if err != nil {
+		t.Fatalf("create desktop SSE request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("send desktop SSE request: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(response.Body)
+		t.Fatalf("desktop SSE status = %d: %s", response.StatusCode, data)
+	}
+	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("desktop SSE content type = %q", response.Header.Get("Content-Type"))
+	}
+	events := make([]map[string]interface{}, 0, 8)
+	scanner := bufio.NewScanner(response.Body)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
+			t.Fatalf("decode desktop SSE event: %v", err)
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read desktop SSE response: %v", err)
+	}
+	return events
 }
 
 func desktopJSONRequest(t *testing.T, method, target, token string, body interface{}) (int, map[string]interface{}) {
