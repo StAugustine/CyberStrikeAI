@@ -376,6 +376,7 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	if !desktopSSEHasEvent(outsideAttachmentEvents, "error") || !desktopSSEHasEvent(outsideAttachmentEvents, "done") || desktopSSEHasEvent(outsideAttachmentEvents, "response") || bytes.Contains(outsideAttachmentData, []byte("outside-attachment-secret")) || bytes.Contains(outsideAttachmentData, []byte(outsideAttachmentPath)) {
 		t.Fatalf("out-of-root desktop attachment events = %#v", outsideAttachmentEvents)
 	}
+	managementFixture := desktopCreateManagementFixture(t, ready.URL, token, conversationID)
 	liveBody, err := json.Marshal(map[string]interface{}{
 		"message": "desktop-live-sse",
 		"finalization": map[string]interface{}{
@@ -910,6 +911,8 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	if status != http.StatusOK || body["content"] != string(attachmentContent) {
 		t.Fatalf("persisted desktop attachment after core restart status = %d, body = %#v", status, body)
 	}
+	desktopAssertManagementFixture(t, restarted.URL, restartedToken, conversationID, managementFixture)
+	desktopDeleteManagementFixture(t, restarted.URL, restartedToken, conversationID, managementFixture)
 	status, body = desktopJSONRequest(t, http.MethodDelete, restarted.URL+"api/groups/"+groupID+"/conversations/"+conversationID, restartedToken, nil)
 	if status != http.StatusOK {
 		t.Fatalf("remove persisted desktop group mapping status = %d, body = %#v", status, body)
@@ -1211,6 +1214,196 @@ func desktopNotificationContainsID(summary map[string]interface{}, id string) bo
 		}
 	}
 	return false
+}
+
+type desktopManagementFixture struct {
+	projectID       string
+	assetID         string
+	vulnerabilityID string
+	factID          string
+}
+
+func desktopCreateManagementFixture(t *testing.T, baseURL, token, conversationID string) desktopManagementFixture {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/projects", token, map[string]string{
+		"name":        "Desktop Golden Project",
+		"description": "Desktop project persistence check",
+		"scope_json":  `{"domains":["desktop.example.test"]}`,
+		"status":      "active",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create desktop project status = %d, body = %#v", status, body)
+	}
+	fixture := desktopManagementFixture{}
+	fixture.projectID, _ = body["id"].(string)
+	if fixture.projectID == "" {
+		t.Fatalf("create desktop project did not return an id: %#v", body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/projects/"+fixture.projectID, token, map[string]interface{}{
+		"name":   "Desktop Persistent Project",
+		"pinned": true,
+	})
+	if status != http.StatusOK || body["name"] != "Desktop Persistent Project" || body["pinned"] != true {
+		t.Fatalf("update desktop project status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/conversations/"+conversationID+"/project", token, map[string]string{"projectId": fixture.projectID})
+	if status != http.StatusOK || body["projectId"] != fixture.projectID {
+		t.Fatalf("bind desktop conversation project status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/assets/import", token, map[string]interface{}{
+		"source": "desktop-golden",
+		"assets": []map[string]interface{}{{
+			"project_id": fixture.projectID,
+			"host":       "desktop.example.test",
+			"domain":     "desktop.example.test",
+			"port":       443,
+			"protocol":   "https",
+			"title":      "Desktop managed asset",
+			"status":     "active",
+			"tags":       []string{"desktop"},
+		}},
+	})
+	if status != http.StatusOK || body["created"] != float64(1) {
+		t.Fatalf("import desktop asset status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/assets?host=desktop.example.test&project_id="+url.QueryEscape(fixture.projectID), token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list desktop assets status = %d, body = %#v", status, body)
+	}
+	fixture.assetID = desktopNestedItemID(body, "assets", "host", "desktop.example.test")
+	if fixture.assetID == "" {
+		t.Fatalf("imported desktop asset not found: %#v", body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/assets/bulk", token, map[string]interface{}{
+		"asset_ids": []string{fixture.assetID},
+		"status":    "inactive",
+		"add_tags":  []string{"persistent"},
+	})
+	if status != http.StatusOK || body["updated"] != float64(1) {
+		t.Fatalf("update desktop asset status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/vulnerabilities", token, map[string]string{
+		"conversation_id": conversationID,
+		"project_id":      fixture.projectID,
+		"title":           "Desktop Golden Vulnerability",
+		"description":     "Desktop vulnerability persistence check",
+		"severity":        "high",
+		"status":          "open",
+		"type":            "desktop-test",
+		"target":          "desktop.example.test",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create desktop vulnerability status = %d, body = %#v", status, body)
+	}
+	fixture.vulnerabilityID, _ = body["id"].(string)
+	if fixture.vulnerabilityID == "" {
+		t.Fatalf("create desktop vulnerability did not return an id: %#v", body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/vulnerabilities/"+fixture.vulnerabilityID, token, map[string]string{
+		"status":       "confirmed",
+		"retest_notes": "Desktop retest pending",
+	})
+	if status != http.StatusOK || body["status"] != "confirmed" {
+		t.Fatalf("update desktop vulnerability status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/projects/"+fixture.projectID+"/facts", token, map[string]interface{}{
+		"fact_key":                 "target.primary_domain",
+		"category":                 "target",
+		"summary":                  "Desktop primary domain",
+		"body":                     "desktop.example.test",
+		"confidence":               "confirmed",
+		"pinned":                   true,
+		"related_vulnerability_id": fixture.vulnerabilityID,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create desktop project fact status = %d, body = %#v", status, body)
+	}
+	fixture.factID, _ = body["id"].(string)
+	if fixture.factID == "" {
+		t.Fatalf("create desktop project fact did not return an id: %#v", body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/fact-graph?view=full", token, nil)
+	if status != http.StatusOK || len(desktopNestedItems(body, "nodes")) == 0 {
+		t.Fatalf("desktop project fact graph status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/stats", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("desktop project stats status = %d, body = %#v", status, body)
+	}
+	return fixture
+}
+
+func desktopAssertManagementFixture(t *testing.T, baseURL, token, conversationID string, fixture desktopManagementFixture) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID, token, nil)
+	if status != http.StatusOK || body["name"] != "Desktop Persistent Project" || body["pinned"] != true {
+		t.Fatalf("persisted desktop project status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/conversations/"+conversationID, token, nil)
+	if status != http.StatusOK || body["projectId"] != fixture.projectID {
+		t.Fatalf("persisted desktop conversation project status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/assets?q=desktop.example.test", token, nil)
+	asset := desktopNestedItem(body, "assets", "id", fixture.assetID)
+	if status != http.StatusOK || asset == nil || asset["status"] != "inactive" || asset["project_id"] != fixture.projectID {
+		t.Fatalf("persisted desktop asset status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/vulnerabilities/"+fixture.vulnerabilityID, token, nil)
+	if status != http.StatusOK || body["status"] != "confirmed" || body["project_id"] != fixture.projectID {
+		t.Fatalf("persisted desktop vulnerability status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/facts?fact_key=target.primary_domain", token, nil)
+	if status != http.StatusOK || body["id"] != fixture.factID || body["related_vulnerability_id"] != fixture.vulnerabilityID {
+		t.Fatalf("persisted desktop project fact status = %d, body = %#v", status, body)
+	}
+}
+
+func desktopDeleteManagementFixture(t *testing.T, baseURL, token, conversationID string, fixture desktopManagementFixture) {
+	t.Helper()
+	for _, request := range []struct {
+		method string
+		target string
+		body   interface{}
+	}{
+		{method: http.MethodDelete, target: baseURL + "api/projects/" + fixture.projectID + "/facts/" + fixture.factID},
+		{method: http.MethodDelete, target: baseURL + "api/vulnerabilities/" + fixture.vulnerabilityID},
+		{method: http.MethodDelete, target: baseURL + "api/assets/" + fixture.assetID},
+		{method: http.MethodPut, target: baseURL + "api/conversations/" + conversationID + "/project", body: map[string]string{"projectId": ""}},
+		{method: http.MethodDelete, target: baseURL + "api/projects/" + fixture.projectID},
+	} {
+		status, body := desktopJSONRequest(t, request.method, request.target, token, request.body)
+		if status != http.StatusOK {
+			t.Fatalf("delete desktop management fixture %s %s status = %d, body = %#v", request.method, request.target, status, body)
+		}
+	}
+	status, _ := desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID, token, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("deleted desktop project status = %d, want 404", status)
+	}
+}
+
+func desktopNestedItems(body map[string]interface{}, key string) []interface{} {
+	items, _ := body[key].([]interface{})
+	return items
+}
+
+func desktopNestedItem(body map[string]interface{}, key, matchKey string, matchValue interface{}) map[string]interface{} {
+	for _, raw := range desktopNestedItems(body, key) {
+		item, _ := raw.(map[string]interface{})
+		if item[matchKey] == matchValue {
+			return item
+		}
+	}
+	return nil
+}
+
+func desktopNestedItemID(body map[string]interface{}, key, matchKey string, matchValue interface{}) string {
+	item := desktopNestedItem(body, key, matchKey, matchValue)
+	id, _ := item["id"].(string)
+	return id
 }
 
 func desktopHITLInterruptID(body map[string]interface{}, conversationID string) string {
