@@ -105,6 +105,7 @@ func (a *App) Serve(ctx context.Context, listener net.Listener) error {
 
 	addr := listener.Addr().String()
 	requestContext, cancelRequests := context.WithCancel(ctx)
+	defer cancelRequests()
 	connections := &hijackedConnections{}
 	srv := &http.Server{
 		Addr:      addr,

@@ -1,6 +1,6 @@
 # CyberStrikeAI 桌面客户端二次开发计划
 
-> 状态：**执行中；D0、D1 已完成，D2 已启动**
+> 状态：**执行中；D0、D1、D2 已完成，D3 已启动**
 > 计划版本：1.3
 > 规划日期：2026-07-31
 > 开发分支：`codex/desktop-client`
@@ -355,9 +355,11 @@ CyberStrikeAI/
 
 完成门禁：`cmd/server` 回归通过；core 可以在测试中使用端口 0 启动、接受 SSE/WS、被取消并无资源泄漏。
 
-执行状态：进行中。已完成调用方 `net.Listener` 注入、`live/ready` 健康检查、CLI 信号关闭顺序、幂等资源关闭、可注入的精选嵌入 Web 资源、v1 握手 schema，以及 SSE/WS 随 core 退出的门禁；Go 全量回归与 `internal/app`、`internal/desktopprotocol`、`internal/mcp` 竞态测试通过。后台保留任务/Agent 调度器的统一停止和可复用 server 创建入口仍待完成。
+执行状态：已完成。调用方 `net.Listener` 注入、`live/ready` 健康检查、CLI 信号关闭顺序、幂等资源关闭、精选嵌入 Web 资源、v1 握手 schema，以及 SSE/WS、内部/外部 MCP、Agent 与后台任务随 core 退出的门禁均已落实；Go 全量回归、竞态测试、静态检查和三平台 CI 全部通过，证据见 [D2 Go Core 可托管改造报告](desktop-client-d2-core-hosting.md)和 [GitHub Actions 运行记录](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30657471951)。
 
 ### D3：路径、配置、首启和桌面壳集成
+
+执行状态：已启动。先完成桌面绝对路径、运行目录、资源 manifest 与首次复制策略，再接入首启密码通道、系统凭据库和正式 sidecar 壳。
 
 工作项：
 
