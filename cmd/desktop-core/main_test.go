@@ -21,7 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestDesktopCoreBootstrapReadyAndShutdown(t *testing.T) {
+func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	root := t.TempDir()
 	resourceDir := writeTestResources(t, root, "test-version")
 	options := runOptions{
@@ -86,6 +86,59 @@ func TestDesktopCoreBootstrapReadyAndShutdown(t *testing.T) {
 		t.Fatalf("health ready status = %d", response.StatusCode)
 	}
 
+	status, _ := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/conversations", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated conversations status = %d", status)
+	}
+	status, _ = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/login", "", map[string]string{
+		"username": "admin",
+		"password": "wrong-password",
+	})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("wrong-password login status = %d", status)
+	}
+	status, login := desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/login", "", map[string]string{
+		"username": "admin",
+		"password": "desktop-secret",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("local admin login status = %d, body = %#v", status, login)
+	}
+	token, _ := login["token"].(string)
+	if token == "" {
+		t.Fatalf("local admin login did not return a token: %#v", login)
+	}
+	user, _ := login["user"].(map[string]interface{})
+	if user["username"] != "admin" {
+		t.Fatalf("local admin login returned unexpected user: %#v", login)
+	}
+	permissions, _ := login["permissions"].([]interface{})
+	if len(permissions) == 0 {
+		t.Fatalf("local admin login returned no permissions: %#v", login)
+	}
+
+	for _, path := range []string{
+		"api/auth/validate",
+		"api/conversations",
+		"api/monitor/stats",
+		"api/notifications/summary",
+		"api/config",
+	} {
+		status, body := desktopJSONRequest(t, http.MethodGet, ready.URL+path, token, nil)
+		if status != http.StatusOK {
+			t.Fatalf("authenticated GET /%s status = %d, body = %#v", path, status, body)
+		}
+	}
+
+	status, body := desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/logout", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("local admin logout status = %d, body = %#v", status, body)
+	}
+	status, _ = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/auth/validate", token, nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("revoked token validation status = %d", status)
+	}
+
 	if err := json.NewEncoder(stdinWriter).Encode(desktopprotocol.Command{
 		Type:            desktopprotocol.CommandShutdown,
 		ProtocolVersion: desktopprotocol.Version,
@@ -117,6 +170,38 @@ func TestDesktopCoreBootstrapReadyAndShutdown(t *testing.T) {
 		t.Fatal("bootstrap password leaked to desktop stdout")
 	}
 	assertSecretNotPersisted(t, root, "desktop-secret")
+}
+
+func desktopJSONRequest(t *testing.T, method, target, token string, body interface{}) (int, map[string]interface{}) {
+	t.Helper()
+	var requestBody io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("encode desktop request body: %v", err)
+		}
+		requestBody = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequest(method, target, requestBody)
+	if err != nil {
+		t.Fatalf("create desktop request: %v", err)
+	}
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("send desktop request: %v", err)
+	}
+	defer response.Body.Close()
+	payload := make(map[string]interface{})
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
+		t.Fatalf("decode desktop response: %v", err)
+	}
+	return response.StatusCode, payload
 }
 
 func TestDesktopCoreMigratesCredentialsOnlyAfterConfirmation(t *testing.T) {

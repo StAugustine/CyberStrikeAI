@@ -1403,7 +1403,7 @@ func (h *ConfigHandler) TestOpenAI(c *gin.Context) {
 		if apiErr, ok := err.(*openai.APIError); ok {
 			c.JSON(http.StatusOK, gin.H{
 				"success":     false,
-				"error":       fmt.Sprintf("API 返回错误 (HTTP %d): %s", apiErr.StatusCode, apiErr.Body),
+				"error":       safeUpstreamAPIError(apiErr.StatusCode),
 				"status_code": apiErr.StatusCode,
 			})
 			return
@@ -1490,9 +1490,10 @@ func (h *ConfigHandler) ListModels(c *gin.Context) {
 	if err != nil {
 		if apiErr, ok := err.(*openai.APIError); ok {
 			c.JSON(http.StatusOK, gin.H{
-				"success":   false,
-				"supported": true,
-				"error":     fmt.Sprintf("API 返回错误 (HTTP %d): %s", apiErr.StatusCode, apiErr.Body),
+				"success":     false,
+				"supported":   true,
+				"error":       safeUpstreamAPIError(apiErr.StatusCode),
+				"status_code": apiErr.StatusCode,
 			})
 			return
 		}
@@ -1579,7 +1580,7 @@ func (h *ConfigHandler) TestVision(c *gin.Context) {
 		if apiErr, ok := err.(*openai.APIError); ok {
 			c.JSON(http.StatusOK, gin.H{
 				"success":     false,
-				"error":       fmt.Sprintf("API 返回错误 (HTTP %d): %s", apiErr.StatusCode, apiErr.Body),
+				"error":       safeUpstreamAPIError(apiErr.StatusCode),
 				"status_code": apiErr.StatusCode,
 			})
 			return
@@ -1603,6 +1604,17 @@ func (h *ConfigHandler) TestVision(c *gin.Context) {
 		"model":      chatResp.Model,
 		"latency_ms": latency.Milliseconds(),
 	})
+}
+
+func safeUpstreamAPIError(statusCode int) string {
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "API 认证失败，请检查凭据"
+	case http.StatusTooManyRequests:
+		return "API 请求受限或额度不足，请稍后重试"
+	default:
+		return fmt.Sprintf("API 返回错误 (HTTP %d)", statusCode)
+	}
 }
 
 // ApplyConfig 应用配置（重新加载并重启相关服务）
