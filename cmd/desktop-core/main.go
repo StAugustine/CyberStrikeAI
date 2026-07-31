@@ -205,6 +205,7 @@ func runDesktopCore(parent context.Context, stdin io.Reader, stdout io.Writer, o
 		paths.ConfigFile,
 		app.WithWebFS(webassets.FS()),
 		app.WithDesktopMode(),
+		app.WithDesktopUploadsRoot(paths.UploadsDir),
 		app.WithInitialAdminPasswordProvider(passwordProvider),
 		app.WithDesktopCredentialManager(credentialManager),
 	)

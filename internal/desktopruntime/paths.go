@@ -72,7 +72,7 @@ func ResolvePaths(roots Roots) (Paths, error) {
 		KnowledgeDatabaseFile: filepath.Join(resolved.DataDir, "databases", "knowledge.db"),
 		ResourcesDir:          resourcesDir,
 		ResourceStateFile:     filepath.Join(resolved.DataDir, "resource-state.json"),
-		UploadsDir:            filepath.Join(resolved.DataDir, "uploads"),
+		UploadsDir:            filepath.Join(resolved.DataDir, "chat_uploads"),
 		WorkspaceDir:          filepath.Join(resolved.DataDir, "workspaces"),
 		AgentCheckpointDir:    filepath.Join(resolved.DataDir, "checkpoints", "agents"),
 		WorkflowCheckpointDir: filepath.Join(resolved.DataDir, "checkpoints", "workflows"),

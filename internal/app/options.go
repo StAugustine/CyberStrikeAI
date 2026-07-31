@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"cyberstrike-ai/internal/desktopcredentials"
 )
@@ -16,6 +18,7 @@ type appOptions struct {
 	initialAdminPasswordProvider func() (string, error)
 	desktopCredentialManager     *desktopcredentials.Manager
 	desktopMode                  bool
+	desktopUploadsRoot           string
 }
 
 // WithDesktopMode limits routes, background services, and tools to the
@@ -23,6 +26,19 @@ type appOptions struct {
 func WithDesktopMode() Option {
 	return func(options *appOptions) error {
 		options.desktopMode = true
+		return nil
+	}
+}
+
+// WithDesktopUploadsRoot stores chat attachments under the platform data
+// directory supplied by the desktop shell instead of deriving it from CWD.
+func WithDesktopUploadsRoot(root string) Option {
+	return func(options *appOptions) error {
+		root = strings.TrimSpace(root)
+		if root == "" || !filepath.IsAbs(root) {
+			return fmt.Errorf("desktop uploads root must be absolute: %q", root)
+		}
+		options.desktopUploadsRoot = filepath.Clean(root)
 		return nil
 	}
 }

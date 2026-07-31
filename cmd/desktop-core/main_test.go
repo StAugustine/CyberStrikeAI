@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -274,6 +276,104 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	}
 	if bytes.Contains(eventData, []byte("stream-secret")) {
 		t.Fatal("desktop SSE exposed the AI credential")
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/groups", token, map[string]string{
+		"name": "Desktop Golden Group",
+		"icon": "📁",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create desktop conversation group status = %d, body = %#v", status, body)
+	}
+	groupID, _ := body["id"].(string)
+	if groupID == "" {
+		t.Fatalf("create desktop conversation group did not return an id: %#v", body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, ready.URL+"api/groups/"+groupID, token, map[string]string{
+		"name": "Desktop Persistent Group",
+		"icon": "🖥️",
+	})
+	if status != http.StatusOK || body["name"] != "Desktop Persistent Group" {
+		t.Fatalf("update desktop conversation group status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, ready.URL+"api/groups/"+groupID+"/pinned", token, map[string]bool{"pinned": true})
+	if status != http.StatusOK {
+		t.Fatalf("pin desktop conversation group status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/groups/conversations", token, map[string]string{
+		"conversationId": conversationID,
+		"groupId":        groupID,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("add desktop conversation to group status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, ready.URL+"api/groups/"+groupID+"/conversations/"+conversationID+"/pinned", token, map[string]bool{"pinned": true})
+	if status != http.StatusOK {
+		t.Fatalf("pin desktop grouped conversation status = %d, body = %#v", status, body)
+	}
+	status, groupedConversations := desktopJSONArrayRequest(t, ready.URL+"api/groups/"+groupID+"/conversations", token)
+	if status != http.StatusOK || !desktopJSONArrayContains(groupedConversations, "id", conversationID) || !desktopJSONArrayContains(groupedConversations, "groupPinned", true) {
+		t.Fatalf("desktop grouped conversations status = %d, body = %#v", status, groupedConversations)
+	}
+
+	attachmentContent := []byte("desktop attachment content\n")
+	status, uploadBody := desktopMultipartUploadRequest(t, ready.URL+"api/chat-uploads", token, "desktop-note.txt", attachmentContent, map[string]string{
+		"conversationId": conversationID,
+	})
+	if status != http.StatusOK || uploadBody["ok"] != true {
+		t.Fatalf("desktop attachment upload status = %d, body = %#v", status, uploadBody)
+	}
+	attachmentRelativePath, _ := uploadBody["relativePath"].(string)
+	attachmentAbsolutePath, _ := uploadBody["absolutePath"].(string)
+	if attachmentRelativePath == "" || !filepath.IsAbs(attachmentAbsolutePath) {
+		t.Fatalf("desktop attachment paths = relative %q, absolute %q", attachmentRelativePath, attachmentAbsolutePath)
+	}
+	managedUploadsRoot := filepath.Join(options.Roots.DataDir, "chat_uploads")
+	managedRelativePath, err := filepath.Rel(managedUploadsRoot, attachmentAbsolutePath)
+	if err != nil || managedRelativePath == ".." || strings.HasPrefix(managedRelativePath, ".."+string(filepath.Separator)) {
+		t.Fatalf("desktop attachment escaped managed uploads root %q: %q", managedUploadsRoot, attachmentAbsolutePath)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/chat-uploads/content?path="+url.QueryEscape(attachmentRelativePath), token, nil)
+	if status != http.StatusOK || body["content"] != string(attachmentContent) {
+		t.Fatalf("read desktop attachment status = %d, body = %#v", status, body)
+	}
+	status, _, downloadedAttachment := desktopBodyRequest(t, http.MethodGet, ready.URL+"api/chat-uploads/download?path="+url.QueryEscape(attachmentRelativePath), token, nil, "")
+	if status != http.StatusOK || !bytes.Equal(downloadedAttachment, attachmentContent) {
+		t.Fatalf("download desktop attachment status = %d, body = %q", status, downloadedAttachment)
+	}
+	attachmentEvents := desktopSSERequest(t, ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
+		"conversationId": conversationID,
+		"message":        "desktop-attachment-message",
+		"attachments": []map[string]string{{
+			"fileName":   "desktop-note.txt",
+			"mimeType":   "text/plain",
+			"serverPath": attachmentAbsolutePath,
+		}},
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	if !desktopSSEHasEvent(attachmentEvents, "response") || !desktopSSEHasEvent(attachmentEvents, "done") {
+		t.Fatalf("desktop attachment Agent events = %#v", attachmentEvents)
+	}
+	outsideAttachmentPath := filepath.Join(options.Roots.TempDir, "outside-attachment.txt")
+	if err := os.WriteFile(outsideAttachmentPath, []byte("outside-attachment-secret"), 0600); err != nil {
+		t.Fatalf("write out-of-root desktop attachment: %v", err)
+	}
+	outsideAttachmentEvents := desktopSSERequest(t, ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
+		"conversationId": conversationID,
+		"message":        "desktop-outside-attachment",
+		"attachments": []map[string]string{{
+			"fileName":   "outside-attachment.txt",
+			"mimeType":   "text/plain",
+			"serverPath": outsideAttachmentPath,
+		}},
+	})
+	outsideAttachmentData, err := json.Marshal(outsideAttachmentEvents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !desktopSSEHasEvent(outsideAttachmentEvents, "error") || !desktopSSEHasEvent(outsideAttachmentEvents, "done") || desktopSSEHasEvent(outsideAttachmentEvents, "response") || bytes.Contains(outsideAttachmentData, []byte("outside-attachment-secret")) || bytes.Contains(outsideAttachmentData, []byte(outsideAttachmentPath)) {
+		t.Fatalf("out-of-root desktop attachment events = %#v", outsideAttachmentEvents)
 	}
 	liveBody, err := json.Marshal(map[string]interface{}{
 		"message": "desktop-live-sse",
@@ -797,6 +897,34 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("persisted conversation after core restart status = %d, body = %#v", status, body)
 	}
+	status, body = desktopJSONRequest(t, http.MethodGet, restarted.URL+"api/groups/"+groupID, restartedToken, nil)
+	if status != http.StatusOK || body["name"] != "Desktop Persistent Group" || body["pinned"] != true {
+		t.Fatalf("persisted desktop group after core restart status = %d, body = %#v", status, body)
+	}
+	status, groupedConversations = desktopJSONArrayRequest(t, restarted.URL+"api/groups/"+groupID+"/conversations", restartedToken)
+	if status != http.StatusOK || !desktopJSONArrayContains(groupedConversations, "id", conversationID) || !desktopJSONArrayContains(groupedConversations, "groupPinned", true) {
+		t.Fatalf("persisted desktop group mapping after core restart status = %d, body = %#v", status, groupedConversations)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, restarted.URL+"api/chat-uploads/content?path="+url.QueryEscape(attachmentRelativePath), restartedToken, nil)
+	if status != http.StatusOK || body["content"] != string(attachmentContent) {
+		t.Fatalf("persisted desktop attachment after core restart status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodDelete, restarted.URL+"api/groups/"+groupID+"/conversations/"+conversationID, restartedToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("remove persisted desktop group mapping status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodDelete, restarted.URL+"api/groups/"+groupID, restartedToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("delete persisted desktop group status = %d, body = %#v", status, body)
+	}
+	status, groupedConversations = desktopJSONArrayRequest(t, restarted.URL+"api/groups", restartedToken)
+	if status != http.StatusOK || desktopJSONArrayContains(groupedConversations, "id", groupID) {
+		t.Fatalf("deleted desktop group remained visible: status = %d, body = %#v", status, groupedConversations)
+	}
+	status, body = desktopJSONRequest(t, http.MethodDelete, restarted.URL+"api/chat-uploads", restartedToken, map[string]string{"path": attachmentRelativePath})
+	if status != http.StatusOK || body["ok"] != true {
+		t.Fatalf("delete persisted desktop attachment status = %d, body = %#v", status, body)
+	}
 
 	if err := json.NewEncoder(restartStdinWriter).Encode(desktopprotocol.Command{
 		Type:            desktopprotocol.CommandShutdown,
@@ -1154,6 +1282,80 @@ func desktopStatusRequest(t *testing.T, method, target, token string) int {
 	}
 	defer response.Body.Close()
 	return response.StatusCode
+}
+
+func desktopJSONArrayRequest(t *testing.T, target, token string) (int, []map[string]interface{}) {
+	t.Helper()
+	status, _, data := desktopBodyRequest(t, http.MethodGet, target, token, nil, "")
+	payload := make([]map[string]interface{}, 0)
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatalf("decode desktop array response: %v", err)
+		}
+	}
+	return status, payload
+}
+
+func desktopJSONArrayContains(items []map[string]interface{}, key string, value interface{}) bool {
+	for _, item := range items {
+		if item[key] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func desktopMultipartUploadRequest(t *testing.T, target, token, filename string, content []byte, fields map[string]string) (int, map[string]interface{}) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("create desktop multipart file: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatalf("write desktop multipart file: %v", err)
+	}
+	for name, value := range fields {
+		if err := writer.WriteField(name, value); err != nil {
+			t.Fatalf("write desktop multipart field %q: %v", name, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close desktop multipart body: %v", err)
+	}
+	status, _, data := desktopBodyRequest(t, http.MethodPost, target, token, &body, writer.FormDataContentType())
+	payload := make(map[string]interface{})
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatalf("decode desktop multipart response: %v", err)
+		}
+	}
+	return status, payload
+}
+
+func desktopBodyRequest(t *testing.T, method, target, token string, body io.Reader, contentType string) (int, http.Header, []byte) {
+	t.Helper()
+	request, err := http.NewRequest(method, target, body)
+	if err != nil {
+		t.Fatalf("create desktop body request: %v", err)
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("send desktop body request: %v", err)
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read desktop body response: %v", err)
+	}
+	return response.StatusCode, response.Header.Clone(), data
 }
 
 func desktopJSONRequest(t *testing.T, method, target, token string, body interface{}) (int, map[string]interface{}) {

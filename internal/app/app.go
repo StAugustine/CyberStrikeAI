@@ -421,6 +421,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	agentHandler := handler.NewAgentHandler(agent, db, cfg, log.Logger)
 	agentHandler.SetAudit(auditSvc)
 	agentHandler.SetAgentsMarkdownDir(agentsDir)
+	if resolvedOptions.desktopUploadsRoot != "" {
+		agentHandler.SetChatUploadsRoot(resolvedOptions.desktopUploadsRoot)
+	}
 	// 如果知识库已启用，设置知识库管理器到AgentHandler以便记录检索日志
 	if knowledgeManager != nil {
 		agentHandler.SetKnowledgeManager(knowledgeManager)
@@ -449,6 +452,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	webshellHandler := handler.NewWebShellHandler(log.Logger, db)
 	webshellHandler.SetAudit(auditSvc)
 	chatUploadsHandler := handler.NewChatUploadsHandler(log.Logger, db)
+	if resolvedOptions.desktopUploadsRoot != "" {
+		chatUploadsHandler.SetRootDir(resolvedOptions.desktopUploadsRoot)
+	}
 	chatUploadsHandler.SetAudit(auditSvc)
 	if !resolvedOptions.desktopMode {
 		registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)

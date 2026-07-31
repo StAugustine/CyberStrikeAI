@@ -45,6 +45,9 @@ func TestResolveAndPreparePathsAreIndependentFromCWD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolvePaths: %v", err)
 	}
+	if paths.UploadsDir != filepath.Join(roots.DataDir, "chat_uploads") {
+		t.Fatalf("desktop uploads directory = %q", paths.UploadsDir)
+	}
 	t.Chdir(t.TempDir())
 	if err := paths.Prepare(); err != nil {
 		t.Fatalf("Prepare: %v", err)

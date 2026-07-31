@@ -44,6 +44,17 @@ type ChatUploadsHandler struct {
 	logger *zap.Logger
 	audit  *audit.Service
 	db     *database.DB
+	root   string
+}
+
+// SetRootDir overrides the legacy CWD-relative chat_uploads directory.
+func (h *ChatUploadsHandler) SetRootDir(root string) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		h.root = ""
+		return
+	}
+	h.root = filepath.Clean(root)
 }
 
 // SetAudit wires platform audit logging.
@@ -162,6 +173,9 @@ func (h *ChatUploadsHandler) conversationArtifactVirtualPathAllowed(c *gin.Conte
 }
 
 func (h *ChatUploadsHandler) absRoot() (string, error) {
+	if h.root != "" {
+		return filepath.Abs(h.root)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err

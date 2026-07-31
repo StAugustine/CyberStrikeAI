@@ -1,6 +1,7 @@
 package app
 
 import (
+	"path/filepath"
 	"testing"
 
 	"cyberstrike-ai/internal/desktopcredentials"
@@ -50,6 +51,23 @@ func TestWithDesktopModeIsApplied(t *testing.T) {
 	}
 	if !options.desktopMode {
 		t.Fatal("desktop mode was not applied")
+	}
+}
+
+func TestWithDesktopUploadsRootRequiresAbsolutePath(t *testing.T) {
+	if _, err := resolveOptions([]Option{WithDesktopUploadsRoot("relative/uploads")}); err == nil {
+		t.Fatal("expected relative desktop uploads root to be rejected")
+	}
+}
+
+func TestWithDesktopUploadsRootIsApplied(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "uploads")
+	options, err := resolveOptions([]Option{WithDesktopUploadsRoot(root)})
+	if err != nil {
+		t.Fatalf("resolveOptions: %v", err)
+	}
+	if options.desktopUploadsRoot != root {
+		t.Fatalf("desktop uploads root = %q, want %q", options.desktopUploadsRoot, root)
 	}
 }
 
