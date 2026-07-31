@@ -22,7 +22,8 @@ body {
 
 .loading-card,
 .bootstrap-card,
-.credential-migration-card {
+.credential-migration-card,
+.startup-error-card {
   width: min(88vw, 420px);
   padding: 36px;
   border: 1px solid rgb(149 178 219 / 18%);
@@ -33,6 +34,33 @@ body {
 
 .credential-migration-card {
   width: min(90vw, 460px);
+}
+
+.startup-error-card {
+  width: min(90vw, 460px);
+}
+
+.error-mark {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 18px;
+  place-items: center;
+  border: 1px solid rgb(255 155 155 / 35%);
+  border-radius: 13px;
+  background: rgb(190 45 60 / 16%);
+  color: #ff9b9b;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.failure-code {
+  margin-top: 18px;
+  font-size: 12px;
+}
+
+.failure-code code {
+  color: #c8d5e7;
 }
 
 .loading-card {
@@ -169,10 +197,22 @@ button:disabled {
   margin-top: 22px;
 }
 
+.directory-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 button.secondary {
   border: 1px solid #30435f;
   background: transparent;
   color: #c8d5e7;
+}
+
+button.text-button {
+  min-height: 36px;
+  background: transparent;
+  color: #9fb0c8;
 }
 
 .message {

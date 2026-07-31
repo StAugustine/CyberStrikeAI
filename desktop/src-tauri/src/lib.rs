@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     ffi::OsString,
+    fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicI32, Ordering},
+        atomic::{AtomicI32, AtomicU64, Ordering},
         Mutex,
     },
     thread,
@@ -12,7 +14,7 @@ use std::{
 };
 use tauri::{
     webview::{DownloadEvent, NewWindowResponse},
-    AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
 
@@ -40,6 +42,10 @@ struct SidecarState {
     child: Mutex<Option<CommandChild>>,
     allowed_origin: Mutex<Option<String>>,
     credential_paths: Mutex<Vec<String>>,
+    desktop_paths: Mutex<Option<DesktopPaths>>,
+    startup_failure: Mutex<Option<StartupFailure>>,
+    window_placement: Mutex<Option<WindowPlacement>>,
+    generation: AtomicU64,
     phase: Mutex<StartupPhase>,
 }
 
@@ -75,7 +81,7 @@ struct LifecycleCommand {
     protocol_version: u32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DesktopPaths {
     data_dir: PathBuf,
     config_dir: PathBuf,
@@ -83,6 +89,30 @@ struct DesktopPaths {
     log_dir: PathBuf,
     temp_dir: PathBuf,
     resource_dir: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct StartupFailure {
+    code: &'static str,
+    title: &'static str,
+    message: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+struct WindowPlacement {
+    width: u32,
+    height: u32,
+    maximized: bool,
+}
+
+impl Default for WindowPlacement {
+    fn default() -> Self {
+        Self {
+            width: 1120,
+            height: 760,
+            maximized: false,
+        }
+    }
 }
 
 pub fn run() {
@@ -97,20 +127,49 @@ pub fn run() {
             get_credential_migration_paths,
             confirm_credential_migration,
             cancel_credential_migration,
-            submit_bootstrap_password
+            submit_bootstrap_password,
+            get_startup_failure,
+            retry_startup,
+            exit_after_startup_failure,
+            open_desktop_directory
         ])
         .setup(|app| {
             let navigation_handle = app.handle().clone();
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let paths = resolve_desktop_paths(app.handle());
+            let placement = paths
+                .as_ref()
+                .ok()
+                .and_then(|paths| load_window_placement(&paths.config_dir).ok().flatten())
+                .unwrap_or_default();
+            let main = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("CyberStrikeAI Desktop")
-                .inner_size(1120.0, 760.0)
+                .inner_size(placement.width as f64, placement.height as f64)
                 .min_inner_size(800.0, 560.0)
+                .maximized(placement.maximized)
                 .center()
                 .on_navigation(move |url| navigation_allowed(&navigation_handle, url))
                 .on_new_window(|_url, _features| NewWindowResponse::Deny)
                 .on_download(|_webview, event| !matches!(event, DownloadEvent::Requested { .. }))
                 .build()?;
-            start_sidecar(app.handle())?;
+            app.state::<SidecarState>()
+                .window_placement
+                .lock()
+                .map_err(|_| "window placement state lock poisoned")?
+                .replace(placement);
+            match paths {
+                Ok(paths) => {
+                    app.state::<SidecarState>()
+                        .desktop_paths
+                        .lock()
+                        .map_err(|_| "desktop paths state lock poisoned")?
+                        .replace(paths.clone());
+                    if let Err(error) = start_sidecar(app.handle(), paths) {
+                        fail_sidecar(app.handle(), &error.to_string());
+                    }
+                }
+                Err(error) => fail_sidecar(app.handle(), &error.to_string()),
+            }
+            drop(main);
             #[cfg(debug_assertions)]
             schedule_automatic_exit(app.handle());
             Ok(())
@@ -118,20 +177,26 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build CyberStrikeAI desktop");
 
-    let exit_code = app.run_return(|handle, event| {
-        if let RunEvent::ExitRequested { api, .. } = event {
+    let exit_code = app.run_return(|handle, event| match event {
+        RunEvent::WindowEvent { label, event, .. } if label == "main" => {
+            update_window_placement(handle, &event);
+        }
+        RunEvent::ExitRequested { api, .. } => {
+            if let Err(error) = save_window_placement(handle) {
+                eprintln!("failed to save desktop window placement: {error}");
+            }
             let terminal = handle
                 .state::<SidecarState>()
                 .phase
                 .lock()
                 .map(|phase| matches!(*phase, StartupPhase::ShuttingDown | StartupPhase::Failed))
                 .unwrap_or(true);
-            if terminal {
-                return;
+            if !terminal {
+                api.prevent_exit();
+                request_shutdown(handle);
             }
-            api.prevent_exit();
-            request_shutdown(handle);
         }
+        _ => {}
     });
     let desired_exit_code = DESIRED_EXIT_CODE.load(Ordering::SeqCst);
     std::process::exit(if desired_exit_code == 0 {
@@ -187,8 +252,109 @@ fn cancel_credential_migration(window: WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
-fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let paths = resolve_desktop_paths(handle)?;
+#[tauri::command]
+fn get_startup_failure(window: WebviewWindow) -> Result<StartupFailure, String> {
+    if window.label() != "startup-error" {
+        return Err("startup failure details are not available to this window".to_string());
+    }
+    let state = window.state::<SidecarState>();
+    if *state
+        .phase
+        .lock()
+        .map_err(|_| "startup failure state is unavailable".to_string())?
+        != StartupPhase::Failed
+    {
+        return Err("desktop startup has not failed".to_string());
+    }
+    let failure = state
+        .startup_failure
+        .lock()
+        .map_err(|_| "startup failure details are unavailable".to_string())?
+        .clone()
+        .ok_or_else(|| "startup failure details are unavailable".to_string())?;
+    Ok(failure)
+}
+
+#[tauri::command]
+fn retry_startup(window: WebviewWindow) -> Result<(), String> {
+    if window.label() != "startup-error" {
+        return Err("startup retry is not available to this window".to_string());
+    }
+    let handle = window.app_handle();
+    let state = handle.state::<SidecarState>();
+    let mut phase = state
+        .phase
+        .lock()
+        .map_err(|_| "startup retry state is unavailable".to_string())?;
+    if *phase != StartupPhase::Failed {
+        return Err("desktop startup is not currently retryable".to_string());
+    }
+    let paths = resolve_desktop_paths(handle).map_err(|_| "desktop paths are unavailable")?;
+    state
+        .desktop_paths
+        .lock()
+        .map_err(|_| "desktop paths are unavailable".to_string())?
+        .replace(paths.clone());
+    *phase = StartupPhase::Starting;
+    drop(phase);
+    DESIRED_EXIT_CODE.store(0, Ordering::SeqCst);
+    if let Ok(mut failure) = state.startup_failure.lock() {
+        failure.take();
+    }
+    if let Err(error) = start_sidecar(handle, paths) {
+        fail_sidecar(handle, &error.to_string());
+        return Err("desktop core could not be restarted".to_string());
+    }
+    window
+        .hide()
+        .map_err(|error| format!("hide startup error window: {error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn exit_after_startup_failure(window: WebviewWindow) -> Result<(), String> {
+    if window.label() != "startup-error" {
+        return Err("startup failure exit is not available to this window".to_string());
+    }
+    record_failure_exit_code(1);
+    window.app_handle().exit(1);
+    Ok(())
+}
+
+#[tauri::command]
+fn open_desktop_directory(window: WebviewWindow, directory: String) -> Result<(), String> {
+    if window.label() != "startup-error" && window.label() != "main" {
+        return Err("desktop directories are not available to this window".to_string());
+    }
+    let state = window.state::<SidecarState>();
+    let paths = state
+        .desktop_paths
+        .lock()
+        .map_err(|_| "desktop paths are unavailable".to_string())?
+        .clone()
+        .ok_or_else(|| "desktop paths are unavailable".to_string())?;
+    let path = match directory.trim() {
+        "logs" => paths.log_dir,
+        "data" => paths.data_dir,
+        _ => return Err("unsupported desktop directory".to_string()),
+    };
+    fs::create_dir_all(&path).map_err(|_| "desktop directory is unavailable".to_string())?;
+    #[allow(deprecated)]
+    window
+        .shell()
+        .open(path.to_string_lossy(), None)
+        .map_err(|_| "desktop directory could not be opened".to_string())
+}
+
+fn start_sidecar(
+    handle: &AppHandle,
+    paths: DesktopPaths,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let generation = handle
+        .state::<SidecarState>()
+        .generation
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
     let app_version = handle.package_info().version.to_string();
     let arguments = sidecar_arguments(&paths, &app_version);
     let (mut events, child) = handle
@@ -206,6 +372,14 @@ fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let task_handle = handle.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(event) = events.recv().await {
+            if task_handle
+                .state::<SidecarState>()
+                .generation
+                .load(Ordering::SeqCst)
+                != generation
+            {
+                return;
+            }
             match event {
                 CommandEvent::Stdout(line) => {
                     let handshake = match parse_handshake(&line, &app_version) {
@@ -267,6 +441,11 @@ fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         Handshake::Ready(url) => {
+                            if let Ok(mut failure) =
+                                task_handle.state::<SidecarState>().startup_failure.lock()
+                            {
+                                failure.take();
+                            }
                             if let Err(error) = show_main_window(&task_handle, url) {
                                 fail_sidecar(&task_handle, &error);
                                 return;
@@ -276,7 +455,16 @@ fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 CommandEvent::Stderr(line) => {
-                    eprintln!("desktop core: {}", String::from_utf8_lossy(&line));
+                    let message = String::from_utf8_lossy(&line);
+                    eprintln!("desktop core: {message}");
+                    let failure = classify_startup_failure(&message);
+                    if failure.code != "core_startup" {
+                        if let Ok(mut recorded) =
+                            task_handle.state::<SidecarState>().startup_failure.lock()
+                        {
+                            recorded.replace(failure);
+                        }
+                    }
                 }
                 CommandEvent::Error(error) => {
                     fail_sidecar(&task_handle, &format!("sidecar process error: {error}"));
@@ -296,11 +484,7 @@ fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                         task_handle.exit(0);
                     } else {
                         eprintln!("desktop core terminated unexpectedly: {:?}", payload.code);
-                        if let Ok(mut phase) = state.phase.lock() {
-                            *phase = StartupPhase::Failed;
-                        }
-                        record_failure_exit_code(1);
-                        task_handle.exit(1);
+                        fail_sidecar(&task_handle, "desktop core terminated unexpectedly");
                     }
                     return;
                 }
@@ -505,6 +689,11 @@ fn show_bootstrap_window(handle: &AppHandle) -> Result<(), String> {
             .destroy()
             .map_err(|error| format!("destroy credential migration window: {error}"))?;
     }
+    if let Some(startup_error) = handle.get_webview_window("startup-error") {
+        startup_error
+            .destroy()
+            .map_err(|error| format!("destroy startup error window: {error}"))?;
+    }
     if let Some(window) = handle.get_webview_window("bootstrap") {
         window
             .show()
@@ -538,6 +727,11 @@ fn show_credential_migration_window(handle: &AppHandle, paths: Vec<String>) -> R
     if let Some(main) = handle.get_webview_window("main") {
         main.hide()
             .map_err(|error| format!("hide main window: {error}"))?;
+    }
+    if let Some(startup_error) = handle.get_webview_window("startup-error") {
+        startup_error
+            .destroy()
+            .map_err(|error| format!("destroy startup error window: {error}"))?;
     }
     *handle
         .state::<SidecarState>()
@@ -573,6 +767,42 @@ fn show_credential_migration_window(handle: &AppHandle, paths: Vec<String>) -> R
     Ok(())
 }
 
+fn show_startup_error_window(handle: &AppHandle) -> Result<(), String> {
+    for label in ["main", "bootstrap", "credential-migration"] {
+        if let Some(window) = handle.get_webview_window(label) {
+            window
+                .hide()
+                .map_err(|error| format!("hide {label} window: {error}"))?;
+        }
+    }
+    if let Some(window) = handle.get_webview_window("startup-error") {
+        window
+            .show()
+            .map_err(|error| format!("show startup error window: {error}"))?;
+        window
+            .set_focus()
+            .map_err(|error| format!("focus startup error window: {error}"))?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        handle,
+        "startup-error",
+        WebviewUrl::App("startup-error.html".into()),
+    )
+    .title("CyberStrikeAI could not start")
+    .inner_size(520.0, 570.0)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(true)
+    .center()
+    .on_navigation(is_app_asset_url)
+    .on_new_window(|_url, _features| NewWindowResponse::Deny)
+    .on_download(|_webview, event| !matches!(event, DownloadEvent::Requested { .. }))
+    .build()
+    .map_err(|error| format!("create startup error window: {error}"))?;
+    Ok(())
+}
+
 fn show_main_window(handle: &AppHandle, url: tauri::Url) -> Result<(), String> {
     let origin = url.origin().ascii_serialization();
     handle
@@ -597,6 +827,11 @@ fn show_main_window(handle: &AppHandle, url: tauri::Url) -> Result<(), String> {
             .destroy()
             .map_err(|error| format!("destroy credential migration window: {error}"))?;
     }
+    if let Some(startup_error) = handle.get_webview_window("startup-error") {
+        startup_error
+            .destroy()
+            .map_err(|error| format!("destroy startup error window: {error}"))?;
+    }
     window
         .show()
         .map_err(|error| format!("show main window: {error}"))?;
@@ -613,7 +848,9 @@ fn focus_active_window(handle: &AppHandle) {
         .lock()
         .map(|phase| *phase)
         .unwrap_or(StartupPhase::Failed);
-    let label = if matches!(
+    let label = if phase == StartupPhase::Failed {
+        "startup-error"
+    } else if matches!(
         phase,
         StartupPhase::CredentialMigrationRequired | StartupPhase::MigratingCredentials
     ) {
@@ -711,6 +948,102 @@ fn resolve_desktop_paths(handle: &AppHandle) -> Result<DesktopPaths, Box<dyn std
     Ok(paths)
 }
 
+fn load_window_placement(config_dir: &Path) -> Result<Option<WindowPlacement>, String> {
+    let path = config_dir.join("window-state.json");
+    let data = match fs::read(&path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("read window placement: {error}")),
+    };
+    let placement: WindowPlacement = serde_json::from_slice(&data)
+        .map_err(|error| format!("decode window placement: {error}"))?;
+    Ok(validate_window_placement(placement))
+}
+
+fn validate_window_placement(placement: WindowPlacement) -> Option<WindowPlacement> {
+    if !(800..=10_000).contains(&placement.width) || !(560..=10_000).contains(&placement.height) {
+        return None;
+    }
+    Some(placement)
+}
+
+fn update_window_placement(handle: &AppHandle, event: &WindowEvent) {
+    if !matches!(event, WindowEvent::Resized(_) | WindowEvent::Moved(_)) {
+        return;
+    }
+    let Some(window) = handle.get_webview_window("main") else {
+        return;
+    };
+    let Ok(maximized) = window.is_maximized() else {
+        return;
+    };
+    let state = handle.state::<SidecarState>();
+    let Ok(mut placement) = state.window_placement.lock() else {
+        return;
+    };
+    let current = placement.get_or_insert_with(WindowPlacement::default);
+    current.maximized = maximized;
+    if !maximized {
+        if let Ok(size) = window.inner_size() {
+            current.width = size.width.max(800);
+            current.height = size.height.max(560);
+        }
+    }
+}
+
+fn save_window_placement(handle: &AppHandle) -> Result<(), String> {
+    if let Some(window) = handle.get_webview_window("main") {
+        if let (Ok(maximized), Ok(size), Ok(mut placement)) = (
+            window.is_maximized(),
+            window.inner_size(),
+            handle.state::<SidecarState>().window_placement.lock(),
+        ) {
+            let current = placement.get_or_insert_with(WindowPlacement::default);
+            current.maximized = maximized;
+            if !maximized {
+                current.width = size.width.max(800);
+                current.height = size.height.max(560);
+            }
+        }
+    }
+    let state = handle.state::<SidecarState>();
+    let config_dir = state
+        .desktop_paths
+        .lock()
+        .map_err(|_| "desktop paths are unavailable".to_string())?
+        .as_ref()
+        .map(|paths| paths.config_dir.clone())
+        .ok_or_else(|| "desktop paths are unavailable".to_string())?;
+    let placement = state
+        .window_placement
+        .lock()
+        .map_err(|_| "window placement is unavailable".to_string())?
+        .unwrap_or_default();
+    fs::create_dir_all(&config_dir).map_err(|error| format!("create config directory: {error}"))?;
+    let destination = config_dir.join("window-state.json");
+    let temporary = config_dir.join(".window-state.json.tmp");
+    let data = serde_json::to_vec(&placement)
+        .map_err(|error| format!("encode window placement: {error}"))?;
+    let mut file = fs::File::create(&temporary)
+        .map_err(|error| format!("create window placement: {error}"))?;
+    file.write_all(&data)
+        .map_err(|error| format!("write window placement: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("sync window placement: {error}"))?;
+    drop(file);
+    if let Err(error) = fs::rename(&temporary, &destination) {
+        if destination.exists() {
+            fs::remove_file(&destination)
+                .map_err(|remove_error| format!("replace window placement: {remove_error}"))?;
+            fs::rename(&temporary, &destination)
+                .map_err(|rename_error| format!("replace window placement: {rename_error}"))?;
+        } else {
+            return Err(format!("replace window placement: {error}"));
+        }
+    }
+    Ok(())
+}
+
 fn sidecar_arguments(paths: &DesktopPaths, app_version: &str) -> Vec<OsString> {
     let mut arguments = Vec::with_capacity(14);
     push_path_argument(&mut arguments, "--data-dir", &paths.data_dir);
@@ -782,12 +1115,86 @@ fn fail_sidecar(handle: &AppHandle, message: &str) {
         *phase = StartupPhase::Failed;
     }
     record_failure_exit_code(1);
+    if let Ok(mut failure) = state.startup_failure.lock() {
+        let classified = classify_startup_failure(message);
+        if classified.code != "core_startup" || failure.is_none() {
+            failure.replace(classified);
+        }
+    }
     if let Ok(mut child) = state.child.lock() {
         if let Some(child) = child.take() {
             let _ = child.kill();
         }
     }
-    handle.exit(1);
+    #[cfg(debug_assertions)]
+    if smoke_enabled() {
+        handle.exit(1);
+        return;
+    }
+    if let Err(error) = show_startup_error_window(handle) {
+        eprintln!("failed to show desktop startup error: {error}");
+        handle.exit(1);
+    }
+}
+
+fn classify_startup_failure(message: &str) -> StartupFailure {
+    let normalized = message.to_ascii_lowercase();
+    if normalized.contains("credential") || normalized.contains("keyring") {
+        return StartupFailure {
+            code: "credential_store",
+            title: "Credential storage is unavailable",
+            message: "Unlock the operating system credential store, then retry. Existing configuration was left unchanged.",
+        };
+    }
+    if normalized.contains("protocol") || normalized.contains("version") {
+        return StartupFailure {
+            code: "version_mismatch",
+            title: "Desktop components are incompatible",
+            message: "The desktop shell and local core do not use compatible versions. Reinstall the same application version, then retry.",
+        };
+    }
+    if normalized.contains("permission denied")
+        || normalized.contains("access is denied")
+        || normalized.contains("not writable")
+        || normalized.contains("read-only")
+        || normalized.contains("readonly")
+        || normalized.contains("directory")
+    {
+        return StartupFailure {
+            code: "local_storage",
+            title: "Local storage is unavailable",
+            message: "Check access to the application data directory, then retry. Existing data was not deleted.",
+        };
+    }
+    if normalized.contains("database")
+        || normalized.contains("sqlite")
+        || normalized.contains("migration")
+    {
+        return StartupFailure {
+            code: "local_data",
+            title: "Local data could not be opened",
+            message: "Review the application logs, restore or repair the affected data if needed, then retry. No automatic deletion was performed.",
+        };
+    }
+    if normalized.contains("config") || normalized.contains("resource") {
+        return StartupFailure {
+            code: "local_configuration",
+            title: "Local configuration could not be loaded",
+            message: "Review the application logs for the affected file, correct or restore it, then retry. Your data was not deleted.",
+        };
+    }
+    if normalized.contains("timed out") || normalized.contains("readiness") {
+        return StartupFailure {
+            code: "startup_timeout",
+            title: "The local core did not become ready",
+            message: "Another process or security tool may be delaying startup. Review the logs, then retry.",
+        };
+    }
+    StartupFailure {
+        code: "core_startup",
+        title: "CyberStrikeAI could not start",
+        message: "The local core stopped unexpectedly. Review the logs for details, then retry or exit safely.",
+    }
 }
 
 fn record_failure_exit_code(code: i32) {
@@ -839,8 +1246,9 @@ fn schedule_automatic_exit(handle: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_handshake, is_allowed_url, parse_handshake, sidecar_arguments, DesktopPaths,
-        Handshake, StartupPhase,
+        apply_handshake, classify_startup_failure, is_allowed_url, parse_handshake,
+        sidecar_arguments, validate_window_placement, DesktopPaths, Handshake, StartupPhase,
+        WindowPlacement,
     };
     use std::path::PathBuf;
 
@@ -994,5 +1402,48 @@ mod tests {
         assert!(rendered.contains("--resource-dir"));
         assert!(rendered.contains("--app-version 0.1.0"));
         assert!(!rendered.to_lowercase().contains("password"));
+    }
+
+    #[test]
+    fn startup_failures_are_mapped_to_safe_recovery_categories() {
+        assert_eq!(
+            classify_startup_failure("store desktop credential fofa.api_key").code,
+            "credential_store"
+        );
+        assert_eq!(
+            classify_startup_failure("unsupported desktop protocol version").code,
+            "version_mismatch"
+        );
+        assert_eq!(
+            classify_startup_failure("parse config file").code,
+            "local_configuration"
+        );
+        assert_eq!(
+            classify_startup_failure("prepare desktop data directory: access is denied").code,
+            "local_storage"
+        );
+        assert_eq!(
+            classify_startup_failure("database migration failed").code,
+            "local_data"
+        );
+        let generic = classify_startup_failure("migration-secret");
+        assert_eq!(generic.code, "local_data");
+        assert!(!generic.message.contains("migration-secret"));
+    }
+
+    #[test]
+    fn window_placement_rejects_unsafe_dimensions() {
+        assert!(validate_window_placement(WindowPlacement {
+            width: 1120,
+            height: 760,
+            maximized: true,
+        })
+        .is_some());
+        assert!(validate_window_placement(WindowPlacement {
+            width: 10,
+            height: 10,
+            maximized: false,
+        })
+        .is_none());
     }
 }

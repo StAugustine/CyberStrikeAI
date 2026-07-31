@@ -28,3 +28,25 @@ test('桌面 AI 向导提供明确的凭据库和失败提示', () => {
     assert.match(script, /status === 429/);
     assert.match(script, /系统凭据库写入失败|保存 AI 通道失败/);
 });
+
+test('桌面主窗口只暴露固定的数据和日志目录入口', () => {
+    const html = fs.readFileSync('web/templates/index.html', 'utf8');
+    const script = fs.readFileSync('web/static/js/desktop-setup.js', 'utf8');
+    assert.match(html, /id="desktop-directory-actions" hidden/);
+    assert.match(script, /invoke\('open_desktop_directory', \{ directory \}\)/);
+    assert.match(script, /window\.__TAURI__\?\.core\?\.invoke/);
+});
+
+test('桌面启动错误页提供安全诊断、重试和退出路径', () => {
+    const html = fs.readFileSync('desktop/loading/startup-error.html', 'utf8');
+    const script = fs.readFileSync('desktop/loading/startup-error.js', 'utf8');
+    const capability = JSON.parse(fs.readFileSync('desktop/src-tauri/capabilities/startup-error.json', 'utf8'));
+    assert.match(html, /id="retry"/);
+    assert.match(html, /id="open-logs"/);
+    assert.match(html, /id="open-data"/);
+    assert.match(script, /invoke\('get_startup_failure'\)/);
+    assert.match(script, /invoke\('retry_startup'\)/);
+    assert.match(script, /invoke\('exit_after_startup_failure'\)/);
+    assert.doesNotMatch(script, /innerHTML|localStorage|sessionStorage/);
+    assert.deepEqual(capability.windows, ['startup-error']);
+});

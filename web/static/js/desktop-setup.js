@@ -44,6 +44,23 @@ function closeDesktopAISetup() {
     if (overlay) overlay.hidden = true;
 }
 
+async function openDesktopDirectory(directory) {
+    if (!window.__TAURI__?.core?.invoke) return;
+    try {
+        await window.__TAURI__.core.invoke('open_desktop_directory', { directory });
+        if (typeof setUserMenuOpen === 'function') setUserMenuOpen(false);
+    } catch (error) {
+        if (typeof showNotification === 'function') {
+            showNotification(typeof error === 'string' ? error : '无法打开桌面目录', 'error');
+        }
+    }
+}
+
+function initializeDesktopDirectoryActions() {
+    const actions = document.getElementById('desktop-directory-actions');
+    if (actions && window.__TAURI__?.core?.invoke) actions.hidden = false;
+}
+
 async function maybeShowDesktopAISetup() {
     if (desktopAISetupChecked || typeof apiFetch !== 'function') return;
     if (typeof hasPermission === 'function' && !hasPermission('config:write')) {
@@ -172,3 +189,5 @@ document.getElementById('desktop-ai-test')?.addEventListener('click', testDeskto
 document.getElementById('desktop-ai-setup-form')?.addEventListener('submit', saveDesktopAISetup);
 document.getElementById('desktop-ai-later')?.addEventListener('click', closeDesktopAISetup);
 window.maybeShowDesktopAISetup = maybeShowDesktopAISetup;
+window.openDesktopDirectory = openDesktopDirectory;
+initializeDesktopDirectoryActions();

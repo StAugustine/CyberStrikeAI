@@ -22,7 +22,8 @@ mkdirSync(brokenResources, { recursive: true });
 try {
   const result = await runDesktop(executable, {
     ...smoke.environment,
-    CYBERSTRIKE_DESKTOP_RESOURCE_DIR: brokenResources
+    CYBERSTRIKE_DESKTOP_RESOURCE_DIR: brokenResources,
+    CYBERSTRIKE_DESKTOP_SMOKE_TIMEOUT_MS: '30000'
   });
   if (result.code === 0 || result.signal !== null) {
     throw new Error(`unexpected invalid-resource result: ${JSON.stringify(result)}`);
