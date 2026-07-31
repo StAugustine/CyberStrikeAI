@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -192,11 +193,43 @@ type AgentHandler struct {
 	hitlDefaultReviewerSaver HitlDefaultReviewerSaver
 	auditLLM                 *openai.Client
 	audit                    *audit.Service
+	shuttingDown             atomic.Bool
+	shutdownOnce             sync.Once
+	schedulerStop            chan struct{}
+	schedulerDone            chan struct{}
 }
 
 // SetAudit wires platform audit logging.
 func (h *AgentHandler) SetAudit(s *audit.Service) {
 	h.audit = s
+}
+
+// Shutdown stops schedulers and cancels background and request-owned Agent work.
+func (h *AgentHandler) Shutdown(ctx context.Context) error {
+	if h == nil {
+		return nil
+	}
+	h.shuttingDown.Store(true)
+	h.shutdownOnce.Do(func() { close(h.schedulerStop) })
+
+	if h.batchTaskManager != nil {
+		h.batchTaskManager.PauseAll()
+	}
+	var taskErr error
+	if h.tasks != nil {
+		taskErr = h.tasks.Shutdown(ctx)
+	}
+	var schedulerErr error
+	select {
+	case <-h.schedulerDone:
+	case <-ctx.Done():
+		schedulerErr = ctx.Err()
+	}
+	var batchErr error
+	if h.batchTaskManager != nil {
+		batchErr = h.batchTaskManager.WaitForExecutors(ctx)
+	}
+	return errors.Join(taskErr, schedulerErr, batchErr)
 }
 
 // TaskManager 返回 Agent 任务管理器（供 MCP 监控页终止 Eino execute 等）。
@@ -266,6 +299,8 @@ func NewAgentHandler(agent *agent.Agent, db *database.DB, cfg *config.Config, lo
 		hitlManager:      NewHITLManager(db, logger),
 		batchCronParser:  cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
 		auditLLM:         openai.NewClient(llmCfg, llmHTTP, logger),
+		schedulerStop:    make(chan struct{}),
+		schedulerDone:    make(chan struct{}),
 	}
 	tm.SetToolCanceler(handler.cancelRunningMCPToolsForConversation)
 	if err := handler.hitlManager.EnsureSchema(); err != nil {
@@ -2266,6 +2301,9 @@ func (h *AgentHandler) nextBatchQueueRunAt(cronExpr string, from time.Time) (*ti
 }
 
 func (h *AgentHandler) startBatchQueueExecution(queueID string, scheduled bool) (bool, error) {
+	if h.shuttingDown.Load() {
+		return false, errors.New("Agent 处理器正在关闭")
+	}
 	// 先获取执行互斥门，再读取队列状态，避免基于过时快照做判断
 	if !h.batchTaskManager.TryMarkQueueExecutor(queueID) {
 		return true, nil
@@ -2327,30 +2365,36 @@ func (h *AgentHandler) startBatchQueueExecution(queueID string, scheduled bool) 
 }
 
 func (h *AgentHandler) batchQueueSchedulerLoop() {
+	defer close(h.schedulerDone)
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		queues := h.batchTaskManager.GetLoadedQueues()
-		now := time.Now()
-		for _, queue := range queues {
-			if queue == nil || queue.ScheduleMode != "cron" || !queue.ScheduleEnabled || queue.Status == "cancelled" || queue.Status == "running" || queue.Status == "paused" {
-				continue
-			}
-			nextRunAt := queue.NextRunAt
-			if nextRunAt == nil {
-				next, err := h.nextBatchQueueRunAt(queue.CronExpr, now)
-				if err != nil {
-					h.logger.Warn("批量任务 cron 表达式无效，跳过调度", zap.String("queueId", queue.ID), zap.String("cronExpr", queue.CronExpr), zap.Error(err))
+	for {
+		select {
+		case <-ticker.C:
+			queues := h.batchTaskManager.GetLoadedQueues()
+			now := time.Now()
+			for _, queue := range queues {
+				if queue == nil || queue.ScheduleMode != "cron" || !queue.ScheduleEnabled || queue.Status == "cancelled" || queue.Status == "running" || queue.Status == "paused" {
 					continue
 				}
-				h.batchTaskManager.UpdateQueueSchedule(queue.ID, "cron", queue.CronExpr, next)
-				nextRunAt = next
-			}
-			if nextRunAt != nil && (nextRunAt.Before(now) || nextRunAt.Equal(now)) {
-				if _, err := h.startBatchQueueExecution(queue.ID, true); err != nil {
-					h.logger.Warn("自动调度批量任务失败", zap.String("queueId", queue.ID), zap.Error(err))
+				nextRunAt := queue.NextRunAt
+				if nextRunAt == nil {
+					next, err := h.nextBatchQueueRunAt(queue.CronExpr, now)
+					if err != nil {
+						h.logger.Warn("批量任务 cron 表达式无效，跳过调度", zap.String("queueId", queue.ID), zap.String("cronExpr", queue.CronExpr), zap.Error(err))
+						continue
+					}
+					h.batchTaskManager.UpdateQueueSchedule(queue.ID, "cron", queue.CronExpr, next)
+					nextRunAt = next
+				}
+				if nextRunAt != nil && (nextRunAt.Before(now) || nextRunAt.Equal(now)) {
+					if _, err := h.startBatchQueueExecution(queue.ID, true); err != nil {
+						h.logger.Warn("自动调度批量任务失败", zap.String("queueId", queue.ID), zap.Error(err))
+					}
 				}
 			}
+		case <-h.schedulerStop:
+			return
 		}
 	}
 }

@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"context"
 	"time"
 
 	"cyberstrike-ai/internal/database"
@@ -83,19 +84,28 @@ func (r *ExecutionReconciler) ReconcileStaleRunning() {
 	}
 }
 
-// StartStaleRunningReconcileLoop periodically reconciles orphaned running tool executions.
-func StartStaleRunningReconcileLoop(r *ExecutionReconciler, logger *zap.Logger) {
+// StartStaleRunningReconcileLoop periodically reconciles orphaned running tool executions until ctx is cancelled.
+func StartStaleRunningReconcileLoop(ctx context.Context, r *ExecutionReconciler, logger *zap.Logger) <-chan struct{} {
+	done := make(chan struct{})
 	if r == nil {
-		return
+		close(done)
+		return done
 	}
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(staleRunningReconcileGap)
 		defer ticker.Stop()
-		for range ticker.C {
-			r.ReconcileStaleRunning()
-			if logger != nil {
-				logger.Debug("monitor stale running reconcile tick completed")
+		for {
+			select {
+			case <-ticker.C:
+				r.ReconcileStaleRunning()
+				if logger != nil {
+					logger.Debug("monitor stale running reconcile tick completed")
+				}
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
+	return done
 }

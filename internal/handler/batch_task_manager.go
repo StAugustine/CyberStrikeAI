@@ -1416,6 +1416,46 @@ func (m *BatchTaskManager) CancelQueue(queueID string) bool {
 	return true
 }
 
+// PauseAll stops every running queue while preserving it for a later restart.
+func (m *BatchTaskManager) PauseAll() {
+	if m == nil {
+		return
+	}
+	m.mu.RLock()
+	queueIDs := make([]string, 0, len(m.queues))
+	for queueID, queue := range m.queues {
+		if queue != nil && queue.Status == BatchQueueStatusRunning {
+			queueIDs = append(queueIDs, queueID)
+		}
+	}
+	m.mu.RUnlock()
+	for _, queueID := range queueIDs {
+		m.PauseQueue(queueID)
+	}
+}
+
+// WaitForExecutors waits until every active batch queue goroutine exits.
+func (m *BatchTaskManager) WaitForExecutors(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		m.mu.RLock()
+		active := len(m.queueExecutors)
+		m.mu.RUnlock()
+		if active == 0 {
+			return nil
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 // DeleteQueue 删除队列。执行协程活跃或 status 为 running 时拒绝删除，避免 executeBatchQueue 空指针 panic。
 func (m *BatchTaskManager) DeleteQueue(queueID string) error {
 	m.mu.Lock()

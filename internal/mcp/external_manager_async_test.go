@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"cyberstrike-ai/internal/config"
+
 	"go.uber.org/zap"
 )
 
@@ -237,4 +239,18 @@ func installExternalMCPTestClient(manager *ExternalMCPManager, name string, clie
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	manager.clients[name] = client
+}
+
+func TestExternalMCPManagerStopAllIsIdempotentAndRejectsNewWork(t *testing.T) {
+	manager := NewExternalMCPManager(zap.NewNop())
+	manager.StopAll()
+	manager.StopAll()
+
+	serverConfig := config.ExternalMCPServerConfig{Command: "unused", ExternalMCPEnable: true}
+	if err := manager.AddOrUpdateConfig("late", serverConfig); err == nil {
+		t.Fatal("configuration was accepted after StopAll")
+	}
+	if err := manager.StartClient("late"); err == nil {
+		t.Fatal("client start was accepted after StopAll")
+	}
 }

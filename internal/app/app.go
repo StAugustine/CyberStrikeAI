@@ -70,6 +70,11 @@ type App struct {
 	c2Handler          *handler.C2Handler        // C2 REST（与 Manager 生命周期同步）
 	auditSvc           *audit.Service
 	webAssets          *appWebAssets
+	lifecycleContext   context.Context
+	lifecycleCancel    context.CancelFunc
+	backgroundMu       sync.Mutex
+	backgroundDone     []<-chan struct{}
+	backgroundClosed   bool
 	serveState         appServeState
 	shutdownOnce       sync.Once
 }
@@ -109,6 +114,19 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	if err != nil {
 		return nil, fmt.Errorf("初始化数据库失败: %w", err)
 	}
+	lifecycleContext, lifecycleCancel := context.WithCancel(context.Background())
+	backgroundDone := make([]<-chan struct{}, 0, 4)
+	initialized := false
+	defer func() {
+		if initialized {
+			return
+		}
+		lifecycleCancel()
+		cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), time.Second)
+		defer cleanupCancel()
+		_ = waitForBackgroundTasks(cleanupContext, backgroundDone)
+		_ = db.Close()
+	}()
 
 	// 认证管理器（数据库初始化后挂载 RBAC）
 	authManager := security.NewAuthManager(cfg.Auth.SessionDurationHours)
@@ -127,30 +145,35 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	auditSvc := audit.NewService(db, cfg, log.Logger)
 	audit.RegisterConversationCreateHook(auditSvc)
 	auditSvc.PurgeExpired()
-	audit.StartRetentionLoop(auditSvc, log.Logger)
+	backgroundDone = append(backgroundDone, audit.StartRetentionLoop(lifecycleContext, auditSvc, log.Logger))
 	if err := db.PurgeWorkflowPackageLifecycle(time.Now().UTC()); err != nil {
 		log.Logger.Warn("清理过期工作流包记录失败", zap.Error(err))
 	}
-	go func() {
+	backgroundDone = append(backgroundDone, startBackgroundTask(lifecycleContext, func(ctx context.Context) {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
-		for range ticker.C {
-			if err := db.PurgeWorkflowPackageLifecycle(time.Now().UTC()); err != nil {
-				log.Logger.Warn("清理过期工作流包记录失败", zap.Error(err))
+		for {
+			select {
+			case <-ticker.C:
+				if err := db.PurgeWorkflowPackageLifecycle(time.Now().UTC()); err != nil {
+					log.Logger.Warn("清理过期工作流包记录失败", zap.Error(err))
+				}
+			case <-ctx.Done():
+				return
 			}
 		}
-	}()
+	}))
 
 	monitorRetention := monitor.NewService(db, cfg, log.Logger)
 	monitorRetention.PurgeExpired()
-	monitor.StartRetentionLoop(monitorRetention, log.Logger)
+	backgroundDone = append(backgroundDone, monitor.StartRetentionLoop(lifecycleContext, monitorRetention, log.Logger))
 
 	if err := handler.NewHITLManager(db, log.Logger).EnsureSchema(); err != nil {
 		log.Logger.Warn("初始化 HITL 表失败", zap.Error(err))
 	}
 	hitlRetention := hitl.NewService(db, cfg, log.Logger)
 	hitlRetention.PurgeExpired()
-	hitl.StartRetentionLoop(hitlRetention, log.Logger)
+	backgroundDone = append(backgroundDone, hitl.StartRetentionLoop(lifecycleContext, hitlRetention, log.Logger))
 
 	// 创建MCP服务器（带数据库持久化）
 	mcpServer := mcp.NewServerWithStorage(log.Logger, db)
@@ -177,6 +200,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 
 	// 创建外部MCP管理器（使用与内部MCP服务器相同的存储）
 	externalMCPMgr := mcp.NewExternalMCPManagerWithStorage(log.Logger, db)
+	defer func() {
+		if !initialized {
+			externalMCPMgr.StopAll()
+		}
+	}()
 	externalMCPMgr.SetToolAuthorizer(externalMCPToolAuthorizer())
 	externalMCPMgr.ConfigureToolWaitTimeoutSeconds(cfg.Agent.ToolWaitTimeoutSeconds)
 	externalMCPMgr.ConfigureToolResultMaxBytes(cfg.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
@@ -196,7 +224,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 
 	execReconciler := monitor.NewExecutionReconciler(db, mcpServer, externalMCPMgr, log.Logger)
 	execReconciler.ReconcileOnStartup()
-	monitor.StartStaleRunningReconcileLoop(execReconciler, log.Logger)
+	backgroundDone = append(backgroundDone, monitor.StartStaleRunningReconcileLoop(lifecycleContext, execReconciler, log.Logger))
 
 	// 创建Agent
 	maxIterations := cfg.Agent.MaxIterations
@@ -213,6 +241,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	var knowledgeHandler *handler.KnowledgeHandler
 
 	var knowledgeDBConn *database.DB
+	defer func() {
+		if !initialized && knowledgeDBConn != nil {
+			_ = knowledgeDBConn.Close()
+		}
+	}()
 	log.Logger.Debug("检查知识库配置", zap.Bool("enabled", cfg.Knowledge.Enabled))
 	if cfg.Knowledge.Enabled {
 		// 确定知识库数据库路径
@@ -278,7 +311,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 		log.Logger.Info("知识库模块初始化完成", zap.Bool("handler_created", knowledgeHandler != nil))
 
 		// 扫描知识库并建立索引（异步）
-		go func() {
+		backgroundDone = append(backgroundDone, startBackgroundTask(lifecycleContext, func(ctx context.Context) {
 			itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
 			if err != nil {
 				log.Logger.Warn("扫描知识库失败", zap.Error(err))
@@ -296,7 +329,6 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 				// 如果已有索引，只索引新添加或更新的项
 				if len(itemsToIndex) > 0 {
 					log.Logger.Info("检测到已有知识库索引，开始增量索引", zap.Int("count", len(itemsToIndex)))
-					ctx := context.Background()
 					consecutiveFailures := 0
 					var firstFailureItemID string
 					var firstFailureError error
@@ -342,11 +374,10 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 
 			// 冷启动：仅为尚无向量的知识项构建索引（与 IndexMissing 语义一致）
 			log.Logger.Info("未检测到知识库索引，开始自动构建索引")
-			ctx := context.Background()
 			if err := knowledgeIndexer.IndexMissing(ctx); err != nil {
 				log.Logger.Warn("自动构建知识库索引失败", zap.Error(err))
 			}
-		}()
+		}))
 	}
 
 	// 配置文件路径必须由入口传入（与 flag -config 一致）。勿再用 os.Args[1]，否则 ./cyberstrike-ai --https 会把 --https 当成路径。
@@ -481,6 +512,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 		c2Handler:          c2Handler,
 		auditSvc:           auditSvc,
 		webAssets:          webAssets,
+		lifecycleContext:   lifecycleContext,
+		lifecycleCancel:    lifecycleCancel,
+		backgroundDone:     backgroundDone,
 	}
 	// 飞书/钉钉长连接（无需公网），启用时在后台启动；后续前端应用配置时会通过 RestartRobotConnections 重启
 	app.startRobotConnections()
@@ -600,6 +634,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 		openAPIHandler,
 	)
 
+	initialized = true
 	return app, nil
 
 }
@@ -637,9 +672,10 @@ func (a *App) mcpHandlerWithAuth(w http.ResponseWriter, r *http.Request) {
 // Shutdown 关闭应用
 func (a *App) Shutdown() {
 	a.shutdownOnce.Do(func() {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
 		_ = einoobserve.ShutdownOtel(shutdownCtx)
-		shutdownCancel()
+		backgroundDone := a.stopBackgroundTasks()
 		if a.alertCancel != nil {
 			a.alertCancel()
 			a.alertCancel = nil
@@ -647,10 +683,21 @@ func (a *App) Shutdown() {
 
 		a.stopRobotConnections()
 		a.shutdownC2()
+		if a.agentHandler != nil {
+			if err := a.agentHandler.Shutdown(shutdownCtx); err != nil {
+				a.logger.Warn("停止 Agent 后台任务失败", zap.Error(err))
+			}
+		}
+		if a.mcpServer != nil {
+			a.mcpServer.CancelAllExecutions("应用正在关闭")
+		}
 
 		// 停止所有外部MCP客户端
 		if a.externalMCPMgr != nil {
 			a.externalMCPMgr.StopAll()
+		}
+		if err := waitForBackgroundTasks(shutdownCtx, backgroundDone); err != nil {
+			a.logger.Warn("等待后台保留任务退出失败", zap.Error(err))
 		}
 
 		// 关闭知识库数据库连接（如果使用独立数据库）
@@ -1987,7 +2034,7 @@ func initializeKnowledge(
 	}
 
 	// 扫描知识库并建立索引（异步）
-	go func() {
+	indexKnowledge := func(ctx context.Context) {
 		itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
 		if err != nil {
 			logger.Warn("扫描知识库失败", zap.Error(err))
@@ -2005,7 +2052,6 @@ func initializeKnowledge(
 			// 如果已有索引，只索引新添加或更新的项
 			if len(itemsToIndex) > 0 {
 				logger.Info("检测到已有知识库索引，开始增量索引", zap.Int("count", len(itemsToIndex)))
-				ctx := context.Background()
 				consecutiveFailures := 0
 				var firstFailureItemID string
 				var firstFailureError error
@@ -2051,11 +2097,15 @@ func initializeKnowledge(
 
 		// 冷启动：仅为尚无向量的知识项构建索引（与 IndexMissing 语义一致）
 		logger.Info("未检测到知识库索引，开始自动构建索引")
-		ctx := context.Background()
 		if err := knowledgeIndexer.IndexMissing(ctx); err != nil {
 			logger.Warn("自动构建知识库索引失败", zap.Error(err))
 		}
-	}()
+	}
+	if app == nil {
+		go indexKnowledge(context.Background())
+	} else if !app.startManagedBackgroundTask(indexKnowledge) {
+		logger.Info("应用正在关闭，跳过知识库后台索引")
+	}
 
 	return knowledgeHandler, nil
 }

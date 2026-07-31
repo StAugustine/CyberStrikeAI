@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"context"
 	"time"
 
 	"cyberstrike-ai/internal/config"
@@ -53,19 +54,28 @@ func (s *Service) PurgeExpired() {
 	}
 }
 
-// StartRetentionLoop periodically purges expired tool execution rows.
-func StartRetentionLoop(s *Service, logger *zap.Logger) {
+// StartRetentionLoop periodically purges expired tool execution rows until ctx is cancelled.
+func StartRetentionLoop(ctx context.Context, s *Service, logger *zap.Logger) <-chan struct{} {
+	done := make(chan struct{})
 	if s == nil {
-		return
+		close(done)
+		return done
 	}
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(retentionPurgeInterval)
 		defer ticker.Stop()
-		for range ticker.C {
-			s.PurgeExpired()
-			if logger != nil {
-				logger.Debug("monitor retention tick completed")
+		for {
+			select {
+			case <-ticker.C:
+				s.PurgeExpired()
+				if logger != nil {
+					logger.Debug("monitor retention tick completed")
+				}
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
+	return done
 }
