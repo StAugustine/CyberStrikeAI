@@ -451,6 +451,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
 	registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
 	configHandler := handler.NewConfigHandler(configPath, cfg, mcpServer, executor, agent, attackChainHandler, externalMCPMgr, log.Logger)
+	configHandler.SetDesktopCredentialManager(resolvedOptions.desktopCredentialManager)
 	configHandler.SetDB(db)
 	configHandler.SetAudit(auditSvc)
 	agentHandler.SetHitlToolWhitelistSaver(configHandler)

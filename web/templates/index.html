@@ -57,6 +57,44 @@
         </div>
     </div>
 
+    <div id="desktop-ai-setup" class="desktop-ai-setup" role="dialog" aria-modal="true" aria-labelledby="desktop-ai-setup-title" hidden>
+        <div class="desktop-ai-setup-card">
+            <div class="desktop-ai-setup-heading">
+                <span class="desktop-ai-setup-step">桌面端首次设置</span>
+                <h2 id="desktop-ai-setup-title">连接你的 AI 通道</h2>
+                <p>配置一个默认模型即可开始对话和 Agent 工作。API Key 会写入系统凭据库，配置文件只保存受保护的引用。</p>
+            </div>
+            <form id="desktop-ai-setup-form" class="desktop-ai-setup-form">
+                <label>
+                    API 提供商
+                    <select id="desktop-ai-provider">
+                        <option value="openai_compatible">OpenAI / 兼容 OpenAI 协议</option>
+                        <option value="claude">Claude (Anthropic Messages API)</option>
+                    </select>
+                </label>
+                <label>
+                    Base URL
+                    <input id="desktop-ai-base-url" type="url" placeholder="https://api.openai.com/v1" required autocomplete="url">
+                </label>
+                <label>
+                    API Key
+                    <input id="desktop-ai-api-key" type="password" placeholder="输入 API Key" required autocomplete="off">
+                </label>
+                <label>
+                    模型
+                    <input id="desktop-ai-model" type="text" placeholder="gpt-4.1" required autocomplete="off">
+                </label>
+                <p class="desktop-ai-security-note">密钥只会通过本机受认证接口交给 Go core，不进入 URL、命令行或日志。</p>
+                <p id="desktop-ai-setup-message" class="desktop-ai-setup-message" role="status" aria-live="polite"></p>
+                <div class="desktop-ai-setup-actions">
+                    <button id="desktop-ai-test" class="btn-secondary" type="button">测试连接</button>
+                    <button id="desktop-ai-save" class="btn-primary" type="submit" data-require-permission="config:write">保存并继续</button>
+                </div>
+                <button id="desktop-ai-later" class="desktop-ai-later" type="button">稍后在“系统设置”中配置</button>
+            </form>
+        </div>
+    </div>
+
     <div class="container">
         <header>
             <div class="header-content">
@@ -6719,6 +6757,7 @@
     <script src="/static/js/chat.js?v=20260724-1"></script>
     <script src="/static/js/hitl.js"></script>
     <script src="/static/js/settings.js?v=20260717-1"></script>
+    <script src="/static/js/desktop-setup.js"></script>
     <script src="/static/js/audit-datetime-picker.js"></script>
     <script src="/static/js/audit.js"></script>
     <script src="/static/js/wechat-robot.js"></script>

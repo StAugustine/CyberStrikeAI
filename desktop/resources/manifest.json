@@ -68,7 +68,7 @@
     },
     {
       "path": "config.example.yaml",
-      "sha256": "011ada1fb1dd50c8fac1b8b625ff5c4b29aa3e3890ad60d401c5d793dd0ae8b4"
+      "sha256": "6d4e45e874a34ea1290c07c9a5c6779cbe40bdbd522149a1024c17b926ffbf11"
     },
     {
       "path": "knowledge_base/Prompt Injection/README.md",

@@ -14,8 +14,9 @@ const Version = 1
 type MessageType string
 
 const (
-	MessageReady             MessageType = "READY"
-	MessageBootstrapRequired MessageType = "BOOTSTRAP_REQUIRED"
+	MessageReady                       MessageType = "READY"
+	MessageBootstrapRequired           MessageType = "BOOTSTRAP_REQUIRED"
+	MessageCredentialMigrationRequired MessageType = "CREDENTIAL_MIGRATION_REQUIRED"
 )
 
 // Handshake is the versioned, non-secret startup message exchanged between
@@ -25,6 +26,7 @@ type Handshake struct {
 	ProtocolVersion int         `json:"protocol_version"`
 	URL             string      `json:"url,omitempty"`
 	AppVersion      string      `json:"app_version"`
+	CredentialPaths []string    `json:"credential_paths,omitempty"`
 }
 
 func NewReady(appVersion, baseURL string) Handshake {
@@ -41,6 +43,15 @@ func NewBootstrapRequired(appVersion string) Handshake {
 		Type:            MessageBootstrapRequired,
 		ProtocolVersion: Version,
 		AppVersion:      appVersion,
+	}
+}
+
+func NewCredentialMigrationRequired(appVersion string, paths []string) Handshake {
+	return Handshake{
+		Type:            MessageCredentialMigrationRequired,
+		ProtocolVersion: Version,
+		AppVersion:      appVersion,
+		CredentialPaths: append([]string(nil), paths...),
 	}
 }
 
@@ -67,9 +78,33 @@ func (m Handshake) Validate() error {
 		if err := validateLoopbackURL(m.URL); err != nil {
 			return fmt.Errorf("invalid READY URL: %w", err)
 		}
+		if len(m.CredentialPaths) != 0 {
+			return errors.New("READY must not include credential paths")
+		}
 	case MessageBootstrapRequired:
 		if m.URL != "" {
 			return errors.New("BOOTSTRAP_REQUIRED must not include a URL")
+		}
+		if len(m.CredentialPaths) != 0 {
+			return errors.New("BOOTSTRAP_REQUIRED must not include credential paths")
+		}
+	case MessageCredentialMigrationRequired:
+		if m.URL != "" {
+			return errors.New("CREDENTIAL_MIGRATION_REQUIRED must not include a URL")
+		}
+		if len(m.CredentialPaths) == 0 {
+			return errors.New("CREDENTIAL_MIGRATION_REQUIRED must include credential paths")
+		}
+		seen := make(map[string]struct{}, len(m.CredentialPaths))
+		for _, path := range m.CredentialPaths {
+			path = strings.TrimSpace(path)
+			if path == "" {
+				return errors.New("credential migration path must not be empty")
+			}
+			if _, exists := seen[path]; exists {
+				return fmt.Errorf("duplicate credential migration path: %s", path)
+			}
+			seen[path] = struct{}{}
 		}
 	default:
 		return fmt.Errorf("unsupported desktop handshake type: %q", m.Type)

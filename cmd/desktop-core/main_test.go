@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"cyberstrike-ai/internal/desktopcredentials"
 	"cyberstrike-ai/internal/desktopprotocol"
 	"cyberstrike-ai/internal/desktopruntime"
 	"github.com/gin-gonic/gin"
@@ -117,6 +119,110 @@ func TestDesktopCoreBootstrapReadyAndShutdown(t *testing.T) {
 	assertSecretNotPersisted(t, root, "desktop-secret")
 }
 
+func TestDesktopCoreMigratesCredentialsOnlyAfterConfirmation(t *testing.T) {
+	root := t.TempDir()
+	resourceDir := writeTestResources(t, root, "test-version")
+	appendTestResourceConfig(t, resourceDir, "test-version", "fofa:\n  api_key: migration-secret\n")
+	store := newRecordingCredentialStore()
+	options := runOptions{
+		Roots: desktopruntime.Roots{
+			DataDir:   filepath.Join(root, "data"),
+			ConfigDir: filepath.Join(root, "config"),
+			CacheDir:  filepath.Join(root, "cache"),
+			LogDir:    filepath.Join(root, "logs"),
+			TempDir:   filepath.Join(root, "temp"),
+		},
+		ResourceDir:     resourceDir,
+		AppVersion:      "test-version",
+		CredentialStore: store,
+	}
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		done <- runDesktopCore(context.Background(), stdinReader, stdoutWriter, options)
+		_ = stdoutWriter.Close()
+		_ = stdinReader.Close()
+	}()
+	t.Cleanup(func() {
+		_ = stdinWriter.Close()
+		_ = stdoutReader.Close()
+	})
+
+	var stdoutTranscript bytes.Buffer
+	decoder := json.NewDecoder(io.TeeReader(stdoutReader, &stdoutTranscript))
+	var migration desktopprotocol.Handshake
+	decodeWithTimeout(t, decoder, &migration)
+	if err := migration.Validate(); err != nil {
+		t.Fatalf("migration validation: %v", err)
+	}
+	if migration.Type != desktopprotocol.MessageCredentialMigrationRequired || len(migration.CredentialPaths) != 1 || migration.CredentialPaths[0] != desktopcredentials.PathFOFA {
+		t.Fatalf("unexpected migration handshake: %#v", migration)
+	}
+	if len(store.values) != 0 {
+		t.Fatalf("credential store changed before confirmation: %v", store.values)
+	}
+	if strings.Contains(stdoutTranscript.String(), "migration-secret") {
+		t.Fatal("migration handshake exposed plaintext")
+	}
+	if err := json.NewEncoder(stdinWriter).Encode(desktopprotocol.Command{
+		Type:            desktopprotocol.CommandMigrateCredentials,
+		ProtocolVersion: desktopprotocol.Version,
+	}); err != nil {
+		t.Fatalf("write migration command: %v", err)
+	}
+
+	var bootstrap desktopprotocol.Handshake
+	decodeWithTimeout(t, decoder, &bootstrap)
+	if bootstrap.Type != desktopprotocol.MessageBootstrapRequired {
+		t.Fatalf("unexpected bootstrap handshake: %#v", bootstrap)
+	}
+	if len(store.values) != 1 {
+		t.Fatalf("credential store values after confirmation = %v", store.values)
+	}
+	paths, err := desktopruntime.ResolvePaths(options.Roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configData, err := os.ReadFile(paths.ConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(configData, []byte("migration-secret")) || !bytes.Contains(configData, []byte(desktopcredentials.ReferencePrefix)) {
+		t.Fatalf("migrated config did not contain only a credential reference: %q", configData)
+	}
+
+	if err := json.NewEncoder(stdinWriter).Encode(desktopprotocol.Command{
+		Type:            desktopprotocol.CommandBootstrap,
+		ProtocolVersion: desktopprotocol.Version,
+		Password:        "desktop-secret",
+	}); err != nil {
+		t.Fatalf("write bootstrap command: %v", err)
+	}
+	var ready desktopprotocol.Handshake
+	decodeWithTimeout(t, decoder, &ready)
+	if ready.Type != desktopprotocol.MessageReady {
+		t.Fatalf("unexpected READY handshake: %#v", ready)
+	}
+	if err := json.NewEncoder(stdinWriter).Encode(desktopprotocol.Command{
+		Type:            desktopprotocol.CommandShutdown,
+		ProtocolVersion: desktopprotocol.Version,
+	}); err != nil {
+		t.Fatalf("write shutdown command: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runDesktopCore: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("desktop core did not shut down")
+	}
+	if strings.Contains(stdoutTranscript.String(), "migration-secret") {
+		t.Fatal("desktop stdout exposed migrated plaintext")
+	}
+}
+
 func TestDesktopCoreRejectsResourceVersionMismatch(t *testing.T) {
 	root := t.TempDir()
 	resourceDir := writeTestResources(t, root, "resource-version")
@@ -134,6 +240,70 @@ func TestDesktopCoreRejectsResourceVersionMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected resource version mismatch")
 	}
+}
+
+func TestDesktopCoreFailsClosedWhenCredentialStoreIsUnavailable(t *testing.T) {
+	root := t.TempDir()
+	resourceDir := writeTestResources(t, root, "test-version")
+	appendTestResourceConfig(t, resourceDir, "test-version", "fofa:\n  api_key: migration-secret\n")
+
+	stdin := bytes.NewBufferString(`{"type":"MIGRATE_CREDENTIALS","protocol_version":1}` + "\n")
+	err := runDesktopCore(context.Background(), stdin, io.Discard, runOptions{
+		Roots: desktopruntime.Roots{
+			DataDir:   filepath.Join(root, "data"),
+			ConfigDir: filepath.Join(root, "config"),
+			CacheDir:  filepath.Join(root, "cache"),
+			LogDir:    filepath.Join(root, "logs"),
+			TempDir:   filepath.Join(root, "temp"),
+		},
+		ResourceDir:     resourceDir,
+		AppVersion:      "test-version",
+		CredentialStore: failingCredentialStore{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "store desktop credential fofa.api_key") {
+		t.Fatalf("unexpected credential store error: %v", err)
+	}
+	if strings.Contains(err.Error(), "migration-secret") {
+		t.Fatal("credential store error exposed plaintext")
+	}
+}
+
+type failingCredentialStore struct{}
+
+func (failingCredentialStore) Get(string) (string, error) {
+	return "", errors.New("credential store unavailable")
+}
+
+func (failingCredentialStore) Set(string, string) error {
+	return errors.New("credential store unavailable")
+}
+
+func (failingCredentialStore) Delete(string) error { return nil }
+
+type recordingCredentialStore struct {
+	values map[string]string
+}
+
+func newRecordingCredentialStore() *recordingCredentialStore {
+	return &recordingCredentialStore{values: make(map[string]string)}
+}
+
+func (s *recordingCredentialStore) Get(account string) (string, error) {
+	value, ok := s.values[account]
+	if !ok {
+		return "", errors.New("credential not found")
+	}
+	return value, nil
+}
+
+func (s *recordingCredentialStore) Set(account, secret string) error {
+	s.values[account] = secret
+	return nil
+}
+
+func (s *recordingCredentialStore) Delete(account string) error {
+	delete(s.values, account)
+	return nil
 }
 
 type emptyReader struct{}
@@ -180,6 +350,34 @@ c2:
 		t.Fatal(err)
 	}
 	return resourceDir
+}
+
+func appendTestResourceConfig(t *testing.T, resourceDir, version, extra string) {
+	t.Helper()
+	configPath := filepath.Join(resourceDir, "config.example.yaml")
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configData = append(configData, []byte(extra)...)
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(configData)
+	manifestData, err := json.Marshal(desktopruntime.ResourceManifest{
+		SchemaVersion: 1,
+		AppVersion:    version,
+		Files: []desktopruntime.ResourceFile{{
+			Path:   "config.example.yaml",
+			SHA256: hex.EncodeToString(sum[:]),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resourceDir, "manifest.json"), manifestData, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func decodeWithTimeout(t *testing.T, decoder *json.Decoder, target any) {

@@ -16,6 +16,16 @@
     {
       "type": "object",
       "properties": {
+        "type": { "const": "MIGRATE_CREDENTIALS" },
+        "protocol_version": { "const": 1 }
+      },
+      "required": ["type", "protocol_version"],
+      "not": { "required": ["password"] },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "properties": {
         "type": { "const": "SHUTDOWN" },
         "protocol_version": { "const": 1 }
       },

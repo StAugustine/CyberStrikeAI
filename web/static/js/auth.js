@@ -333,6 +333,9 @@ async function refreshAppData(showTaskErrors = false) {
         loadConversations(),
         loadActiveTasks(showTaskErrors),
     ]);
+    if (typeof window.maybeShowDesktopAISetup === 'function') {
+        await window.maybeShowDesktopAISetup();
+    }
 }
 
 async function bootstrapApp() {

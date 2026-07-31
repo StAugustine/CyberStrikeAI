@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+
+	"cyberstrike-ai/internal/desktopcredentials"
 )
 
 type Option func(*appOptions) error
@@ -12,6 +14,19 @@ type Option func(*appOptions) error
 type appOptions struct {
 	webFS                        fs.FS
 	initialAdminPasswordProvider func() (string, error)
+	desktopCredentialManager     *desktopcredentials.Manager
+}
+
+// WithDesktopCredentialManager enables keyring-backed secret persistence and
+// redacted configuration responses for the desktop-hosted application.
+func WithDesktopCredentialManager(manager *desktopcredentials.Manager) Option {
+	return func(options *appOptions) error {
+		if manager == nil {
+			return errors.New("desktop credential manager is required")
+		}
+		options.desktopCredentialManager = manager
+		return nil
+	}
 }
 
 // WithWebFS replaces the default on-disk web directory with a caller-owned

@@ -27,12 +27,23 @@ func TestParseShutdownCommand(t *testing.T) {
 	}
 }
 
+func TestParseMigrateCredentialsCommand(t *testing.T) {
+	command, err := ParseCommand([]byte(`{"type":"MIGRATE_CREDENTIALS","protocol_version":1}`))
+	if err != nil {
+		t.Fatalf("ParseCommand: %v", err)
+	}
+	if command.Type != CommandMigrateCredentials || command.Password != "" {
+		t.Fatalf("unexpected command: %#v", command)
+	}
+}
+
 func TestParseCommandRejectsInvalidCommands(t *testing.T) {
 	tests := []string{
 		`{"type":"BOOTSTRAP","protocol_version":2,"password":"desktop-secret"}`,
 		`{"type":"BOOTSTRAP","protocol_version":1}`,
 		`{"type":"BOOTSTRAP","protocol_version":1,"password":"short"}`,
 		`{"type":"SHUTDOWN","protocol_version":1,"password":"desktop-secret"}`,
+		`{"type":"MIGRATE_CREDENTIALS","protocol_version":1,"password":"desktop-secret"}`,
 		`{"type":"UNKNOWN","protocol_version":1}`,
 	}
 	for _, data := range tests {

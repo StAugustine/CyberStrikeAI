@@ -35,6 +35,11 @@ func TestCuratedEmbeddedWebAssetsServeWithoutWorkingDirectory(t *testing.T) {
 	if coreAsset.Code != http.StatusOK {
 		t.Fatalf("embedded core asset status = %d, want 200", coreAsset.Code)
 	}
+	desktopSetupAsset := httptest.NewRecorder()
+	router.ServeHTTP(desktopSetupAsset, httptest.NewRequest(http.MethodGet, "/static/js/desktop-setup.js", nil))
+	if desktopSetupAsset.Code != http.StatusOK {
+		t.Fatalf("embedded desktop setup asset status = %d, want 200", desktopSetupAsset.Code)
+	}
 
 	excludedAsset := httptest.NewRecorder()
 	router.ServeHTTP(excludedAsset, httptest.NewRequest(http.MethodGet, "/static/js/c2.js", nil))

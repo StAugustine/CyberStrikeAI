@@ -19,6 +19,7 @@ import (
 
 	"cyberstrike-ai/internal/app"
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/desktopcredentials"
 	"cyberstrike-ai/internal/desktopprotocol"
 	"cyberstrike-ai/internal/desktopruntime"
 	"cyberstrike-ai/internal/logger"
@@ -32,9 +33,10 @@ const (
 )
 
 type runOptions struct {
-	Roots       desktopruntime.Roots
-	ResourceDir string
-	AppVersion  string
+	Roots           desktopruntime.Roots
+	ResourceDir     string
+	AppVersion      string
+	CredentialStore desktopcredentials.Store
 }
 
 type commandEvent struct {
@@ -108,7 +110,51 @@ func runDesktopCore(parent context.Context, stdin io.Reader, stdout io.Writer, o
 		return fmt.Errorf("prepare desktop config: %w", err)
 	}
 
+	runContext, cancel := context.WithCancel(parent)
+	defer cancel()
+	commands := startCommandStream(runContext, stdin)
+	encoder := json.NewEncoder(stdout)
+
+	credentialStore := options.CredentialStore
+	if credentialStore == nil {
+		credentialStore = desktopcredentials.KeyringStore{}
+	}
+	credentialManager, err := desktopcredentials.NewManager(credentialStore)
+	if err != nil {
+		return fmt.Errorf("initialize desktop credential manager: %w", err)
+	}
 	cfg, err := config.LoadWithTransform(paths.ConfigFile, func(cfg *config.Config) error {
+		if err := credentialManager.ResolveAndMigrate(cfg, func(paths []string) error {
+			if err := encoder.Encode(desktopprotocol.NewCredentialMigrationRequired(options.AppVersion, paths)); err != nil {
+				return fmt.Errorf("write CREDENTIAL_MIGRATION_REQUIRED handshake: %w", err)
+			}
+			for {
+				select {
+				case event, open := <-commands:
+					if !open {
+						return errors.New("desktop command stream closed before credential migration")
+					}
+					if event.err != nil {
+						return event.err
+					}
+					switch event.command.Type {
+					case desktopprotocol.CommandMigrateCredentials:
+						return nil
+					case desktopprotocol.CommandShutdown:
+						cancel()
+						return context.Canceled
+					default:
+						return fmt.Errorf("unexpected desktop command before credential migration: %s", event.command.Type)
+					}
+				case <-runContext.Done():
+					return runContext.Err()
+				}
+			}
+		}, func(persisted *config.Config) error {
+			return desktopcredentials.WriteConfigAtomically(paths.ConfigFile, persisted)
+		}); err != nil {
+			return err
+		}
 		if err := paths.ApplyConfigPaths(cfg); err != nil {
 			return err
 		}
@@ -119,13 +165,12 @@ func runDesktopCore(parent context.Context, stdin io.Reader, stdout io.Writer, o
 		return nil
 	})
 	if err != nil {
+		if runContext.Err() != nil {
+			return nil
+		}
 		return fmt.Errorf("load desktop config: %w", err)
 	}
 
-	runContext, cancel := context.WithCancel(parent)
-	defer cancel()
-	commands := startCommandStream(runContext, stdin)
-	encoder := json.NewEncoder(stdout)
 	passwordProvider := func() (string, error) {
 		if err := encoder.Encode(desktopprotocol.NewBootstrapRequired(options.AppVersion)); err != nil {
 			return "", fmt.Errorf("write BOOTSTRAP_REQUIRED handshake: %w", err)
@@ -160,6 +205,7 @@ func runDesktopCore(parent context.Context, stdin io.Reader, stdout io.Writer, o
 		paths.ConfigFile,
 		app.WithWebFS(webassets.FS()),
 		app.WithInitialAdminPasswordProvider(passwordProvider),
+		app.WithDesktopCredentialManager(credentialManager),
 	)
 	if err != nil {
 		if runContext.Err() != nil {

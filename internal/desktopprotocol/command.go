@@ -10,8 +10,9 @@ import (
 type CommandType string
 
 const (
-	CommandBootstrap CommandType = "BOOTSTRAP"
-	CommandShutdown  CommandType = "SHUTDOWN"
+	CommandBootstrap          CommandType = "BOOTSTRAP"
+	CommandMigrateCredentials CommandType = "MIGRATE_CREDENTIALS"
+	CommandShutdown           CommandType = "SHUTDOWN"
 )
 
 // Command is a versioned JSON line sent to the core over its inherited stdin.
@@ -42,9 +43,9 @@ func (c Command) Validate() error {
 		if len(strings.TrimSpace(c.Password)) < 8 {
 			return errors.New("desktop bootstrap password must be at least 8 characters")
 		}
-	case CommandShutdown:
+	case CommandMigrateCredentials, CommandShutdown:
 		if c.Password != "" {
-			return errors.New("desktop shutdown command must not include a password")
+			return fmt.Errorf("desktop %s command must not include a password", c.Type)
 		}
 	default:
 		return fmt.Errorf("unsupported desktop command type: %q", c.Type)

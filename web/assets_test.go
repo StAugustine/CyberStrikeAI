@@ -11,6 +11,7 @@ func TestDesktopAssetsContainCoreResourcesAndExcludeOutOfScopeModules(t *testing
 		"templates/api-docs.html",
 		"static/css/style.css",
 		"static/js/chat.js",
+		"static/js/desktop-setup.js",
 		"static/js/knowledge.js",
 		"static/js/workflows.js",
 	} {

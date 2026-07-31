@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::{
@@ -25,6 +26,8 @@ static DESIRED_EXIT_CODE: AtomicI32 = AtomicI32::new(0);
 enum StartupPhase {
     #[default]
     Starting,
+    CredentialMigrationRequired,
+    MigratingCredentials,
     BootstrapRequired,
     Bootstrapping,
     Ready,
@@ -36,6 +39,7 @@ enum StartupPhase {
 struct SidecarState {
     child: Mutex<Option<CommandChild>>,
     allowed_origin: Mutex<Option<String>>,
+    credential_paths: Mutex<Vec<String>>,
     phase: Mutex<StartupPhase>,
 }
 
@@ -46,10 +50,12 @@ struct HandshakeMessage {
     protocol_version: u32,
     url: Option<String>,
     app_version: String,
+    credential_paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 enum Handshake {
+    CredentialMigrationRequired(Vec<String>),
     BootstrapRequired,
     Ready(tauri::Url),
 }
@@ -60,6 +66,13 @@ struct BootstrapCommand<'a> {
     kind: &'static str,
     protocol_version: u32,
     password: &'a str,
+}
+
+#[derive(Serialize)]
+struct LifecycleCommand {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    protocol_version: u32,
 }
 
 #[derive(Debug)]
@@ -80,7 +93,12 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_shell::init())
         .manage(SidecarState::default())
-        .invoke_handler(tauri::generate_handler![submit_bootstrap_password])
+        .invoke_handler(tauri::generate_handler![
+            get_credential_migration_paths,
+            confirm_credential_migration,
+            cancel_credential_migration,
+            submit_bootstrap_password
+        ])
         .setup(|app| {
             let navigation_handle = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -132,6 +150,43 @@ fn submit_bootstrap_password(window: WebviewWindow, mut password: String) -> Res
     send_bootstrap_password(window.app_handle(), &mut password)
 }
 
+#[tauri::command]
+fn get_credential_migration_paths(window: WebviewWindow) -> Result<Vec<String>, String> {
+    if window.label() != "credential-migration" {
+        return Err("credential migration is not available to this window".to_string());
+    }
+    let state = window.state::<SidecarState>();
+    let phase = state
+        .phase
+        .lock()
+        .map_err(|_| "credential migration state is unavailable".to_string())?;
+    if *phase != StartupPhase::CredentialMigrationRequired {
+        return Err("credential migration is not currently requested".to_string());
+    }
+    state
+        .credential_paths
+        .lock()
+        .map(|paths| paths.clone())
+        .map_err(|_| "credential migration fields are unavailable".to_string())
+}
+
+#[tauri::command]
+fn confirm_credential_migration(window: WebviewWindow) -> Result<(), String> {
+    if window.label() != "credential-migration" {
+        return Err("credential migration is not available to this window".to_string());
+    }
+    send_credential_migration_confirmation(window.app_handle())
+}
+
+#[tauri::command]
+fn cancel_credential_migration(window: WebviewWindow) -> Result<(), String> {
+    if window.label() != "credential-migration" {
+        return Err("credential migration is not available to this window".to_string());
+    }
+    request_shutdown(window.app_handle());
+    Ok(())
+}
+
 fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let paths = resolve_desktop_paths(handle)?;
     let app_version = handle.package_info().version.to_string();
@@ -176,6 +231,24 @@ fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
                     match action {
+                        Handshake::CredentialMigrationRequired(paths) => {
+                            eprintln!("desktop core credential migration required");
+                            if let Err(error) =
+                                show_credential_migration_window(&task_handle, paths)
+                            {
+                                fail_sidecar(&task_handle, &error);
+                                return;
+                            }
+                            #[cfg(debug_assertions)]
+                            if smoke_enabled() {
+                                if let Err(error) =
+                                    send_credential_migration_confirmation(&task_handle)
+                                {
+                                    fail_sidecar(&task_handle, &error);
+                                    return;
+                                }
+                            }
+                        }
                         Handshake::BootstrapRequired => {
                             eprintln!("desktop core bootstrap required");
                             if let Err(error) = show_bootstrap_window(&task_handle) {
@@ -256,13 +329,49 @@ fn parse_handshake(line: &[u8], expected_app_version: &str) -> Result<Handshake,
         ));
     }
     match message.kind.as_str() {
+        "CREDENTIAL_MIGRATION_REQUIRED" => {
+            if message.url.is_some() {
+                return Err("CREDENTIAL_MIGRATION_REQUIRED must not include a URL".to_string());
+            }
+            let paths = message
+                .credential_paths
+                .ok_or("CREDENTIAL_MIGRATION_REQUIRED must include credential paths")?;
+            if paths.is_empty() || paths.iter().any(|path| path.trim().is_empty()) {
+                return Err(
+                    "CREDENTIAL_MIGRATION_REQUIRED must include non-empty credential paths"
+                        .to_string(),
+                );
+            }
+            let unique = paths.iter().collect::<HashSet<_>>();
+            if unique.len() != paths.len() {
+                return Err(
+                    "CREDENTIAL_MIGRATION_REQUIRED must not include duplicate credential paths"
+                        .to_string(),
+                );
+            }
+            Ok(Handshake::CredentialMigrationRequired(paths))
+        }
         "BOOTSTRAP_REQUIRED" => {
             if message.url.is_some() {
                 return Err("BOOTSTRAP_REQUIRED must not include a URL".to_string());
             }
+            if message
+                .credential_paths
+                .as_ref()
+                .is_some_and(|paths| !paths.is_empty())
+            {
+                return Err("BOOTSTRAP_REQUIRED must not include credential paths".to_string());
+            }
             Ok(Handshake::BootstrapRequired)
         }
         "READY" => {
+            if message
+                .credential_paths
+                .as_ref()
+                .is_some_and(|paths| !paths.is_empty())
+            {
+                return Err("READY must not include credential paths".to_string());
+            }
             let raw_url = message.url.ok_or("READY must include a URL")?;
             let url: tauri::Url = raw_url
                 .parse()
@@ -281,10 +390,21 @@ fn parse_handshake(line: &[u8], expected_app_version: &str) -> Result<Handshake,
 
 fn apply_handshake(phase: &mut StartupPhase, handshake: Handshake) -> Result<Handshake, String> {
     match (*phase, &handshake) {
+        (StartupPhase::Starting, Handshake::CredentialMigrationRequired(_)) => {
+            *phase = StartupPhase::CredentialMigrationRequired;
+        }
         (StartupPhase::Starting, Handshake::BootstrapRequired) => {
             *phase = StartupPhase::BootstrapRequired;
         }
-        (StartupPhase::Starting | StartupPhase::Bootstrapping, Handshake::Ready(_)) => {
+        (StartupPhase::MigratingCredentials, Handshake::BootstrapRequired) => {
+            *phase = StartupPhase::BootstrapRequired;
+        }
+        (
+            StartupPhase::Starting
+            | StartupPhase::MigratingCredentials
+            | StartupPhase::Bootstrapping,
+            Handshake::Ready(_),
+        ) => {
             *phase = StartupPhase::Ready;
         }
         _ => {
@@ -295,6 +415,36 @@ fn apply_handshake(phase: &mut StartupPhase, handshake: Handshake) -> Result<Han
         }
     }
     Ok(handshake)
+}
+
+fn send_credential_migration_confirmation(handle: &AppHandle) -> Result<(), String> {
+    let state = handle.state::<SidecarState>();
+    let mut phase = state
+        .phase
+        .lock()
+        .map_err(|_| "credential migration state is unavailable".to_string())?;
+    if *phase != StartupPhase::CredentialMigrationRequired {
+        return Err("credential migration is not currently requested".to_string());
+    }
+
+    let mut command = serde_json::to_vec(&LifecycleCommand {
+        kind: "MIGRATE_CREDENTIALS",
+        protocol_version: DESKTOP_PROTOCOL_VERSION,
+    })
+    .map_err(|_| "failed to encode credential migration command".to_string())?;
+    command.push(b'\n');
+    let write_result = state
+        .child
+        .lock()
+        .map_err(|_| "desktop core is unavailable".to_string())?
+        .as_mut()
+        .ok_or_else(|| "desktop core is unavailable".to_string())?
+        .write(&command)
+        .map_err(|_| "failed to confirm credential migration".to_string());
+    command.fill(0);
+    write_result?;
+    *phase = StartupPhase::MigratingCredentials;
+    Ok(())
 }
 
 fn send_bootstrap_password(handle: &AppHandle, password: &mut String) -> Result<(), String> {
@@ -350,6 +500,11 @@ fn show_bootstrap_window(handle: &AppHandle) -> Result<(), String> {
         main.hide()
             .map_err(|error| format!("hide main window: {error}"))?;
     }
+    if let Some(migration) = handle.get_webview_window("credential-migration") {
+        migration
+            .destroy()
+            .map_err(|error| format!("destroy credential migration window: {error}"))?;
+    }
     if let Some(window) = handle.get_webview_window("bootstrap") {
         window
             .show()
@@ -379,6 +534,45 @@ fn show_bootstrap_window(handle: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn show_credential_migration_window(handle: &AppHandle, paths: Vec<String>) -> Result<(), String> {
+    if let Some(main) = handle.get_webview_window("main") {
+        main.hide()
+            .map_err(|error| format!("hide main window: {error}"))?;
+    }
+    *handle
+        .state::<SidecarState>()
+        .credential_paths
+        .lock()
+        .map_err(|_| "credential migration fields are unavailable".to_string())? = paths;
+    if let Some(window) = handle.get_webview_window("credential-migration") {
+        window
+            .show()
+            .map_err(|error| format!("show credential migration window: {error}"))?;
+        window
+            .set_focus()
+            .map_err(|error| format!("focus credential migration window: {error}"))?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        handle,
+        "credential-migration",
+        WebviewUrl::App("credential-migration.html".into()),
+    )
+    .title("Protect CyberStrikeAI credentials")
+    .inner_size(520.0, 560.0)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .closable(false)
+    .center()
+    .on_navigation(is_app_asset_url)
+    .on_new_window(|_url, _features| NewWindowResponse::Deny)
+    .on_download(|_webview, event| !matches!(event, DownloadEvent::Requested { .. }))
+    .build()
+    .map_err(|error| format!("create credential migration window: {error}"))?;
+    Ok(())
+}
+
 fn show_main_window(handle: &AppHandle, url: tauri::Url) -> Result<(), String> {
     let origin = url.origin().ascii_serialization();
     handle
@@ -398,6 +592,11 @@ fn show_main_window(handle: &AppHandle, url: tauri::Url) -> Result<(), String> {
             .destroy()
             .map_err(|error| format!("destroy bootstrap window: {error}"))?;
     }
+    if let Some(migration) = handle.get_webview_window("credential-migration") {
+        migration
+            .destroy()
+            .map_err(|error| format!("destroy credential migration window: {error}"))?;
+    }
     window
         .show()
         .map_err(|error| format!("show main window: {error}"))?;
@@ -415,6 +614,11 @@ fn focus_active_window(handle: &AppHandle) {
         .map(|phase| *phase)
         .unwrap_or(StartupPhase::Failed);
     let label = if matches!(
+        phase,
+        StartupPhase::CredentialMigrationRequired | StartupPhase::MigratingCredentials
+    ) {
+        "credential-migration"
+    } else if matches!(
         phase,
         StartupPhase::BootstrapRequired | StartupPhase::Bootstrapping
     ) {
@@ -641,7 +845,17 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn accepts_versioned_bootstrap_and_ready_messages() {
+    fn accepts_versioned_migration_bootstrap_and_ready_messages() {
+        let migration = parse_handshake(
+            br#"{"type":"CREDENTIAL_MIGRATION_REQUIRED","protocol_version":1,"app_version":"0.1.0","credential_paths":["fofa.api_key"]}"#,
+            "0.1.0",
+        )
+        .expect("valid credential migration message");
+        assert_eq!(
+            migration,
+            Handshake::CredentialMigrationRequired(vec!["fofa.api_key".to_string()])
+        );
+
         let bootstrap = parse_handshake(
             br#"{"type":"BOOTSTRAP_REQUIRED","protocol_version":1,"app_version":"0.1.0"}"#,
             "0.1.0",
@@ -655,6 +869,19 @@ mod tests {
         )
         .expect("valid READY message");
         assert!(matches!(ready, Handshake::Ready(_)));
+    }
+
+    #[test]
+    fn rejects_unsafe_credential_migration_messages() {
+        for message in [
+            br#"{"type":"CREDENTIAL_MIGRATION_REQUIRED","protocol_version":1,"app_version":"0.1.0"}"#.as_slice(),
+            br#"{"type":"CREDENTIAL_MIGRATION_REQUIRED","protocol_version":1,"app_version":"0.1.0","credential_paths":[]}"#.as_slice(),
+            br#"{"type":"CREDENTIAL_MIGRATION_REQUIRED","protocol_version":1,"app_version":"0.1.0","credential_paths":[""]}"#.as_slice(),
+            br#"{"type":"CREDENTIAL_MIGRATION_REQUIRED","protocol_version":1,"app_version":"0.1.0","credential_paths":["fofa.api_key","fofa.api_key"]}"#.as_slice(),
+            br#"{"type":"CREDENTIAL_MIGRATION_REQUIRED","protocol_version":1,"url":"http://127.0.0.1:43123/","app_version":"0.1.0","credential_paths":["fofa.api_key"]}"#.as_slice(),
+        ] {
+            assert!(parse_handshake(message, "0.1.0").is_err());
+        }
     }
 
     #[test]
@@ -697,6 +924,31 @@ mod tests {
             Handshake::Ready("http://127.0.0.1:43123/".parse().expect("URL")),
         )
         .expect("READY transition");
+        assert_eq!(phase, StartupPhase::Ready);
+    }
+
+    #[test]
+    fn startup_state_machine_requires_confirmation_after_migration_notice() {
+        let mut phase = StartupPhase::Starting;
+        apply_handshake(
+            &mut phase,
+            Handshake::CredentialMigrationRequired(vec!["fofa.api_key".to_string()]),
+        )
+        .expect("credential migration transition");
+        assert_eq!(phase, StartupPhase::CredentialMigrationRequired);
+        assert!(apply_handshake(&mut phase, Handshake::BootstrapRequired).is_err());
+
+        phase = StartupPhase::MigratingCredentials;
+        apply_handshake(&mut phase, Handshake::BootstrapRequired)
+            .expect("post-migration bootstrap transition");
+        assert_eq!(phase, StartupPhase::BootstrapRequired);
+
+        phase = StartupPhase::MigratingCredentials;
+        apply_handshake(
+            &mut phase,
+            Handshake::Ready("http://127.0.0.1:43123/".parse().expect("URL")),
+        )
+        .expect("post-migration READY transition");
         assert_eq!(phase, StartupPhase::Ready);
     }
 
