@@ -42,6 +42,8 @@ func TestCuratedEmbeddedWebAssetsServeWithoutWorkingDirectory(t *testing.T) {
 		`/static/js/terminal.js`,
 		`/static/js/webshell.js`,
 		`id="robot-account-binding-modal"`,
+		`window.open('/api-docs'`,
+		`window.open('https://github.com/Ed1s0nZ/CyberStrikeAI'`,
 	} {
 		if strings.Contains(root.Body.String(), marker) {
 			t.Fatalf("desktop index contains out-of-scope marker %q", marker)
@@ -66,16 +68,31 @@ func TestCuratedEmbeddedWebAssetsServeWithoutWorkingDirectory(t *testing.T) {
 		`/static/js/terminal.js`,
 		`/static/js/webshell.js`,
 		`id="robot-account-binding-modal"`,
+		`window.open('/api-docs'`,
+		`window.open('https://github.com/Ed1s0nZ/CyberStrikeAI'`,
 	} {
 		if !strings.Contains(server.Body.String(), marker) {
 			t.Fatalf("server index does not contain server-only marker %q", marker)
 		}
 	}
 
-	coreAsset := httptest.NewRecorder()
-	router.ServeHTTP(coreAsset, httptest.NewRequest(http.MethodGet, "/static/js/chat.js", nil))
-	if coreAsset.Code != http.StatusOK {
-		t.Fatalf("embedded core asset status = %d, want 200", coreAsset.Code)
+	for _, path := range []string{
+		"/static/i18n/en-US.json",
+		"/static/i18n/zh-CN.json",
+		"/static/vendor/marked.min.js",
+		"/static/vendor/purify.min.js",
+		"/static/js/chat.js",
+		"/static/js/i18n.js",
+		"/static/js/monitor.js",
+		"/static/js/notifications.js",
+		"/static/js/sanitize-markdown.js",
+		"/static/js/theme.js",
+	} {
+		asset := httptest.NewRecorder()
+		router.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, path, nil))
+		if asset.Code != http.StatusOK {
+			t.Fatalf("embedded core asset %s status = %d, want 200", path, asset.Code)
+		}
 	}
 	desktopSetupAsset := httptest.NewRecorder()
 	router.ServeHTTP(desktopSetupAsset, httptest.NewRequest(http.MethodGet, "/static/js/desktop-setup.js", nil))

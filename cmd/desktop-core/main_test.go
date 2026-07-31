@@ -30,6 +30,13 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	upstream := newDesktopFakeAI(t, cancelRequestStarted)
 	t.Cleanup(upstream.Close)
 	resourceDir := writeTestResources(t, root, "test-version")
+	appendTestResourceConfig(t, resourceDir, "test-version", `multi_agent:
+  sub_agents:
+    - id: desktop-specialist
+      name: Desktop Specialist
+      description: Verifies the desktop multi-Agent runtime.
+      instruction: Return a concise desktop confirmation.
+`)
 	credentialStore := newRecordingCredentialStore()
 	options := runOptions{
 		Roots: desktopruntime.Roots{
@@ -115,6 +122,8 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 		`/static/js/terminal.js`,
 		`/static/js/webshell.js`,
 		`id="robot-account-binding-modal"`,
+		`window.open('/api-docs'`,
+		`window.open('https://github.com/Ed1s0nZ/CyberStrikeAI'`,
 	} {
 		if bytes.Contains(desktopPageBody, []byte(marker)) {
 			t.Fatalf("desktop page contains out-of-scope marker %q", marker)
@@ -199,6 +208,9 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 				},
 			},
 		},
+		"multi_agent": map[string]interface{}{
+			"enabled": true,
+		},
 	})
 	if status != http.StatusOK {
 		t.Fatalf("desktop AI config update status = %d, body = %#v", status, body)
@@ -245,6 +257,62 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	}
 	if bytes.Contains(eventData, []byte("stream-secret")) {
 		t.Fatal("desktop SSE exposed the AI credential")
+	}
+	for _, mode := range []string{"deep", "plan_execute", "supervisor"} {
+		events := desktopSSERequest(t, ready.URL+"api/multi-agent/stream", token, map[string]interface{}{
+			"message":       "desktop-" + mode + "-mode",
+			"orchestration": mode,
+			"finalization": map[string]interface{}{
+				"requireExecutionEvidence": false,
+			},
+		})
+		if !desktopSSEHasEvent(events, "conversation") || !desktopSSEHasEvent(events, "response") || !desktopSSEHasEvent(events, "done") {
+			t.Fatalf("desktop %s Agent events = %#v", mode, events)
+		}
+	}
+	toolEvents := desktopSSERequest(t, ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
+		"message": "desktop-tool-execution",
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	if !desktopSSEHasEvent(toolEvents, "response") || !desktopSSEHasEvent(toolEvents, "done") {
+		t.Fatalf("desktop tool execution events = %#v", toolEvents)
+	}
+	status, monitorBody := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/monitor?tool=query_assets", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("desktop monitor query_assets status = %d, body = %#v", status, monitorBody)
+	}
+	executions, _ := monitorBody["executions"].([]interface{})
+	if len(executions) != 1 {
+		t.Fatalf("desktop monitor query_assets executions = %#v", executions)
+	}
+	execution, _ := executions[0].(map[string]interface{})
+	executionID, _ := execution["id"].(string)
+	if executionID == "" || execution["toolName"] != "query_assets" || execution["status"] != "completed" {
+		t.Fatalf("desktop monitor query_assets execution = %#v", execution)
+	}
+	status, executionDetail := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/monitor/execution/"+executionID, token, nil)
+	if status != http.StatusOK || executionDetail["id"] != executionID || executionDetail["status"] != "completed" {
+		t.Fatalf("desktop monitor execution detail status = %d, body = %#v", status, executionDetail)
+	}
+	status, notificationSummary := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/notifications/summary?since=0&limit=200", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("desktop notification summary status = %d, body = %#v", status, notificationSummary)
+	}
+	completedNotificationID := desktopNotificationID(notificationSummary, "task_completed")
+	if completedNotificationID == "" {
+		t.Fatalf("desktop notification summary has no completed task: %#v", notificationSummary)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/notifications/read", token, map[string]interface{}{
+		"eventIds": []string{completedNotificationID},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("desktop notification mark-read status = %d, body = %#v", status, body)
+	}
+	status, notificationSummary = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/notifications/summary?since=0&limit=200", token, nil)
+	if status != http.StatusOK || desktopNotificationContainsID(notificationSummary, completedNotificationID) {
+		t.Fatalf("desktop read notification remained visible: status = %d, body = %#v", status, notificationSummary)
 	}
 	status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/conversations/"+conversationID, token, nil)
 	if status != http.StatusOK {
@@ -479,6 +547,17 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	if status != http.StatusUnauthorized {
 		t.Fatalf("revoked token validation status = %d", status)
 	}
+	status, restartLogin := desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/login", "", map[string]string{
+		"username": "admin",
+		"password": "desktop-secret",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("pre-restart local admin login status = %d, body = %#v", status, restartLogin)
+	}
+	restartToken, _ := restartLogin["token"].(string)
+	if restartToken == "" {
+		t.Fatalf("pre-restart local admin login did not return a token: %#v", restartLogin)
+	}
 
 	if err := json.NewEncoder(stdinWriter).Encode(desktopprotocol.Command{
 		Type:            desktopprotocol.CommandShutdown,
@@ -511,6 +590,63 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 		t.Fatal("bootstrap password leaked to desktop stdout")
 	}
 	assertSecretNotPersisted(t, root, "desktop-secret")
+
+	restartStdinReader, restartStdinWriter := io.Pipe()
+	restartStdoutReader, restartStdoutWriter := io.Pipe()
+	restartDone := make(chan error, 1)
+	go func() {
+		restartDone <- runDesktopCore(context.Background(), restartStdinReader, restartStdoutWriter, options)
+		_ = restartStdoutWriter.Close()
+		_ = restartStdinReader.Close()
+	}()
+	t.Cleanup(func() {
+		_ = restartStdinWriter.Close()
+		_ = restartStdoutReader.Close()
+	})
+
+	restartDecoder := json.NewDecoder(restartStdoutReader)
+	var restarted desktopprotocol.Handshake
+	decodeWithTimeout(t, restartDecoder, &restarted)
+	if err := restarted.Validate(); err != nil {
+		t.Fatalf("restarted READY validation: %v", err)
+	}
+	if restarted.Type != desktopprotocol.MessageReady || restarted.AppVersion != options.AppVersion {
+		t.Fatalf("unexpected restarted handshake: %#v", restarted)
+	}
+	status, _ = desktopJSONRequest(t, http.MethodGet, restarted.URL+"api/auth/validate", restartToken, nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("pre-restart token validation after core restart status = %d, want 401", status)
+	}
+	status, restartedLogin := desktopJSONRequest(t, http.MethodPost, restarted.URL+"api/auth/login", "", map[string]string{
+		"username": "admin",
+		"password": "desktop-secret",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("post-restart local admin login status = %d, body = %#v", status, restartedLogin)
+	}
+	restartedToken, _ := restartedLogin["token"].(string)
+	if restartedToken == "" {
+		t.Fatalf("post-restart local admin login did not return a token: %#v", restartedLogin)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, restarted.URL+"api/conversations/"+conversationID, restartedToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("persisted conversation after core restart status = %d, body = %#v", status, body)
+	}
+
+	if err := json.NewEncoder(restartStdinWriter).Encode(desktopprotocol.Command{
+		Type:            desktopprotocol.CommandShutdown,
+		ProtocolVersion: desktopprotocol.Version,
+	}); err != nil {
+		t.Fatalf("write restarted shutdown command: %v", err)
+	}
+	select {
+	case err := <-restartDone:
+		if err != nil {
+			t.Fatalf("restarted runDesktopCore: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("restarted desktop core did not shut down")
+	}
 }
 
 func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}) *httptest.Server {
@@ -557,18 +693,24 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}) *httpt
 			<-request.Context().Done()
 			return
 		}
+		if desktopPayloadHasTool(payload, "plan") && !desktopPayloadHasTool(payload, "respond") {
+			desktopWriteToolCallResponse(response, payload, "call-desktop-plan", "plan", `{"steps":["Return a desktop plan-execute confirmation."]}`)
+			return
+		}
+		if desktopPayloadHasTool(payload, "respond") {
+			desktopWriteToolCallResponse(response, payload, "call-desktop-respond", "respond", `{"response":"desktop plan-execute reply"}`)
+			return
+		}
+		if bytes.Contains(requestData, []byte("desktop-tool-execution")) &&
+			desktopPayloadHasTool(payload, "query_assets") &&
+			!desktopPayloadHasRole(payload, "tool") {
+			desktopWriteToolCallResponse(response, payload, "call-desktop-tool-execution", "query_assets", `{}`)
+			return
+		}
 		if bytes.Contains(requestData, []byte("desktop-hitl-approval")) &&
 			!bytes.Contains(requestData, []byte("[HITL Reject]")) &&
 			desktopPayloadHasTool(payload, "query_assets") {
-			if streaming, _ := payload["stream"].(bool); streaming {
-				response.Header().Set("Content-Type", "text/event-stream")
-				_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop-hitl\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call-desktop-hitl\",\"type\":\"function\",\"function\":{\"name\":\"query_assets\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n")
-				_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop-hitl\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n")
-				_, _ = io.WriteString(response, "data: [DONE]\n\n")
-				return
-			}
-			response.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(response, `{"id":"chatcmpl-desktop-hitl","object":"chat.completion","model":"desktop-test-model","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-desktop-hitl","type":"function","function":{"name":"query_assets","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
+			desktopWriteToolCallResponse(response, payload, "call-desktop-hitl", "query_assets", `{}`)
 			return
 		}
 		if streaming, _ := payload["stream"].(bool); streaming {
@@ -582,6 +724,65 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}) *httpt
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(response, `{"id":"chatcmpl-desktop","object":"chat.completion","model":"desktop-test-model","choices":[{"index":0,"message":{"role":"assistant","content":"desktop streamed reply"},"finish_reason":"stop"}]}`)
 	}))
+}
+
+func desktopWriteToolCallResponse(response http.ResponseWriter, payload map[string]interface{}, callID, name, arguments string) {
+	toolCall := map[string]interface{}{
+		"id":   callID,
+		"type": "function",
+		"function": map[string]interface{}{
+			"name":      name,
+			"arguments": arguments,
+		},
+	}
+	if streaming, _ := payload["stream"].(bool); streaming {
+		response.Header().Set("Content-Type", "text/event-stream")
+		first, _ := json.Marshal(map[string]interface{}{
+			"id":     "chatcmpl-desktop-tool",
+			"object": "chat.completion.chunk",
+			"model":  "desktop-test-model",
+			"choices": []interface{}{map[string]interface{}{
+				"index": 0,
+				"delta": map[string]interface{}{
+					"role": "assistant",
+					"tool_calls": []interface{}{map[string]interface{}{
+						"index":    0,
+						"id":       callID,
+						"type":     "function",
+						"function": toolCall["function"],
+					}},
+				},
+				"finish_reason": nil,
+			}},
+		})
+		last, _ := json.Marshal(map[string]interface{}{
+			"id":     "chatcmpl-desktop-tool",
+			"object": "chat.completion.chunk",
+			"model":  "desktop-test-model",
+			"choices": []interface{}{map[string]interface{}{
+				"index":         0,
+				"delta":         map[string]interface{}{},
+				"finish_reason": "tool_calls",
+			}},
+		})
+		_, _ = fmt.Fprintf(response, "data: %s\n\ndata: %s\n\ndata: [DONE]\n\n", first, last)
+		return
+	}
+	response.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(response).Encode(map[string]interface{}{
+		"id":     "chatcmpl-desktop-tool",
+		"object": "chat.completion",
+		"model":  "desktop-test-model",
+		"choices": []interface{}{map[string]interface{}{
+			"index": 0,
+			"message": map[string]interface{}{
+				"role":       "assistant",
+				"content":    nil,
+				"tool_calls": []interface{}{toolCall},
+			},
+			"finish_reason": "tool_calls",
+		}},
+	})
 }
 
 func desktopSSERequest(t *testing.T, target, token string, body interface{}) []map[string]interface{} {
@@ -647,6 +848,38 @@ func desktopTaskStatus(body map[string]interface{}, conversationID string) (stri
 	return "", false
 }
 
+func desktopSSEHasEvent(events []map[string]interface{}, eventType string) bool {
+	for _, event := range events {
+		if event["type"] == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func desktopNotificationID(summary map[string]interface{}, notificationType string) string {
+	items, _ := summary["items"].([]interface{})
+	for _, item := range items {
+		notification, _ := item.(map[string]interface{})
+		if notification["type"] == notificationType {
+			id, _ := notification["id"].(string)
+			return id
+		}
+	}
+	return ""
+}
+
+func desktopNotificationContainsID(summary map[string]interface{}, id string) bool {
+	items, _ := summary["items"].([]interface{})
+	for _, item := range items {
+		notification, _ := item.(map[string]interface{})
+		if notification["id"] == id {
+			return true
+		}
+	}
+	return false
+}
+
 func desktopHITLInterruptID(body map[string]interface{}, conversationID string) string {
 	items, _ := body["items"].([]interface{})
 	for _, item := range items {
@@ -668,6 +901,17 @@ func desktopPayloadHasTool(payload map[string]interface{}, toolName string) bool
 		tool, _ := item.(map[string]interface{})
 		function, _ := tool["function"].(map[string]interface{})
 		if function["name"] == toolName {
+			return true
+		}
+	}
+	return false
+}
+
+func desktopPayloadHasRole(payload map[string]interface{}, role string) bool {
+	messages, _ := payload["messages"].([]interface{})
+	for _, item := range messages {
+		message, _ := item.(map[string]interface{})
+		if message["role"] == role {
 			return true
 		}
 	}

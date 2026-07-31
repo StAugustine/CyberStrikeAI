@@ -10,9 +10,18 @@ func TestDesktopAssetsContainCoreResourcesAndExcludeOutOfScopeModules(t *testing
 		"templates/index.html",
 		"templates/api-docs.html",
 		"static/css/style.css",
+		"static/i18n/en-US.json",
+		"static/i18n/zh-CN.json",
+		"static/vendor/marked.min.js",
+		"static/vendor/purify.min.js",
 		"static/js/chat.js",
 		"static/js/desktop-setup.js",
+		"static/js/i18n.js",
 		"static/js/knowledge.js",
+		"static/js/monitor.js",
+		"static/js/notifications.js",
+		"static/js/sanitize-markdown.js",
+		"static/js/theme.js",
 		"static/js/workflows.js",
 	} {
 		if _, err := fs.Stat(FS(), path); err != nil {
