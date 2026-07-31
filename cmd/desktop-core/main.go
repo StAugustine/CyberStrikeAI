@@ -148,6 +148,7 @@ func runDesktopCore(parent context.Context, stdin io.Reader, stdout io.Writer, o
 	}
 
 	log := logger.New(cfg.Log.Level, cfg.Log.Output)
+	defer func() { _ = log.Close() }()
 	application, err := app.New(
 		cfg,
 		log,

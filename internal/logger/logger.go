@@ -2,6 +2,7 @@ package logger
 
 import (
 	"os"
+	"sync"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -9,6 +10,9 @@ import (
 
 type Logger struct {
 	*zap.Logger
+	closer    *os.File
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func New(level, output string) *Logger {
@@ -32,6 +36,7 @@ func New(level, output string) *Logger {
 	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
 	var writeSyncer zapcore.WriteSyncer
+	var closer *os.File
 	if output == "stdout" {
 		writeSyncer = zapcore.AddSync(os.Stdout)
 	} else {
@@ -40,6 +45,7 @@ func New(level, output string) *Logger {
 			writeSyncer = zapcore.AddSync(os.Stdout)
 		} else {
 			writeSyncer = zapcore.AddSync(file)
+			closer = file
 		}
 	}
 
@@ -51,7 +57,27 @@ func New(level, output string) *Logger {
 
 	logger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 
-	return &Logger{Logger: logger}
+	return &Logger{Logger: logger, closer: closer}
+}
+
+// Close flushes the logger and releases an owned output file. It never closes
+// stdout and is safe to call more than once.
+func (l *Logger) Close() error {
+	if l == nil || l.Logger == nil {
+		return nil
+	}
+	l.closeOnce.Do(func() {
+		if l.closer == nil {
+			return
+		}
+		if err := l.Logger.Sync(); err != nil {
+			l.closeErr = err
+		}
+		if err := l.closer.Close(); err != nil && l.closeErr == nil {
+			l.closeErr = err
+		}
+	})
+	return l.closeErr
 }
 
 func (l *Logger) Fatal(msg string, fields ...interface{}) {
