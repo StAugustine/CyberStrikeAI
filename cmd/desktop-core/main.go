@@ -23,6 +23,7 @@ import (
 	"cyberstrike-ai/internal/desktopruntime"
 	"cyberstrike-ai/internal/logger"
 	webassets "cyberstrike-ai/web"
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -67,6 +68,10 @@ func runDesktopCore(parent context.Context, stdin io.Reader, stdout io.Writer, o
 	if stdin == nil || stdout == nil {
 		return errors.New("desktop core stdin and stdout are required")
 	}
+	// stdout is reserved for the versioned desktop protocol. Gin's request and
+	// recovery logs must use stderr so they cannot corrupt sidecar messages.
+	gin.DefaultWriter = os.Stderr
+	gin.DefaultErrorWriter = os.Stderr
 	options.ResourceDir = filepath.Clean(strings.TrimSpace(options.ResourceDir))
 	if options.ResourceDir == "." || !filepath.IsAbs(options.ResourceDir) {
 		return fmt.Errorf("desktop resource directory must be absolute: %q", options.ResourceDir)

@@ -16,6 +16,7 @@ import (
 
 	"cyberstrike-ai/internal/desktopprotocol"
 	"cyberstrike-ai/internal/desktopruntime"
+	"github.com/gin-gonic/gin"
 )
 
 func TestDesktopCoreBootstrapReadyAndShutdown(t *testing.T) {
@@ -33,7 +34,12 @@ func TestDesktopCoreBootstrapReadyAndShutdown(t *testing.T) {
 		AppVersion:  "test-version",
 	}
 	stdinReader, stdinWriter := io.Pipe()
-	stdoutReader, stdoutWriter := io.Pipe()
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create desktop stdout pipe: %v", err)
+	}
+	previousGinWriter := gin.DefaultWriter
+	gin.DefaultWriter = stdoutWriter
 	done := make(chan error, 1)
 	go func() {
 		done <- runDesktopCore(context.Background(), stdinReader, stdoutWriter, options)
@@ -41,6 +47,7 @@ func TestDesktopCoreBootstrapReadyAndShutdown(t *testing.T) {
 		_ = stdinReader.Close()
 	}()
 	t.Cleanup(func() {
+		gin.DefaultWriter = previousGinWriter
 		_ = stdinWriter.Close()
 		_ = stdoutReader.Close()
 	})
@@ -90,6 +97,19 @@ func TestDesktopCoreBootstrapReadyAndShutdown(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("desktop core did not shut down")
+	}
+	if _, err := io.Copy(&stdoutTranscript, stdoutReader); err != nil {
+		t.Fatalf("drain desktop stdout: %v", err)
+	}
+	protocolLines := strings.Split(strings.TrimSpace(stdoutTranscript.String()), "\n")
+	if len(protocolLines) != 2 {
+		t.Fatalf("desktop stdout must contain exactly two protocol messages, got %d: %q", len(protocolLines), stdoutTranscript.String())
+	}
+	for index, line := range protocolLines {
+		var handshake desktopprotocol.Handshake
+		if err := json.Unmarshal([]byte(line), &handshake); err != nil {
+			t.Fatalf("desktop stdout message %d is not valid JSON: %v", index, err)
+		}
 	}
 	if strings.Contains(stdoutTranscript.String(), "desktop-secret") {
 		t.Fatal("bootstrap password leaked to desktop stdout")
