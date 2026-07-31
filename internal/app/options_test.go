@@ -43,6 +43,16 @@ func TestWithDesktopCredentialManagerIsApplied(t *testing.T) {
 	}
 }
 
+func TestWithDesktopModeIsApplied(t *testing.T) {
+	options, err := resolveOptions([]Option{WithDesktopMode()})
+	if err != nil {
+		t.Fatalf("resolveOptions: %v", err)
+	}
+	if !options.desktopMode {
+		t.Fatal("desktop mode was not applied")
+	}
+}
+
 type optionCredentialStore struct{}
 
 func (optionCredentialStore) Get(string) (string, error) { return "", nil }

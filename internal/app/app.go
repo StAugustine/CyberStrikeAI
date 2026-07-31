@@ -135,10 +135,12 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	} else if generatedPassword != "" {
 		config.PrintBootstrapAdminPassword(generatedPassword)
 	}
-	for platform, userID := range cfg.Robots.ServiceAccountUserIDs() {
-		user, userErr := db.GetRBACUserByID(userID)
-		if userErr != nil || !user.Enabled {
-			return nil, fmt.Errorf("robots.%s.auth.service_user_id 必须指向已启用的 RBAC 用户", platform)
+	if !resolvedOptions.desktopMode {
+		for platform, userID := range cfg.Robots.ServiceAccountUserIDs() {
+			user, userErr := db.GetRBACUserByID(userID)
+			if userErr != nil || !user.Enabled {
+				return nil, fmt.Errorf("robots.%s.auth.service_user_id 必须指向已启用的 RBAC 用户", platform)
+			}
 		}
 	}
 
@@ -448,8 +450,10 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	webshellHandler.SetAudit(auditSvc)
 	chatUploadsHandler := handler.NewChatUploadsHandler(log.Logger, db)
 	chatUploadsHandler.SetAudit(auditSvc)
-	registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
-	registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
+	if !resolvedOptions.desktopMode {
+		registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
+		registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
+	}
 	configHandler := handler.NewConfigHandler(configPath, cfg, mcpServer, executor, agent, attackChainHandler, externalMCPMgr, log.Logger)
 	configHandler.SetDesktopCredentialManager(resolvedOptions.desktopCredentialManager)
 	configHandler.SetDB(db)
@@ -472,7 +476,12 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	// ============================================================================
 	// 初始化 C2 模块（可按配置关闭，节省本机部署资源）
 	// ============================================================================
-	c2Manager, c2Watchdog, watchdogCancel := setupC2Runtime(cfg, db, agentHandler, log.Logger)
+	var c2Manager *c2.Manager
+	var c2Watchdog *c2.SessionWatchdog
+	var watchdogCancel context.CancelFunc
+	if !resolvedOptions.desktopMode {
+		c2Manager, c2Watchdog, watchdogCancel = setupC2Runtime(cfg, db, agentHandler, log.Logger)
+	}
 	if c2Manager != nil {
 		registerC2Tools(mcpServer, c2Manager, log.Logger, cfg.Server.Port)
 	}
@@ -486,7 +495,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	auditHandler := handler.NewAuditHandler(db, auditSvc, log.Logger)
 	robotHandler := handler.NewRobotHandler(cfg, db, agentHandler, log.Logger)
 	robotHandler.SetAudit(auditSvc)
-	db.SetVulnerabilityCreatedHook(robotHandler.NotifyNewVulnerability)
+	if !resolvedOptions.desktopMode {
+		db.SetVulnerabilityCreatedHook(robotHandler.NotifyNewVulnerability)
+	}
 	openAPIHandler := handler.NewOpenAPIHandler(db, log.Logger, conversationHandler, agentHandler)
 
 	// 创建 App 实例（部分字段稍后填充）
@@ -518,10 +529,12 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 		backgroundDone:     backgroundDone,
 	}
 	// 飞书/钉钉长连接（无需公网），启用时在后台启动；后续前端应用配置时会通过 RestartRobotConnections 重启
-	app.startRobotConnections()
-	alertCtx, alertCancel := context.WithCancel(context.Background())
-	app.alertCancel = alertCancel
-	go robotHandler.RunVulnerabilityAlertWorker(alertCtx)
+	if !resolvedOptions.desktopMode {
+		app.startRobotConnections()
+		alertCtx, alertCancel := context.WithCancel(context.Background())
+		app.alertCancel = alertCancel
+		go robotHandler.RunVulnerabilityAlertWorker(alertCtx)
+	}
 
 	// 设置漏洞工具注册器（内置工具，必须设置）
 	vulnerabilityRegistrar := func() error {
@@ -534,12 +547,14 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	configHandler.SetVulnerabilityToolRegistrar(vulnerabilityRegistrar)
 
 	// 设置 WebShell 工具注册器（ApplyConfig 时重新注册）
-	webshellRegistrar := func() error {
-		registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
-		registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
-		return nil
+	if !resolvedOptions.desktopMode {
+		webshellRegistrar := func() error {
+			registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
+			registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
+			return nil
+		}
+		configHandler.SetWebshellToolRegistrar(webshellRegistrar)
 	}
-	configHandler.SetWebshellToolRegistrar(webshellRegistrar)
 
 	// Skills 由 Eino ADK skill 中间件提供（多代理）；此处不注册 MCP 形态的技能工具
 	configHandler.SetSkillsToolRegistrar(func() error { return nil })
@@ -588,17 +603,21 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	}
 
 	// 设置机器人连接重启器，前端应用配置后无需重启服务即可使钉钉/飞书/微信新配置生效
-	configHandler.SetRobotRestarter(app)
+	if !resolvedOptions.desktopMode {
+		configHandler.SetRobotRestarter(app)
+	}
 
 	wechatRobotHandler := handler.NewWechatRobotHandler(cfg, configHandler, log.Logger)
 
-	configHandler.SetC2Runtime(app)
-	configHandler.SetC2ToolRegistrar(func() error {
-		if app.config.C2.EnabledEffective() && app.c2Manager != nil {
-			registerC2Tools(mcpServer, app.c2Manager, log.Logger, app.config.Server.Port)
-		}
-		return nil
-	})
+	if !resolvedOptions.desktopMode {
+		configHandler.SetC2Runtime(app)
+		configHandler.SetC2ToolRegistrar(func() error {
+			if app.config.C2.EnabledEffective() && app.c2Manager != nil {
+				registerC2Tools(mcpServer, app.c2Manager, log.Logger, app.config.Server.Port)
+			}
+			return nil
+		})
+	}
 
 	// 设置路由（使用 App 实例以便动态获取 handler）
 	setupRoutes(
@@ -633,6 +652,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 		mcpServer,
 		authManager,
 		openAPIHandler,
+		resolvedOptions.desktopMode,
 	)
 
 	initialized = true
@@ -819,6 +839,7 @@ func setupRoutes(
 	mcpServer *mcp.Server,
 	authManager *security.AuthManager,
 	openAPIHandler *handler.OpenAPIHandler,
+	desktopMode bool,
 ) {
 	registerHealthRoutes(router, app)
 
@@ -833,21 +854,25 @@ func setupRoutes(
 		authRoutes.POST("/logout", security.AuthMiddleware(authManager), authHandler.Logout)
 		authRoutes.POST("/change-password", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), authHandler.ChangePassword)
 		authRoutes.GET("/validate", security.AuthMiddleware(authManager), authHandler.Validate)
-		authRoutes.POST("/robot-binding-code", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.CreateRobotBindingCode)
-		authRoutes.GET("/robot-bindings", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.ListMyRobotBindings)
-		authRoutes.DELETE("/robot-bindings/:id", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.DeleteMyRobotBinding)
+		if !desktopMode {
+			authRoutes.POST("/robot-binding-code", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.CreateRobotBindingCode)
+			authRoutes.GET("/robot-bindings", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.ListMyRobotBindings)
+			authRoutes.DELETE("/robot-bindings/:id", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.DeleteMyRobotBinding)
+		}
 	}
 
 	// 机器人回调（无需登录，供企业微信/钉钉/飞书服务器调用）
 	// 添加速率限制：每个 IP 每分钟最多 60 次请求，防止滥用
-	robotRL := security.NewRateLimiter(60, 1*time.Minute)
-	robotGroup := api.Group("/robot")
-	robotGroup.Use(security.RateLimitMiddleware(robotRL))
-	{
-		robotGroup.GET("/wecom", robotHandler.HandleWecomGET)
-		robotGroup.POST("/wecom", robotHandler.HandleWecomPOST)
-		robotGroup.POST("/dingtalk", robotHandler.HandleDingtalkPOST)
-		robotGroup.POST("/lark", robotHandler.HandleLarkPOST)
+	if !desktopMode {
+		robotRL := security.NewRateLimiter(60, 1*time.Minute)
+		robotGroup := api.Group("/robot")
+		robotGroup.Use(security.RateLimitMiddleware(robotRL))
+		{
+			robotGroup.GET("/wecom", robotHandler.HandleWecomGET)
+			robotGroup.POST("/wecom", robotHandler.HandleWecomPOST)
+			robotGroup.POST("/dingtalk", robotHandler.HandleDingtalkPOST)
+			robotGroup.POST("/lark", robotHandler.HandleLarkPOST)
+		}
 	}
 
 	protected := api.Group("")
@@ -862,29 +887,31 @@ func setupRoutes(
 		}
 	}))
 	{
-		protected.GET("/rbac/me", rbacHandler.Me)
-		protected.GET("/rbac/metadata", rbacHandler.Metadata)
-		protected.GET("/rbac/users", rbacHandler.ListUsers)
-		protected.POST("/rbac/users", rbacHandler.CreateUser)
-		protected.PUT("/rbac/users/:id", rbacHandler.UpdateUser)
-		protected.DELETE("/rbac/users/:id", rbacHandler.DeleteUser)
-		protected.GET("/rbac/roles", rbacHandler.ListRoles)
-		protected.POST("/rbac/roles", rbacHandler.CreateRole)
-		protected.PUT("/rbac/roles/:id", rbacHandler.UpdateRole)
-		protected.DELETE("/rbac/roles/:id", rbacHandler.DeleteRole)
-		protected.GET("/rbac/resource-assignments", rbacHandler.ListResourceAssignments)
-		protected.GET("/rbac/resources", rbacHandler.ListAssignableResources)
-		protected.POST("/rbac/resource-assignments", rbacHandler.AssignResource)
-		protected.DELETE("/rbac/resource-assignments/:id", rbacHandler.DeleteResourceAssignment)
+		if !desktopMode {
+			protected.GET("/rbac/me", rbacHandler.Me)
+			protected.GET("/rbac/metadata", rbacHandler.Metadata)
+			protected.GET("/rbac/users", rbacHandler.ListUsers)
+			protected.POST("/rbac/users", rbacHandler.CreateUser)
+			protected.PUT("/rbac/users/:id", rbacHandler.UpdateUser)
+			protected.DELETE("/rbac/users/:id", rbacHandler.DeleteUser)
+			protected.GET("/rbac/roles", rbacHandler.ListRoles)
+			protected.POST("/rbac/roles", rbacHandler.CreateRole)
+			protected.PUT("/rbac/roles/:id", rbacHandler.UpdateRole)
+			protected.DELETE("/rbac/roles/:id", rbacHandler.DeleteRole)
+			protected.GET("/rbac/resource-assignments", rbacHandler.ListResourceAssignments)
+			protected.GET("/rbac/resources", rbacHandler.ListAssignableResources)
+			protected.POST("/rbac/resource-assignments", rbacHandler.AssignResource)
+			protected.DELETE("/rbac/resource-assignments/:id", rbacHandler.DeleteResourceAssignment)
 
-		// 机器人测试（需登录）：POST /api/robot/test，body: {"platform":"dingtalk","user_id":"test","text":"帮助"}，用于验证机器人逻辑
-		protected.POST("/robot/test", robotHandler.HandleRobotTest)
+			// 机器人测试（需登录）：POST /api/robot/test，body: {"platform":"dingtalk","user_id":"test","text":"帮助"}，用于验证机器人逻辑
+			protected.POST("/robot/test", robotHandler.HandleRobotTest)
 
-		// 微信 iLink 扫码绑定（需登录）
-		protected.POST("/robot/wechat/qrcode", wechatRobotHandler.HandleWechatQRCode)
-		protected.GET("/robot/wechat/qrcode/status", wechatRobotHandler.HandleWechatQRCodeStatus)
-		protected.POST("/robot/wechat/qrcode/verify", wechatRobotHandler.HandleWechatVerifyCode)
-		protected.GET("/robot/wechat/status", wechatRobotHandler.HandleWechatStatus)
+			// 微信 iLink 扫码绑定（需登录）
+			protected.POST("/robot/wechat/qrcode", wechatRobotHandler.HandleWechatQRCode)
+			protected.GET("/robot/wechat/qrcode/status", wechatRobotHandler.HandleWechatQRCodeStatus)
+			protected.POST("/robot/wechat/qrcode/verify", wechatRobotHandler.HandleWechatVerifyCode)
+			protected.GET("/robot/wechat/status", wechatRobotHandler.HandleWechatStatus)
+		}
 
 		// Eino ADK 单代理（ChatModelAgent + Runner；不依赖 multi_agent.enabled）
 		protected.POST("/eino-agent", agentHandler.EinoSingleAgentLoop)
@@ -1002,9 +1029,11 @@ func setupRoutes(
 		protected.POST("/config/list-models", configHandler.ListModels)
 
 		// 系统设置 - 终端（执行命令，提高运维效率）
-		protected.POST("/terminal/run", terminalHandler.RunCommand)
-		protected.POST("/terminal/run/stream", terminalHandler.RunCommandStream)
-		protected.GET("/terminal/ws", terminalHandler.RunCommandWS)
+		if !desktopMode {
+			protected.POST("/terminal/run", terminalHandler.RunCommand)
+			protected.POST("/terminal/run/stream", terminalHandler.RunCommandStream)
+			protected.GET("/terminal/ws", terminalHandler.RunCommandWS)
+		}
 
 		// 平台审计日志
 		protected.GET("/audit/meta", auditHandler.Meta)
@@ -1206,64 +1235,66 @@ func setupRoutes(
 		protected.POST("/projects/:id/facts/restore", projectHandler.RestoreFact)
 
 		// WebShell 管理（代理执行 + 连接配置存 SQLite）
-		protected.GET("/webshell/connections", webshellHandler.ListConnections)
-		protected.POST("/webshell/connections", webshellHandler.CreateConnection)
-		protected.GET("/webshell/connections/:id/ai-history", webshellHandler.GetAIHistory)
-		protected.GET("/webshell/connections/:id/ai-conversations", webshellHandler.ListAIConversations)
-		protected.GET("/webshell/connections/:id/state", webshellHandler.GetConnectionState)
-		protected.PUT("/webshell/connections/:id", webshellHandler.UpdateConnection)
-		protected.PUT("/webshell/connections/:id/state", webshellHandler.SaveConnectionState)
-		protected.DELETE("/webshell/connections/:id", webshellHandler.DeleteConnection)
-		protected.POST("/webshell/exec", webshellHandler.Exec)
-		protected.POST("/webshell/file", webshellHandler.FileOp)
+		if !desktopMode {
+			protected.GET("/webshell/connections", webshellHandler.ListConnections)
+			protected.POST("/webshell/connections", webshellHandler.CreateConnection)
+			protected.GET("/webshell/connections/:id/ai-history", webshellHandler.GetAIHistory)
+			protected.GET("/webshell/connections/:id/ai-conversations", webshellHandler.ListAIConversations)
+			protected.GET("/webshell/connections/:id/state", webshellHandler.GetConnectionState)
+			protected.PUT("/webshell/connections/:id", webshellHandler.UpdateConnection)
+			protected.PUT("/webshell/connections/:id/state", webshellHandler.SaveConnectionState)
+			protected.DELETE("/webshell/connections/:id", webshellHandler.DeleteConnection)
+			protected.POST("/webshell/exec", webshellHandler.Exec)
+			protected.POST("/webshell/file", webshellHandler.FileOp)
 
-		// C2 管理（未启用时返回 503，避免 Handler 空指针）
-		c2Routes := protected.Group("/c2")
-		c2Routes.Use(func(c *gin.Context) {
-			if app.c2Manager == nil {
-				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-					"error":   "c2_disabled",
-					"message": "C2 功能已在系统设置中关闭",
-					"enabled": false,
-				})
-				return
-			}
-			c.Next()
-		})
-		c2Routes.GET("/listeners", c2Handler.ListListeners)
-		c2Routes.POST("/listeners", c2Handler.CreateListener)
-		c2Routes.GET("/listeners/:id", c2Handler.GetListener)
-		c2Routes.PUT("/listeners/:id", c2Handler.UpdateListener)
-		c2Routes.DELETE("/listeners/:id", c2Handler.DeleteListener)
-		c2Routes.POST("/listeners/:id/start", c2Handler.StartListener)
-		c2Routes.POST("/listeners/:id/stop", c2Handler.StopListener)
-		c2Routes.GET("/sessions", c2Handler.ListSessions)
-		c2Routes.DELETE("/sessions", c2Handler.DeleteSessions)
-		c2Routes.GET("/sessions/:id", c2Handler.GetSession)
-		c2Routes.DELETE("/sessions/:id", c2Handler.DeleteSession)
-		c2Routes.PUT("/sessions/:id/sleep", c2Handler.SetSessionSleep)
-		c2Routes.PUT("/sessions/:id/note", c2Handler.SetSessionNote)
-		c2Routes.GET("/tasks", c2Handler.ListTasks)
-		c2Routes.DELETE("/tasks", c2Handler.DeleteTasks)
-		c2Routes.GET("/tasks/:id", c2Handler.GetTask)
-		c2Routes.POST("/tasks", c2Handler.CreateTask)
-		c2Routes.POST("/tasks/:id/cancel", c2Handler.CancelTask)
-		c2Routes.GET("/tasks/:id/wait", c2Handler.WaitTask)
-		c2Routes.POST("/sessions/:id/tasks", c2Handler.CreateTask)
-		c2Routes.POST("/payloads/oneliner", c2Handler.PayloadOneliner)
-		c2Routes.POST("/payloads/build", c2Handler.PayloadBuild)
-		c2Routes.GET("/payloads/:id/download", c2Handler.PayloadDownload)
-		c2Routes.GET("/events", c2Handler.ListEvents)
-		c2Routes.DELETE("/events", c2Handler.DeleteEvents)
-		c2Routes.GET("/events/stream", c2Handler.EventStream)
-		c2Routes.POST("/files/upload", c2Handler.UploadFileForImplant)
-		c2Routes.GET("/files", c2Handler.ListFiles)
-		c2Routes.GET("/tasks/:id/result-file", c2Handler.DownloadResultFile)
-		c2Routes.GET("/profiles", c2Handler.ListProfiles)
-		c2Routes.GET("/profiles/:id", c2Handler.GetProfile)
-		c2Routes.POST("/profiles", c2Handler.CreateProfile)
-		c2Routes.PUT("/profiles/:id", c2Handler.UpdateProfile)
-		c2Routes.DELETE("/profiles/:id", c2Handler.DeleteProfile)
+			// C2 管理（未启用时返回 503，避免 Handler 空指针）
+			c2Routes := protected.Group("/c2")
+			c2Routes.Use(func(c *gin.Context) {
+				if app.c2Manager == nil {
+					c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+						"error":   "c2_disabled",
+						"message": "C2 功能已在系统设置中关闭",
+						"enabled": false,
+					})
+					return
+				}
+				c.Next()
+			})
+			c2Routes.GET("/listeners", c2Handler.ListListeners)
+			c2Routes.POST("/listeners", c2Handler.CreateListener)
+			c2Routes.GET("/listeners/:id", c2Handler.GetListener)
+			c2Routes.PUT("/listeners/:id", c2Handler.UpdateListener)
+			c2Routes.DELETE("/listeners/:id", c2Handler.DeleteListener)
+			c2Routes.POST("/listeners/:id/start", c2Handler.StartListener)
+			c2Routes.POST("/listeners/:id/stop", c2Handler.StopListener)
+			c2Routes.GET("/sessions", c2Handler.ListSessions)
+			c2Routes.DELETE("/sessions", c2Handler.DeleteSessions)
+			c2Routes.GET("/sessions/:id", c2Handler.GetSession)
+			c2Routes.DELETE("/sessions/:id", c2Handler.DeleteSession)
+			c2Routes.PUT("/sessions/:id/sleep", c2Handler.SetSessionSleep)
+			c2Routes.PUT("/sessions/:id/note", c2Handler.SetSessionNote)
+			c2Routes.GET("/tasks", c2Handler.ListTasks)
+			c2Routes.DELETE("/tasks", c2Handler.DeleteTasks)
+			c2Routes.GET("/tasks/:id", c2Handler.GetTask)
+			c2Routes.POST("/tasks", c2Handler.CreateTask)
+			c2Routes.POST("/tasks/:id/cancel", c2Handler.CancelTask)
+			c2Routes.GET("/tasks/:id/wait", c2Handler.WaitTask)
+			c2Routes.POST("/sessions/:id/tasks", c2Handler.CreateTask)
+			c2Routes.POST("/payloads/oneliner", c2Handler.PayloadOneliner)
+			c2Routes.POST("/payloads/build", c2Handler.PayloadBuild)
+			c2Routes.GET("/payloads/:id/download", c2Handler.PayloadDownload)
+			c2Routes.GET("/events", c2Handler.ListEvents)
+			c2Routes.DELETE("/events", c2Handler.DeleteEvents)
+			c2Routes.GET("/events/stream", c2Handler.EventStream)
+			c2Routes.POST("/files/upload", c2Handler.UploadFileForImplant)
+			c2Routes.GET("/files", c2Handler.ListFiles)
+			c2Routes.GET("/tasks/:id/result-file", c2Handler.DownloadResultFile)
+			c2Routes.GET("/profiles", c2Handler.ListProfiles)
+			c2Routes.GET("/profiles/:id", c2Handler.GetProfile)
+			c2Routes.POST("/profiles", c2Handler.CreateProfile)
+			c2Routes.PUT("/profiles/:id", c2Handler.UpdateProfile)
+			c2Routes.DELETE("/profiles/:id", c2Handler.DeleteProfile)
+		}
 
 		// 对话附件（chat_uploads）管理
 		protected.GET("/chat-uploads", chatUploadsHandler.List)
@@ -1344,7 +1375,10 @@ func setupRoutes(
 		if version == "" {
 			version = "v1.0.0"
 		}
-		c.HTML(http.StatusOK, "index.html", gin.H{"Version": version})
+		c.HTML(http.StatusOK, "index.html", gin.H{
+			"DesktopMode": desktopMode,
+			"Version":     version,
+		})
 	})
 }
 

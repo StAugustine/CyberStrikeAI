@@ -93,6 +93,36 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("health ready status = %d", response.StatusCode)
 	}
+	desktopPage, err := http.Get(ready.URL)
+	if err != nil {
+		t.Fatalf("GET desktop page: %v", err)
+	}
+	desktopPageBody, err := io.ReadAll(desktopPage.Body)
+	_ = desktopPage.Body.Close()
+	if err != nil {
+		t.Fatalf("read desktop page: %v", err)
+	}
+	if desktopPage.StatusCode != http.StatusOK {
+		t.Fatalf("desktop page status = %d, want 200", desktopPage.StatusCode)
+	}
+	for _, marker := range []string{
+		`data-page="webshell"`,
+		`data-page="c2"`,
+		`data-page="platform-rbac"`,
+		`data-section="robots"`,
+		`id="settings-section-terminal"`,
+		`/static/js/c2.js`,
+		`/static/js/terminal.js`,
+		`/static/js/webshell.js`,
+		`id="robot-account-binding-modal"`,
+	} {
+		if bytes.Contains(desktopPageBody, []byte(marker)) {
+			t.Fatalf("desktop page contains out-of-scope marker %q", marker)
+		}
+	}
+	if !bytes.Contains(desktopPageBody, []byte(`/static/js/desktop-setup.js`)) {
+		t.Fatal("desktop page does not contain desktop setup script")
+	}
 
 	status, body := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/conversations", "", nil)
 	if status != http.StatusUnauthorized {
@@ -135,6 +165,22 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 		status, body := desktopJSONRequest(t, http.MethodGet, ready.URL+path, token, nil)
 		if status != http.StatusOK {
 			t.Fatalf("authenticated GET /%s status = %d, body = %#v", path, status, body)
+		}
+	}
+	for _, request := range []struct {
+		method string
+		path   string
+		token  string
+	}{
+		{http.MethodGet, "api/rbac/users", token},
+		{http.MethodPost, "api/robot/test", token},
+		{http.MethodPost, "api/robot/lark", ""},
+		{http.MethodPost, "api/terminal/run", token},
+		{http.MethodGet, "api/webshell/connections", token},
+		{http.MethodGet, "api/c2/listeners", token},
+	} {
+		if status := desktopStatusRequest(t, request.method, ready.URL+request.path, request.token); status != http.StatusNotFound {
+			t.Fatalf("excluded desktop route %s /%s status = %d, want 404", request.method, request.path, status)
 		}
 	}
 
@@ -492,6 +538,11 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}) *httpt
 			http.Error(response, "invalid request", http.StatusBadRequest)
 			return
 		}
+		if toolName := desktopForbiddenTool(payload); toolName != "" {
+			t.Errorf("desktop fake AI received excluded tool %q", toolName)
+			http.Error(response, "excluded desktop tool", http.StatusInternalServerError)
+			return
+		}
 		if bytes.Contains(requestData, []byte("desktop-auth-failure")) {
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusUnauthorized)
@@ -621,6 +672,40 @@ func desktopPayloadHasTool(payload map[string]interface{}, toolName string) bool
 		}
 	}
 	return false
+}
+
+func desktopForbiddenTool(payload map[string]interface{}) string {
+	tools, _ := payload["tools"].([]interface{})
+	for _, item := range tools {
+		tool, _ := item.(map[string]interface{})
+		function, _ := tool["function"].(map[string]interface{})
+		name, _ := function["name"].(string)
+		lower := strings.ToLower(name)
+		for _, prefix := range []string{"c2_", "manage_webshell_", "robot_", "webshell_"} {
+			if strings.HasPrefix(lower, prefix) {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+func desktopStatusRequest(t *testing.T, method, target, token string) int {
+	t.Helper()
+	request, err := http.NewRequest(method, target, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatalf("create desktop status request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("send desktop status request: %v", err)
+	}
+	defer response.Body.Close()
+	return response.StatusCode
 }
 
 func desktopJSONRequest(t *testing.T, method, target, token string, body interface{}) (int, map[string]interface{}) {

@@ -24,8 +24,10 @@
         })();
     </script>
     <link rel="stylesheet" href="/static/css/style.css?v=20260720-2">
+    {{if not .DesktopMode}}
     <link rel="stylesheet" href="/static/css/c2.css">
     <link rel="stylesheet" href="/static/vendor/xterm.css">
+    {{end}}
     <script src="/static/js/router.js"></script>
 </head>
 <body>
@@ -195,6 +197,7 @@
                                     </div>
                                     <div class="user-menu-divider" role="separator"></div>
                                 </div>
+                                {{if not .DesktopMode}}
                                 <div class="user-menu-item" role="menuitem" tabindex="0" onclick="openRobotAccountBinding()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openRobotAccountBinding();}">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                         <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -202,6 +205,7 @@
                                     </svg>
                                     <span>绑定机器人账号</span>
                                 </div>
+                                {{end}}
                                 <div class="user-menu-item" role="menuitem" tabindex="0" onclick="logout()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();logout();}">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -313,6 +317,7 @@
                             <span data-i18n="nav.workflows">工作流</span>
                         </div>
                     </div>
+                    {{if not .DesktopMode}}
                     <div class="nav-item" data-page="webshell">
                         <div class="nav-item-content" data-title="WebShell管理" onclick="switchPage('webshell')" data-i18n="nav.webshell" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -346,6 +351,7 @@
                             <div class="nav-submenu-item" data-page="c2-profiles" onclick="switchPage('c2-profiles')" data-i18n="nav.c2Profiles">流量伪装</div>
                         </div>
                     </div>
+                    {{end}}
                     <div class="nav-item" data-page="chat-files">
                         <div class="nav-item-content" data-title="文件管理" onclick="switchPage('chat-files')" data-i18n="nav.chatFiles" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -459,6 +465,7 @@
                     <div class="nav-section-label" role="presentation">
                         <span data-i18n="navGroups.administration">平台管理</span>
                     </div>
+                    {{if not .DesktopMode}}
                     <div class="nav-item" data-page="platform-rbac">
                         <div class="nav-item-content" data-title="平台权限" onclick="switchPage('platform-rbac')" data-i18n="nav.platformRbac" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -474,6 +481,7 @@
                             <span data-i18n="nav.platformRbac">平台权限</span>
                         </div>
                     </div>
+                    {{end}}
                     <div class="nav-item" data-page="settings">
                         <div class="nav-item-content" data-title="系统设置" onclick="switchPage('settings')" data-i18n="nav.settings" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2705,6 +2713,7 @@
                     </div>
                 </div>
 
+                {{if not .DesktopMode}}
                 <!-- WebShell 管理页面 -->
                 <div id="page-webshell" class="page">
                     <div class="page-header">
@@ -2741,6 +2750,7 @@
                         </div>
                     </div>
                 </div>
+                {{end}}
 
                 <!-- 对话附件 / 文件管理 -->
                 <div id="page-chat-files" class="page">
@@ -2844,6 +2854,7 @@
                     </div>
                 </div>
 
+                {{if not .DesktopMode}}
                 <!-- C2 监听器管理页面 -->
                 <div id="page-c2-listeners" class="page">
                     <div class="page-header">
@@ -3127,6 +3138,7 @@
                         <div id="c2-modal-content"></div>
                     </div>
                 </div>
+                {{end}}
 
                 <!-- 工作流页面 -->
                 <div id="page-workflows" class="page">
@@ -3467,6 +3479,7 @@
                                 <div class="settings-nav-item" data-section="knowledge" onclick="switchSettingsSection('knowledge')">
                                     <span data-i18n="settings.nav.knowledge">知识库</span>
                                 </div>
+                                {{if not .DesktopMode}}
                                 <div class="settings-nav-item" data-section="c2" onclick="switchSettingsSection('c2')">
                                     <span data-i18n="settings.nav.c2">C2</span>
                                 </div>
@@ -3476,6 +3489,7 @@
                                 <div class="settings-nav-item" data-section="terminal" onclick="switchSettingsSection('terminal')">
                                     <span data-i18n="settings.nav.terminal">终端</span>
                                 </div>
+                                {{end}}
                                 <div class="settings-nav-item" data-section="security" onclick="switchSettingsSection('security')">
                                     <span data-i18n="settings.nav.security">安全设置</span>
                                 </div>
@@ -4193,6 +4207,7 @@
                                 </div>
                             </div>
 
+                            {{if not .DesktopMode}}
                             <!-- C2 总开关 -->
                             <div id="settings-section-c2" class="settings-section-content">
                                 <div class="settings-section-header">
@@ -4791,6 +4806,7 @@
                                     </div>
                                 </div>
                             </div>
+                            {{end}}
 
                             <!-- 日志审计 -->
                             <div id="settings-section-audit" class="settings-section-content">
@@ -4934,6 +4950,7 @@
                     </div>
                 </div>
 
+                {{if not .DesktopMode}}
                 <!-- 平台权限页面 -->
                 <div id="page-platform-rbac" class="page platform-rbac-page">
                                 <div class="page-header">
@@ -5178,6 +5195,7 @@
             </div>
         </div>
     </div>
+    {{end}}
 
 
     <!-- MCP调用详情模态框 -->
@@ -6271,6 +6289,7 @@
         </div>
     </div>
 
+    {{if not .DesktopMode}}
     <!-- WebShell 添加连接模态框 -->
     <div id="webshell-modal" class="modal">
         <div class="modal-content" style="max-width: 560px;">
@@ -6346,6 +6365,7 @@
             </div>
         </div>
     </div>
+    {{end}}
 
     <!-- 角色选择弹窗 -->
     <div id="role-select-modal" class="modal">
@@ -6455,6 +6475,7 @@
         </div>
     </div>
 
+    {{if not .DesktopMode}}
     <div id="rbac-user-modal" class="modal">
         <div class="modal-content" style="max-width: 640px;">
             <div class="modal-header">
@@ -6541,6 +6562,7 @@
             </div>
         </div>
     </div>
+    {{end}}
 
     <!-- 项目管理弹窗（挂 body 下，避免被 .page overflow 裁剪） -->
     <div id="project-modal" class="modal-overlay projects-modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="project-modal-title" onclick="if(event.target===this)closeProjectModal()">
@@ -6676,6 +6698,7 @@
         </div>
     </div>
 
+    {{if not .DesktopMode}}
     <div id="robot-account-binding-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="robot-account-binding-title">
         <div class="modal-content robot-account-binding-content">
             <div class="modal-header robot-binding-header">
@@ -6749,6 +6772,7 @@
             </div>
         </div>
     </div>
+    {{end}}
 
     <script src="/static/vendor/i18next.min.js"></script>
     <script src="/static/js/i18n.js"></script>
@@ -6769,23 +6793,29 @@
     <script src="/static/js/desktop-setup.js"></script>
     <script src="/static/js/audit-datetime-picker.js"></script>
     <script src="/static/js/audit.js"></script>
+    {{if not .DesktopMode}}
     <script src="/static/js/wechat-robot.js"></script>
     <script src="/static/vendor/xterm.js"></script>
     <script src="/static/vendor/xterm-addon-fit.js"></script>
     <script src="/static/js/terminal.js"></script>
+    {{end}}
     <script src="/static/js/knowledge.js"></script>
     <script src="/static/js/skills.js"></script>
     <script src="/static/js/fact-graph.js"></script>
     <script src="/static/js/projects.js?v=20260717-1"></script>
     <script src="/static/js/vulnerability.js?v=14"></script>
+    {{if not .DesktopMode}}
     <script src="/static/js/webshell.js"></script>
+    {{end}}
     <script src="/static/js/chat-files.js"></script>
     <script src="/static/js/tasks.js"></script>
     <script src="/static/js/workflow-package-client.js"></script>
     <script src="/static/js/workflows.js"></script>
     <script src="/static/js/roles.js"></script>
+    {{if not .DesktopMode}}
     <script src="/static/js/rbac.js"></script>
     <script src="/static/js/c2.js"></script>
+    {{end}}
     <script src="/static/js/rbac-guards.js?v=20260717-1"></script>
 </body>
 </html>

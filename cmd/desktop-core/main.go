@@ -204,6 +204,7 @@ func runDesktopCore(parent context.Context, stdin io.Reader, stdout io.Writer, o
 		log,
 		paths.ConfigFile,
 		app.WithWebFS(webassets.FS()),
+		app.WithDesktopMode(),
 		app.WithInitialAdminPasswordProvider(passwordProvider),
 		app.WithDesktopCredentialManager(credentialManager),
 	)

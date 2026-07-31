@@ -15,6 +15,16 @@ type appOptions struct {
 	webFS                        fs.FS
 	initialAdminPasswordProvider func() (string, error)
 	desktopCredentialManager     *desktopcredentials.Manager
+	desktopMode                  bool
+}
+
+// WithDesktopMode limits routes, background services, and tools to the
+// explicitly supported desktop-client feature set.
+func WithDesktopMode() Option {
+	return func(options *appOptions) error {
+		options.desktopMode = true
+		return nil
+	}
 }
 
 // WithDesktopCredentialManager enables keyring-backed secret persistence and
