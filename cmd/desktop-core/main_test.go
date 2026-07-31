@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,8 +26,9 @@ import (
 
 func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	root := t.TempDir()
-	upstream := newDesktopFakeAI(t)
-	defer upstream.Close()
+	cancelRequestStarted := make(chan struct{}, 1)
+	upstream := newDesktopFakeAI(t, cancelRequestStarted)
+	t.Cleanup(upstream.Close)
 	resourceDir := writeTestResources(t, root, "test-version")
 	credentialStore := newRecordingCredentialStore()
 	options := runOptions{
@@ -245,6 +247,183 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	if bytes.Contains(persistedFailure, []byte("stream-secret")) || bytes.Contains(persistedFailure, []byte("upstream-secret-marker")) {
 		t.Fatalf("failed desktop conversation persisted upstream data: %s", persistedFailure)
 	}
+	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/conversations", token, map[string]string{
+		"title": "Desktop cancellation",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create cancellation conversation status = %d, body = %#v", status, body)
+	}
+	cancelConversationID, _ := body["id"].(string)
+	if cancelConversationID == "" {
+		t.Fatalf("create cancellation conversation did not return an id: %#v", body)
+	}
+	type sseResult struct {
+		events []map[string]interface{}
+		err    error
+	}
+	cancelStreamResult := make(chan sseResult, 1)
+	go func() {
+		events, err := desktopSSERequestResult(ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
+			"conversationId": cancelConversationID,
+			"message":        "desktop-cancel-running-agent",
+			"finalization": map[string]interface{}{
+				"requireExecutionEvidence": false,
+			},
+		})
+		cancelStreamResult <- sseResult{events: events, err: err}
+	}()
+	select {
+	case <-cancelRequestStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop Agent did not reach the cancellable upstream request")
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/agent-loop/tasks", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("active desktop tasks status = %d, body = %#v", status, body)
+	}
+	if taskStatus, found := desktopTaskStatus(body, cancelConversationID); !found || taskStatus != "running" {
+		t.Fatalf("active desktop task status = %q, found = %v, body = %#v", taskStatus, found, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/agent-loop/cancel", token, map[string]string{
+		"conversationId": cancelConversationID,
+	})
+	if status != http.StatusOK || body["status"] != "cancelling" {
+		t.Fatalf("cancel desktop Agent status = %d, body = %#v", status, body)
+	}
+	var cancelledResult sseResult
+	select {
+	case cancelledResult = <-cancelStreamResult:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled desktop Agent stream did not finish")
+	}
+	if cancelledResult.err != nil {
+		t.Fatalf("cancelled desktop Agent stream: %v", cancelledResult.err)
+	}
+	foundCancelled := false
+	foundCancelDone := false
+	for _, event := range cancelledResult.events {
+		switch event["type"] {
+		case "cancelled":
+			foundCancelled = true
+		case "done":
+			foundCancelDone = true
+		case "response":
+			t.Fatalf("cancelled desktop Agent returned a success response: %#v", cancelledResult.events)
+		}
+	}
+	if !foundCancelled || !foundCancelDone {
+		t.Fatalf("cancelled desktop Agent events = %#v", cancelledResult.events)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/agent-loop/tasks", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("post-cancel active desktop tasks status = %d, body = %#v", status, body)
+	}
+	if taskStatus, found := desktopTaskStatus(body, cancelConversationID); found {
+		t.Fatalf("cancelled desktop task remained active with status %q: %#v", taskStatus, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/agent-loop/tasks/completed", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("completed desktop tasks status = %d, body = %#v", status, body)
+	}
+	if taskStatus, found := desktopTaskStatus(body, cancelConversationID); !found || taskStatus != "cancelled" {
+		t.Fatalf("completed desktop task status = %q, found = %v, body = %#v", taskStatus, found, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/conversations", token, map[string]string{
+		"title": "Desktop HITL",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create HITL conversation status = %d, body = %#v", status, body)
+	}
+	hitlConversationID, _ := body["id"].(string)
+	if hitlConversationID == "" {
+		t.Fatalf("create HITL conversation did not return an id: %#v", body)
+	}
+	hitlStreamResult := make(chan sseResult, 1)
+	go func() {
+		events, err := desktopSSERequestResult(ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
+			"conversationId": hitlConversationID,
+			"message":        "desktop-hitl-approval",
+			"hitl": map[string]interface{}{
+				"enabled":        true,
+				"mode":           "approval",
+				"reviewer":       "human",
+				"sensitiveTools": []string{},
+				"timeoutSeconds": 30,
+			},
+			"finalization": map[string]interface{}{
+				"requireExecutionEvidence": false,
+			},
+		})
+		hitlStreamResult <- sseResult{events: events, err: err}
+	}()
+	interruptID := ""
+	pendingDeadline := time.Now().Add(5 * time.Second)
+	for interruptID == "" && time.Now().Before(pendingDeadline) {
+		status, pending := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/hitl/pending", token, nil)
+		if status != http.StatusOK {
+			t.Fatalf("desktop HITL pending status = %d, body = %#v", status, pending)
+		}
+		interruptID = desktopHITLInterruptID(pending, hitlConversationID)
+		if interruptID == "" {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	if interruptID == "" {
+		select {
+		case earlyResult := <-hitlStreamResult:
+			logData, _ := os.ReadFile(filepath.Join(options.Roots.LogDir, "cyberstrike-ai.log"))
+			t.Fatalf("desktop HITL interrupt did not become pending: err = %v, events = %#v, log = %s", earlyResult.err, earlyResult.events, logData)
+		default:
+			t.Fatal("desktop HITL interrupt did not become pending")
+		}
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/hitl/decision", token, map[string]string{
+		"interruptId": interruptID,
+		"decision":    "reject",
+		"comment":     "desktop rejection check",
+	})
+	if status != http.StatusOK || body["ok"] != true {
+		t.Fatalf("desktop HITL rejection status = %d, body = %#v", status, body)
+	}
+	var hitlResult sseResult
+	select {
+	case hitlResult = <-hitlStreamResult:
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop HITL stream did not resume after rejection")
+	}
+	if hitlResult.err != nil {
+		t.Fatalf("desktop HITL stream: %v", hitlResult.err)
+	}
+	foundHITLInterrupt := false
+	foundHITLRejected := false
+	foundHITLResponse := false
+	foundHITLDone := false
+	for _, event := range hitlResult.events {
+		switch event["type"] {
+		case "hitl_interrupt":
+			foundHITLInterrupt = true
+		case "hitl_rejected":
+			foundHITLRejected = true
+		case "response":
+			foundHITLResponse = true
+		case "done":
+			foundHITLDone = true
+		}
+	}
+	if !foundHITLInterrupt || !foundHITLRejected || !foundHITLResponse || !foundHITLDone {
+		t.Fatalf("desktop HITL events = %#v", hitlResult.events)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/hitl/pending", token, nil)
+	if status != http.StatusOK || desktopHITLInterruptID(body, hitlConversationID) != "" {
+		t.Fatalf("resolved desktop HITL remained pending: status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/agent-loop/tasks", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("post-HITL active desktop tasks status = %d, body = %#v", status, body)
+	}
+	if taskStatus, found := desktopTaskStatus(body, hitlConversationID); found {
+		t.Fatalf("resolved desktop HITL task remained active with status %q: %#v", taskStatus, body)
+	}
 
 	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/logout", token, nil)
 	if status != http.StatusOK {
@@ -288,7 +467,7 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	assertSecretNotPersisted(t, root, "desktop-secret")
 }
 
-func newDesktopFakeAI(t *testing.T) *httptest.Server {
+func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/v1/chat/completions" {
@@ -319,6 +498,28 @@ func newDesktopFakeAI(t *testing.T) *httptest.Server {
 			_, _ = io.WriteString(response, `{"error":{"message":"upstream-secret-marker"}}`)
 			return
 		}
+		if bytes.Contains(requestData, []byte("desktop-cancel-running-agent")) {
+			select {
+			case cancelRequestStarted <- struct{}{}:
+			default:
+			}
+			<-request.Context().Done()
+			return
+		}
+		if bytes.Contains(requestData, []byte("desktop-hitl-approval")) &&
+			!bytes.Contains(requestData, []byte("[HITL Reject]")) &&
+			desktopPayloadHasTool(payload, "query_assets") {
+			if streaming, _ := payload["stream"].(bool); streaming {
+				response.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop-hitl\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call-desktop-hitl\",\"type\":\"function\",\"function\":{\"name\":\"query_assets\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n")
+				_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop-hitl\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n")
+				_, _ = io.WriteString(response, "data: [DONE]\n\n")
+				return
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `{"id":"chatcmpl-desktop-hitl","object":"chat.completion","model":"desktop-test-model","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-desktop-hitl","type":"function","function":{"name":"query_assets","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
+			return
+		}
 		if streaming, _ := payload["stream"].(bool); streaming {
 			response.Header().Set("Content-Type", "text/event-stream")
 			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
@@ -334,27 +535,35 @@ func newDesktopFakeAI(t *testing.T) *httptest.Server {
 
 func desktopSSERequest(t *testing.T, target, token string, body interface{}) []map[string]interface{} {
 	t.Helper()
+	events, err := desktopSSERequestResult(target, token, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
+
+func desktopSSERequestResult(target, token string, body interface{}) ([]map[string]interface{}, error) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		t.Fatalf("encode desktop SSE request: %v", err)
+		return nil, fmt.Errorf("encode desktop SSE request: %w", err)
 	}
 	request, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(encoded))
 	if err != nil {
-		t.Fatalf("create desktop SSE request: %v", err)
+		return nil, fmt.Errorf("create desktop SSE request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		t.Fatalf("send desktop SSE request: %v", err)
+		return nil, fmt.Errorf("send desktop SSE request: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(response.Body)
-		t.Fatalf("desktop SSE status = %d: %s", response.StatusCode, data)
+		return nil, fmt.Errorf("desktop SSE status = %d: %s", response.StatusCode, data)
 	}
 	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
-		t.Fatalf("desktop SSE content type = %q", response.Header.Get("Content-Type"))
+		return nil, fmt.Errorf("desktop SSE content type = %q", response.Header.Get("Content-Type"))
 	}
 	events := make([]map[string]interface{}, 0, 8)
 	scanner := bufio.NewScanner(response.Body)
@@ -365,14 +574,53 @@ func desktopSSERequest(t *testing.T, target, token string, body interface{}) []m
 		}
 		var event map[string]interface{}
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
-			t.Fatalf("decode desktop SSE event: %v", err)
+			return nil, fmt.Errorf("decode desktop SSE event: %w", err)
 		}
 		events = append(events, event)
 	}
 	if err := scanner.Err(); err != nil {
-		t.Fatalf("read desktop SSE response: %v", err)
+		return nil, fmt.Errorf("read desktop SSE response: %w", err)
 	}
-	return events
+	return events, nil
+}
+
+func desktopTaskStatus(body map[string]interface{}, conversationID string) (string, bool) {
+	tasks, _ := body["tasks"].([]interface{})
+	for _, item := range tasks {
+		task, _ := item.(map[string]interface{})
+		if task["conversationId"] == conversationID {
+			status, _ := task["status"].(string)
+			return status, true
+		}
+	}
+	return "", false
+}
+
+func desktopHITLInterruptID(body map[string]interface{}, conversationID string) string {
+	items, _ := body["items"].([]interface{})
+	for _, item := range items {
+		interrupt, _ := item.(map[string]interface{})
+		if interrupt["conversationId"] == conversationID {
+			interruptID, _ := interrupt["interruptId"].(string)
+			if interruptID == "" {
+				interruptID, _ = interrupt["id"].(string)
+			}
+			return interruptID
+		}
+	}
+	return ""
+}
+
+func desktopPayloadHasTool(payload map[string]interface{}, toolName string) bool {
+	tools, _ := payload["tools"].([]interface{})
+	for _, item := range tools {
+		tool, _ := item.(map[string]interface{})
+		function, _ := tool["function"].(map[string]interface{})
+		if function["name"] == toolName {
+			return true
+		}
+	}
+	return false
 }
 
 func desktopJSONRequest(t *testing.T, method, target, token string, body interface{}) (int, map[string]interface{}) {
