@@ -15,6 +15,7 @@
   "bundle": {
     "active": false,
     "icon": [
+      "../../web/static/favicon.ico",
       "../../images/404StarLinkLogo.png"
     ],
     "externalBin": [
