@@ -124,10 +124,7 @@ pub fn run() {
 }
 
 #[tauri::command]
-fn submit_bootstrap_password(
-    window: WebviewWindow,
-    mut password: String,
-) -> Result<(), String> {
+fn submit_bootstrap_password(window: WebviewWindow, mut password: String) -> Result<(), String> {
     if window.label() != "bootstrap" {
         clear_string(&mut password);
         return Err("bootstrap command is not available to this window".to_string());
@@ -217,7 +214,11 @@ fn start_sidecar(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     if let Ok(mut child) = state.child.lock() {
                         child.take();
                     }
-                    let phase = state.phase.lock().map(|phase| *phase).unwrap_or(StartupPhase::Failed);
+                    let phase = state
+                        .phase
+                        .lock()
+                        .map(|phase| *phase)
+                        .unwrap_or(StartupPhase::Failed);
                     if payload.code == Some(0) && phase == StartupPhase::ShuttingDown {
                         task_handle.exit(0);
                     } else {
@@ -358,19 +359,23 @@ fn show_bootstrap_window(handle: &AppHandle) -> Result<(), String> {
             .map_err(|error| format!("focus bootstrap window: {error}"))?;
         return Ok(());
     }
-    WebviewWindowBuilder::new(handle, "bootstrap", WebviewUrl::App("bootstrap.html".into()))
-        .title("Initialize CyberStrikeAI")
-        .inner_size(480.0, 500.0)
-        .resizable(false)
-        .maximizable(false)
-        .minimizable(false)
-        .closable(false)
-        .center()
-        .on_navigation(is_app_asset_url)
-        .on_new_window(|_url, _features| NewWindowResponse::Deny)
-        .on_download(|_webview, event| !matches!(event, DownloadEvent::Requested { .. }))
-        .build()
-        .map_err(|error| format!("create bootstrap window: {error}"))?;
+    WebviewWindowBuilder::new(
+        handle,
+        "bootstrap",
+        WebviewUrl::App("bootstrap.html".into()),
+    )
+    .title("Initialize CyberStrikeAI")
+    .inner_size(480.0, 500.0)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .closable(false)
+    .center()
+    .on_navigation(is_app_asset_url)
+    .on_new_window(|_url, _features| NewWindowResponse::Deny)
+    .on_download(|_webview, event| !matches!(event, DownloadEvent::Requested { .. }))
+    .build()
+    .map_err(|error| format!("create bootstrap window: {error}"))?;
     Ok(())
 }
 
@@ -409,7 +414,10 @@ fn focus_active_window(handle: &AppHandle) {
         .lock()
         .map(|phase| *phase)
         .unwrap_or(StartupPhase::Failed);
-    let label = if matches!(phase, StartupPhase::BootstrapRequired | StartupPhase::Bootstrapping) {
+    let label = if matches!(
+        phase,
+        StartupPhase::BootstrapRequired | StartupPhase::Bootstrapping
+    ) {
         "bootstrap"
     } else {
         "main"
