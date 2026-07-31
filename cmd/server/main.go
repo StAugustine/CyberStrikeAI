@@ -110,19 +110,23 @@ func main() {
 	// 监听系统信号
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 
 	// 创建应用
 	application, err := app.New(cfg, log, cp)
 	if err != nil {
 		log.Fatal("应用初始化失败", "error", err)
 	}
+	defer application.Shutdown()
 
 	// 在后台监听信号
 	go func() {
-		sig := <-sigCh
-		log.Info("收到系统信号，开始优雅关闭: " + sig.String())
-		application.Shutdown()
-		cancel()
+		select {
+		case sig := <-sigCh:
+			log.Info("收到系统信号，开始优雅关闭: " + sig.String())
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
 
 	// 启动服务器（传入 context 以支持优雅关闭）
@@ -131,6 +135,7 @@ func main() {
 		if ctx.Err() != nil {
 			log.Info("服务器已优雅关闭")
 		} else {
+			application.Shutdown()
 			log.Fatal("服务器启动失败", "error", err)
 		}
 	}

@@ -1,6 +1,6 @@
 # CyberStrikeAI 桌面客户端二次开发计划
 
-> 状态：**执行中；D0 已完成，D1 本机验证通过、跨平台矩阵待运行**
+> 状态：**执行中；D0、D1 已完成，D2 已启动**
 > 计划版本：1.3
 > 规划日期：2026-07-31
 > 开发分支：`codex/desktop-client`
@@ -340,7 +340,7 @@ CyberStrikeAI/
 
 完成门禁：三种目标均通过协议和生命周期验证；任何一项失败都必须先形成 ADR，不能直接进入全量集成。若 Tauri 路线无法满足门禁，回退候选是 Electron + Go sidecar，且必须重新审查安全与包体成本。
 
-执行状态：macOS arm64 本机验证已通过，三目标 CI 已配置；Windows x64 与 macOS x64 尚未实际运行，因此 D1 总门禁仍未完成。证据见 [D1 技术验证报告](desktop-client-d1-poc.md)。
+执行状态：已完成。Windows x64、macOS arm64、macOS x64 的构建、协议、单实例与生命周期矩阵全部通过，证据见 [D1 技术验证报告](desktop-client-d1-poc.md)和 [GitHub Actions 运行记录](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30654959205)。
 
 ### D2：Go core 可嵌入/可托管改造
 
@@ -354,6 +354,8 @@ CyberStrikeAI/
 - 为桌面握手定义带协议版本的最小 JSON schema；解析未知字段保持兼容。
 
 完成门禁：`cmd/server` 回归通过；core 可以在测试中使用端口 0 启动、接受 SSE/WS、被取消并无资源泄漏。
+
+执行状态：进行中。首个切片已完成调用方 `net.Listener` 注入、`live/ready` 健康检查、CLI 信号关闭顺序和幂等资源关闭，并通过 Go 全量回归与 `internal/app`、`internal/mcp` 竞态测试；Web 资源嵌入、版本化握手及 SSE/WS 退出门禁仍待完成。
 
 ### D3：路径、配置、首启和桌面壳集成
 

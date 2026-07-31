@@ -69,10 +69,11 @@ func (c *failingExternalMCPClient) GetStatus() string { return "connected" }
 
 func TestExternalMCPManager_CallToolBoundedWaitThenContinue(t *testing.T) {
 	manager := NewExternalMCPManager(zap.NewNop())
+	defer manager.StopAll()
 	manager.ConfigureToolWaitTimeoutSeconds(1)
 	manager.toolWaitTimeout = 10 * time.Millisecond
 	client := newBlockingExternalMCPClient("slow result ready")
-	manager.clients["lab"] = client
+	installExternalMCPTestClient(manager, "lab", client)
 
 	callCtx, callCancel := context.WithCancel(context.Background())
 	result, executionID, err := manager.CallTool(callCtx, "lab::slow_tool", map[string]interface{}{"target": "example"})
@@ -115,9 +116,10 @@ func TestExternalMCPManager_CallToolBoundedWaitThenContinue(t *testing.T) {
 
 func TestExecutionControlWaitToolReturnsCompletedResult(t *testing.T) {
 	manager := NewExternalMCPManager(zap.NewNop())
+	defer manager.StopAll()
 	manager.toolWaitTimeout = 10 * time.Millisecond
 	client := newBlockingExternalMCPClient("control wait result")
-	manager.clients["lab"] = client
+	installExternalMCPTestClient(manager, "lab", client)
 
 	result, executionID, err := manager.CallTool(context.Background(), "lab::slow_tool", nil)
 	if err != nil {
@@ -149,6 +151,7 @@ func TestExecutionControlWaitToolReturnsCompletedResult(t *testing.T) {
 
 func TestExternalMCPManager_PerServerConcurrencyLimitsWorkers(t *testing.T) {
 	manager := NewExternalMCPManager(zap.NewNop())
+	defer manager.StopAll()
 	manager.toolWaitTimeout = 10 * time.Millisecond
 	manager.ConfigureResilience(ExternalMCPResilienceConfig{
 		MaxConcurrentPerServer:  1,
@@ -157,7 +160,7 @@ func TestExternalMCPManager_PerServerConcurrencyLimitsWorkers(t *testing.T) {
 		CircuitCooldown:         time.Second,
 	})
 	client := newBlockingExternalMCPClient("ok")
-	manager.clients["lab"] = client
+	installExternalMCPTestClient(manager, "lab", client)
 
 	done1 := make(chan struct{})
 	go func() {
@@ -211,13 +214,14 @@ func TestExternalMCPManager_PerServerConcurrencyLimitsWorkers(t *testing.T) {
 
 func TestExternalMCPManager_CircuitBreakerOpensAfterFailures(t *testing.T) {
 	manager := NewExternalMCPManager(zap.NewNop())
+	defer manager.StopAll()
 	manager.ConfigureResilience(ExternalMCPResilienceConfig{
 		MaxConcurrentPerServer:  2,
 		MaxConcurrentTotal:      4,
 		CircuitFailureThreshold: 1,
 		CircuitCooldown:         time.Minute,
 	})
-	manager.clients["lab"] = &failingExternalMCPClient{}
+	installExternalMCPTestClient(manager, "lab", &failingExternalMCPClient{})
 
 	_, _, err := manager.CallTool(context.Background(), "lab::fail_tool", nil)
 	if err == nil || !strings.Contains(err.Error(), "boom") {
@@ -227,4 +231,10 @@ func TestExternalMCPManager_CircuitBreakerOpensAfterFailures(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "熔断") {
 		t.Fatalf("expected circuit breaker rejection, got %v", err)
 	}
+}
+
+func installExternalMCPTestClient(manager *ExternalMCPManager, name string, client ExternalMCPClient) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	manager.clients[name] = client
 }

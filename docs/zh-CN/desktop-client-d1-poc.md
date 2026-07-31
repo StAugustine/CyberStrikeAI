@@ -2,8 +2,8 @@
 
 > 验证日期：2026-07-31
 > 分支：`codex/desktop-client`
-> 状态：macOS arm64 本机通过；Windows x64、macOS x64 待 CI 实际运行
-> 结论：Tauri v2 + Go sidecar 路线在本机证据上成立，但 D1 总门禁尚未解除
+> 状态：Windows x64、macOS arm64、macOS x64 三目标 CI 全部通过
+> 结论：Tauri v2 + Go sidecar 路线通过 D1 协议与生命周期门禁，可以进入 D2
 
 ## 1. 验证范围
 
@@ -70,6 +70,8 @@ cd desktop && npm run poc:smoke:failures
 | macOS event loop 未保留请求的非零退出码 | 壳层原子记录首个失败码，Tauri 清理后显式返回 |
 | 关闭期间 sidecar 非零退出曾被当作成功 | `Terminated` 始终检查 sidecar 退出码 |
 | 仅验证 endpoint、未证明 WebView JS 协议 | 页面把真实 WebView 结果回报 sidecar，再由 stdout 回报壳层作为 smoke 门禁 |
+| CI 在生成 sidecar 前运行 `cargo test` | 在 Rust 测试前按矩阵 target 构建 Go sidecar |
+| Windows 资源编译要求 `.ico` | 复用 `web/static/favicon.ico` 并将其加入 Tauri 图标配置 |
 
 ## 5. 三平台 CI 矩阵
 
@@ -77,21 +79,21 @@ cd desktop && npm run poc:smoke:failures
 
 | 目标 | GitHub runner | 当前状态 |
 | --- | --- | --- |
-| Windows x64 | `windows-2025` | 工作流已配置，尚未实际运行 |
-| macOS arm64 | `macos-15` | 工作流已配置；另有本机通过证据 |
-| macOS x64 | `macos-15-intel` | 工作流已配置，尚未实际运行 |
+| Windows x64 | `windows-2025` | [通过](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30654959205/job/91236982659) |
+| macOS arm64 | `macos-15` | [通过](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30654959205/job/91236982594)；另有本机通过证据 |
+| macOS x64 | `macos-15-intel` | [通过](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30654959205/job/91236982586) |
 
 每个作业都执行 Go 测试、Rust 格式与单测、无安装包 Tauri 构建、正常 lifecycle、单实例、崩溃和强制关闭 smoke。runner 标签依据 GitHub 当前官方 runner 列表选择；工作流只授予 `contents: read`。
 
-## 6. 剩余门禁
+## 6. 门禁结论
 
-D1 目前不能标记完成，原因不是已知代码失败，而是两个一级目标尚无真实运行证据：
+提交 `e8e21bc` 对应的 [三目标工作流](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30654959205) 已全部通过：
 
-- 需要在 Windows x64 上验证 WebView2 中的 REST/EventSource/WebSocket、下载拦截、单实例和生命周期。
-- 需要在 macOS x64 上运行同一矩阵，不能用 arm64 本机结果或交叉编译替代。
-- 本机缺少完整 Xcode；该限制不阻塞本次无安装包 PoC，但阻塞后续签名、公证和正式 DMG 验收。
+- Windows x64 在 WebView2 中通过 REST、EventSource/SSE、WebSocket、下载拦截、单实例、崩溃和强制关闭验证。
+- macOS arm64 与 macOS x64 在 WKWebView 中通过同一组构建和运行验证。
+- 三个作业均使用固定 Rust/Tauri 版本、锁定依赖和目标平台原生 runner。
 
-在三目标工作流全绿前，不进入 D2 的共享 `internal/app`/`cmd/server` 改造。如果某目标失败，先记录平台差异和 ADR，再决定修正 Tauri 路线或触发计划中的 Electron 回退评审。
+D1 标记完成，不触发 Electron 回退评审，可以进入 D2 的共享 `internal/app`/`cmd/server` 改造。本机缺少完整 Xcode 仍会阻塞后续签名、公证和正式 DMG 验收，但不影响 D1 结论。
 
 ## 7. 参考
 
