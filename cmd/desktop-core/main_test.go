@@ -41,6 +41,9 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	t.Cleanup(upstream.Close)
 	resourceDir := writeTestResources(t, root, "test-version")
 	appendTestResourceConfig(t, resourceDir, "test-version", `multi_agent:
+  eino_middleware:
+    run_retry_max_attempts: 1
+    run_retry_max_backoff_sec: 1
   sub_agents:
     - id: desktop-specialist
       name: Desktop Specialist
@@ -461,6 +464,72 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	if bytes.Contains(persistedFailure, []byte("stream-secret")) || bytes.Contains(persistedFailure, []byte("upstream-secret-marker")) {
 		t.Fatalf("failed desktop conversation persisted upstream data: %s", persistedFailure)
 	}
+	for _, failure := range []struct {
+		message     string
+		wantMessage string
+	}{
+		{message: "desktop-rate-limit", wantMessage: "模型服务限流或额度不足，请稍后重试。"},
+		{message: "desktop-server-failure", wantMessage: "模型服务暂时不可用，请稍后重试。"},
+		{message: "desktop-stream-interruption", wantMessage: "模型服务连接中断，请检查网络或服务地址。"},
+	} {
+		failureEvents := desktopSSERequest(t, ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
+			"message": failure.message,
+			"finalization": map[string]interface{}{
+				"requireExecutionEvidence": false,
+			},
+		})
+		failureConversationID := ""
+		foundSafeError := false
+		foundDone := false
+		for _, event := range failureEvents {
+			switch event["type"] {
+			case "conversation":
+				data, _ := event["data"].(map[string]interface{})
+				failureConversationID, _ = data["conversationId"].(string)
+			case "error":
+				foundSafeError = event["message"] == failure.wantMessage
+			case "done":
+				foundDone = true
+			case "response":
+				t.Fatalf("%s desktop SSE returned a success response: %#v", failure.message, failureEvents)
+			}
+		}
+		if failureConversationID == "" || !foundSafeError || !foundDone || !desktopSSEHasEvent(failureEvents, "eino_run_retry") {
+			t.Fatalf("%s desktop SSE events = %#v", failure.message, failureEvents)
+		}
+		failureData, err := json.Marshal(failureEvents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(failureData, []byte("stream-secret")) || bytes.Contains(failureData, []byte("upstream-secret-marker")) {
+			t.Fatalf("%s desktop SSE exposed upstream data: %s", failure.message, failureData)
+		}
+		status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/conversations/"+failureConversationID, token, nil)
+		if status != http.StatusOK {
+			t.Fatalf("%s persisted conversation status = %d, body = %#v", failure.message, status, body)
+		}
+		persistedFailure, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(persistedFailure, []byte(failure.wantMessage)) || bytes.Contains(persistedFailure, []byte("stream-secret")) || bytes.Contains(persistedFailure, []byte("upstream-secret-marker")) {
+			t.Fatalf("%s persisted conversation was not safely redacted: %s", failure.message, persistedFailure)
+		}
+		status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/agent-loop/tasks", token, nil)
+		if status != http.StatusOK {
+			t.Fatalf("%s active task status = %d, body = %#v", failure.message, status, body)
+		}
+		if taskStatus, found := desktopTaskStatus(body, failureConversationID); found {
+			t.Fatalf("%s task remained active with status %q: %#v", failure.message, taskStatus, body)
+		}
+		status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/agent-loop/tasks/completed", token, nil)
+		if status != http.StatusOK {
+			t.Fatalf("%s completed task status = %d, body = %#v", failure.message, status, body)
+		}
+		if taskStatus, found := desktopTaskStatus(body, failureConversationID); !found || taskStatus != "failed" {
+			t.Fatalf("%s completed task status = %q, found = %v, body = %#v", failure.message, taskStatus, found, body)
+		}
+	}
 	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/conversations", token, map[string]string{
 		"title": "Desktop cancellation",
 	})
@@ -775,13 +844,32 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveRe
 			http.Error(response, "excluded desktop tool", http.StatusInternalServerError)
 			return
 		}
+		streaming, _ := payload["stream"].(bool)
 		if bytes.Contains(requestData, []byte("desktop-auth-failure")) {
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusUnauthorized)
 			_, _ = io.WriteString(response, `{"error":{"message":"upstream-secret-marker"}}`)
 			return
 		}
-		if streaming, _ := payload["stream"].(bool); bytes.Contains(requestData, []byte("desktop-live-sse")) && streaming {
+		if streaming && bytes.Contains(requestData, []byte("desktop-rate-limit")) {
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(response, `{"error":{"message":"upstream-secret-marker","type":"rate_limit_error"}}`)
+			return
+		}
+		if streaming && bytes.Contains(requestData, []byte("desktop-server-failure")) {
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(response, `{"error":{"message":"upstream-secret-marker","type":"server_error"}}`)
+			return
+		}
+		if streaming && bytes.Contains(requestData, []byte("desktop-stream-interruption")) {
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop-interrupted\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
+			_, _ = io.WriteString(response, "data: {\"id\":\n\n")
+			return
+		}
+		if bytes.Contains(requestData, []byte("desktop-live-sse")) && streaming {
 			response.Header().Set("Content-Type", "text/event-stream")
 			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop-live\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
 			if flusher, ok := response.(http.Flusher); ok {
@@ -829,7 +917,7 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveRe
 			desktopWriteToolCallResponse(response, payload, "call-desktop-hitl", "query_assets", `{}`)
 			return
 		}
-		if streaming, _ := payload["stream"].(bool); streaming {
+		if streaming {
 			response.Header().Set("Content-Type", "text/event-stream")
 			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
 			_, _ = io.WriteString(response, "data: {\"id\":\"chatcmpl-desktop\",\"object\":\"chat.completion.chunk\",\"model\":\"desktop-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"desktop streamed reply\"},\"finish_reason\":null}]}\n\n")
