@@ -22,6 +22,10 @@ dist/
 build/
 coverage.out
 coverage.html
+node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+desktop/src-tauri/gen/
 
 # Logs and temporary files
 *.log

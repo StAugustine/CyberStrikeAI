@@ -1,0 +1,24 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "CyberStrikeAI Desktop PoC",
+  "version": "0.1.0",
+  "identifier": "com.cyberstrikeai.desktop.poc",
+  "build": {
+    "frontendDist": "../loading"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../../images/404StarLinkLogo.png"
+    ],
+    "externalBin": [
+      "binaries/cyberstrike-go-poc"
+    ]
+  }
+}
