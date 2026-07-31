@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"cyberstrike-ai/internal/desktopprotocol"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -116,13 +118,13 @@ func startTestSidecar(t *testing.T) (string, func(), <-chan error) {
 		})
 	}
 
-	var ready readyMessage
+	var ready desktopprotocol.Handshake
 	if err := json.NewDecoder(reader).Decode(&ready); err != nil {
 		shutdown()
 		t.Fatalf("decode READY: %v", err)
 	}
 	_ = reader.Close()
-	if ready.Type != "READY" || ready.ProtocolVersion != readyProtocolVersion {
+	if ready.Type != desktopprotocol.MessageReady || ready.ProtocolVersion != desktopprotocol.Version || ready.AppVersion != pocAppVersion {
 		shutdown()
 		t.Fatalf("unexpected READY payload: %#v", ready)
 	}

@@ -22,6 +22,38 @@ type appServeState struct {
 	ready atomic.Bool
 }
 
+type hijackedConnections struct {
+	mu          sync.Mutex
+	connections map[net.Conn]struct{}
+}
+
+func (connections *hijackedConnections) track(connection net.Conn, state http.ConnState) {
+	if connection == nil {
+		return
+	}
+	connections.mu.Lock()
+	defer connections.mu.Unlock()
+	if state == http.StateHijacked {
+		if connections.connections == nil {
+			connections.connections = make(map[net.Conn]struct{})
+		}
+		connections.connections[connection] = struct{}{}
+	}
+}
+
+func (connections *hijackedConnections) closeAll() {
+	connections.mu.Lock()
+	active := make([]net.Conn, 0, len(connections.connections))
+	for connection := range connections.connections {
+		active = append(active, connection)
+		delete(connections.connections, connection)
+	}
+	connections.mu.Unlock()
+	for _, connection := range active {
+		_ = connection.Close()
+	}
+}
+
 // Ready reports whether the main HTTP server has entered its serve loop.
 func (a *App) Ready() bool {
 	return a != nil && a.serveState.ready.Load()
@@ -72,7 +104,16 @@ func (a *App) Serve(ctx context.Context, listener net.Listener) error {
 	}
 
 	addr := listener.Addr().String()
-	srv := &http.Server{Addr: addr, Handler: a.router}
+	requestContext, cancelRequests := context.WithCancel(ctx)
+	connections := &hijackedConnections{}
+	srv := &http.Server{
+		Addr:      addr,
+		Handler:   a.router,
+		ConnState: connections.track,
+		BaseContext: func(net.Listener) context.Context {
+			return requestContext
+		},
+	}
 	serveListener := listener
 	var mainMux *mainServerMux
 	httpRedirect := config.ServerHTTPRedirectEnabled(&a.config.Server)
@@ -122,6 +163,8 @@ func (a *App) Serve(ctx context.Context, listener net.Listener) error {
 	var shutdownOnce sync.Once
 	shutdown := func() {
 		shutdownOnce.Do(func() {
+			cancelRequests()
+			connections.closeAll()
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if mainMux != nil {

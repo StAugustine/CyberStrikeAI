@@ -17,17 +17,13 @@ import (
 	"syscall"
 	"time"
 
+	"cyberstrike-ai/internal/desktopprotocol"
+
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
-const readyProtocolVersion = 1
-
-type readyMessage struct {
-	Type            string `json:"type"`
-	ProtocolVersion int    `json:"protocol_version"`
-	URL             string `json:"url"`
-}
+const pocAppVersion = "d1-poc"
 
 type browserProtocolResult struct {
 	REST                      bool `json:"rest"`
@@ -73,11 +69,7 @@ func run(ctx context.Context, stdout io.Writer) error {
 		serveErr <- server.Serve(listener)
 	}()
 
-	message := readyMessage{
-		Type:            "READY",
-		ProtocolVersion: readyProtocolVersion,
-		URL:             "http://" + listener.Addr().String() + "/",
-	}
+	message := desktopprotocol.NewReady(pocAppVersion, "http://"+listener.Addr().String()+"/")
 	encoder := json.NewEncoder(stdout)
 	if err := encoder.Encode(message); err != nil {
 		_ = server.Close()
@@ -147,7 +139,7 @@ func newRouter(results chan<- browserProtocolResult) http.Handler {
 		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(pocPage))
 	})
 	router.GET("/health/ready", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ready", "protocol_version": readyProtocolVersion})
+		c.JSON(http.StatusOK, gin.H{"status": "ready", "protocol_version": desktopprotocol.Version})
 	})
 	router.GET("/api/poc/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "pong"})

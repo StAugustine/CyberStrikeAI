@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberstrike.ai/schemas/desktop/handshake-v1.json",
+  "title": "CyberStrikeAI desktop startup handshake v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "type": { "const": "READY" },
+        "protocol_version": { "const": 1 },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^http://127\\.0\\.0\\.1:[0-9]+/$"
+        },
+        "app_version": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "protocol_version", "url", "app_version"],
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": { "const": "BOOTSTRAP_REQUIRED" },
+        "protocol_version": { "const": 1 },
+        "app_version": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "protocol_version", "app_version"],
+      "not": { "required": ["url"] },
+      "additionalProperties": true
+    }
+  ]
+}

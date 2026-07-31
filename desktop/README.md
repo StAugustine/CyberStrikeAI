@@ -2,7 +2,7 @@
 
 This directory contains the D1 protocol proof of concept only. It does not yet host the production application or migrate any business module.
 
-The PoC fixes exact Tauri dependency versions, builds `cmd/desktop-poc-sidecar` as the `cyberstrike-go-poc` binary for the current Rust target, starts it as a packaged sidecar, accepts only a versioned `READY` message containing an explicit random `127.0.0.1` HTTP URL, and navigates the WebView to that origin. Closing the application requests graceful shutdown over stdin and force-kills the child only after a five-second timeout.
+The PoC fixes exact Tauri dependency versions, builds `cmd/desktop-poc-sidecar` as the `cyberstrike-go-poc` binary for the current Rust target, starts it as a packaged sidecar, accepts only a versioned `READY` message containing an app version and explicit random `127.0.0.1` HTTP URL, and navigates the WebView to that origin. The shared v1 contract is recorded in `protocol/handshake.schema.json`; unknown fields remain forward-compatible. Closing the application requests graceful shutdown over stdin and force-kills the child only after a five-second timeout.
 
 From this directory:
 

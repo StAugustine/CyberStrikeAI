@@ -34,6 +34,7 @@ struct ReadyMessage {
     kind: String,
     protocol_version: u32,
     url: String,
+    app_version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -226,6 +227,9 @@ fn parse_ready(line: &[u8]) -> Result<tauri::Url, String> {
             message.protocol_version
         ));
     }
+    if message.app_version.trim().is_empty() {
+        return Err("READY app version must not be empty".to_string());
+    }
 
     let url: tauri::Url = message
         .url
@@ -377,7 +381,7 @@ mod tests {
     #[test]
     fn accepts_versioned_ipv4_loopback_ready() {
         let url = parse_ready(
-            br#"{"type":"READY","protocol_version":1,"url":"http://127.0.0.1:43123/"}"#,
+            br#"{"type":"READY","protocol_version":1,"url":"http://127.0.0.1:43123/","app_version":"d1-poc"}"#,
         )
         .expect("valid READY message");
         assert_eq!(url.as_str(), "http://127.0.0.1:43123/");
@@ -386,7 +390,7 @@ mod tests {
     #[test]
     fn rejects_non_loopback_ready_url() {
         let error = parse_ready(
-            br#"{"type":"READY","protocol_version":1,"url":"http://localhost:43123/"}"#,
+            br#"{"type":"READY","protocol_version":1,"url":"http://localhost:43123/","app_version":"d1-poc"}"#,
         )
         .expect_err("localhost must not pass the exact IPv4 loopback gate");
         assert!(error.contains("IPv4 loopback"));
@@ -395,7 +399,7 @@ mod tests {
     #[test]
     fn rejects_incompatible_protocol() {
         let error = parse_ready(
-            br#"{"type":"READY","protocol_version":2,"url":"http://127.0.0.1:43123/"}"#,
+            br#"{"type":"READY","protocol_version":2,"url":"http://127.0.0.1:43123/","app_version":"d1-poc"}"#,
         )
         .expect_err("unknown protocol version must fail closed");
         assert!(error.contains("protocol version"));

@@ -355,7 +355,7 @@ CyberStrikeAI/
 
 完成门禁：`cmd/server` 回归通过；core 可以在测试中使用端口 0 启动、接受 SSE/WS、被取消并无资源泄漏。
 
-执行状态：进行中。首个切片已完成调用方 `net.Listener` 注入、`live/ready` 健康检查、CLI 信号关闭顺序和幂等资源关闭，并通过 Go 全量回归与 `internal/app`、`internal/mcp` 竞态测试；Web 资源嵌入、版本化握手及 SSE/WS 退出门禁仍待完成。
+执行状态：进行中。已完成调用方 `net.Listener` 注入、`live/ready` 健康检查、CLI 信号关闭顺序、幂等资源关闭、可注入的精选嵌入 Web 资源、v1 握手 schema，以及 SSE/WS 随 core 退出的门禁；Go 全量回归与 `internal/app`、`internal/desktopprotocol`、`internal/mcp` 竞态测试通过。后台保留任务/Agent 调度器的统一停止和可复用 server 创建入口仍待完成。
 
 ### D3：路径、配置、首启和桌面壳集成
 

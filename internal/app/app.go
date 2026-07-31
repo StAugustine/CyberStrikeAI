@@ -69,12 +69,21 @@ type App struct {
 	c2WatchdogCancel   context.CancelFunc        // 看门狗取消函数
 	c2Handler          *handler.C2Handler        // C2 REST（与 Manager 生命周期同步）
 	auditSvc           *audit.Service
+	webAssets          *appWebAssets
 	serveState         appServeState
 	shutdownOnce       sync.Once
 }
 
 // New 创建新应用
-func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error) {
+func New(cfg *config.Config, log *logger.Logger, configPath string, options ...Option) (*App, error) {
+	resolvedOptions, err := resolveOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	webAssets, err := prepareWebAssets(resolvedOptions.webFS)
+	if err != nil {
+		return nil, err
+	}
 	if err := multiagent.InitADK(); err != nil {
 		return nil, fmt.Errorf("初始化 Eino ADK: %w", err)
 	}
@@ -471,6 +480,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		c2WatchdogCancel:   watchdogCancel,
 		c2Handler:          c2Handler,
 		auditSvc:           auditSvc,
+		webAssets:          webAssets,
 	}
 	// 飞书/钉钉长连接（无需公网），启用时在后台启动；后续前端应用配置时会通过 RestartRobotConnections 重启
 	app.startRobotConnections()
@@ -1276,9 +1286,9 @@ func setupRoutes(
 		c.HTML(http.StatusOK, "api-docs.html", nil)
 	})
 
-	// 静态文件
-	router.Static("/static", "./web/static")
-	router.LoadHTMLGlob("web/templates/*")
+	// 静态文件和模板由调用方文件系统提供；server 默认仍使用磁盘目录，desktop 使用受控 embed.FS。
+	router.SetHTMLTemplate(app.webAssets.templates)
+	router.StaticFS("/static", app.webAssets.static)
 
 	// 前端页面
 	router.GET("/", func(c *gin.Context) {
