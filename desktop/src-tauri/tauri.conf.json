@@ -18,6 +18,15 @@
       "../../web/static/favicon.ico",
       "../../images/404StarLinkLogo.png"
     ],
+    "resources": {
+      "../resources/manifest.json": "defaults/manifest.json",
+      "../../config.example.yaml": "defaults/config.example.yaml",
+      "../../agents/": "defaults/agents",
+      "../../roles/": "defaults/roles",
+      "../../skills/": "defaults/skills",
+      "../../tools/": "defaults/tools",
+      "../../knowledge_base/": "defaults/knowledge_base"
+    },
     "externalBin": [
       "binaries/cyberstrike-go-poc"
     ]

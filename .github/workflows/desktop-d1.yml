@@ -7,6 +7,13 @@ on:
       - ".github/workflows/desktop-d1.yml"
       - "cmd/desktop-poc-sidecar/**"
       - "desktop/**"
+      - "internal/desktopruntime/**"
+      - "agents/**"
+      - "roles/**"
+      - "skills/**"
+      - "tools/**"
+      - "knowledge_base/**"
+      - "config.example.yaml"
       - "go.mod"
       - "go.sum"
 
@@ -49,7 +56,13 @@ jobs:
         working-directory: desktop
         run: npm ci --ignore-scripts
       - name: Test Go protocol sidecar
-        run: go test ./cmd/desktop-poc-sidecar
+        run: go test ./cmd/desktop-poc-sidecar ./internal/desktopruntime
+      - name: Verify desktop resource manifest
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm run resources:manifest
+          git diff --exit-code -- resources/manifest.json
       - name: Check Rust formatting
         run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
       - name: Build Go sidecar for Tauri tests
