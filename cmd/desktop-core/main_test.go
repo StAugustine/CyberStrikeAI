@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"context"
@@ -822,6 +823,7 @@ openai:
 	if taskStatus, found := desktopTaskStatus(body, hitlConversationID); found {
 		t.Fatalf("resolved desktop HITL task remained active with status %q: %#v", taskStatus, body)
 	}
+	operationsFixture := desktopCreateOperationsFixture(t, ready.URL, token, filepath.Join(options.Roots.DataDir, "chat_uploads"))
 
 	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/logout", token, nil)
 	if status != http.StatusOK {
@@ -930,6 +932,8 @@ openai:
 	}
 	desktopAssertManagementFixture(t, restarted.URL, restartedToken, conversationID, managementFixture)
 	desktopAssertExtensionFixture(t, restarted.URL, restartedToken, extensionFixture)
+	desktopAssertOperationsFixture(t, restarted.URL, restartedToken, operationsFixture)
+	desktopDeleteOperationsFixture(t, restarted.URL, restartedToken, operationsFixture)
 	desktopDeleteExtensionFixture(t, restarted.URL, restartedToken, extensionFixture)
 	desktopDeleteManagementFixture(t, restarted.URL, restartedToken, conversationID, managementFixture)
 	status, body = desktopJSONRequest(t, http.MethodDelete, restarted.URL+"api/groups/"+groupID+"/conversations/"+conversationID, restartedToken, nil)
@@ -1727,6 +1731,279 @@ func desktopWaitForKnowledgeIndex(t *testing.T, baseURL, token, itemID string) {
 	}
 	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/index-status", token, nil)
 	t.Fatalf("desktop knowledge item %s was not indexed: status = %d, body = %#v", itemID, status, body)
+}
+
+type desktopOperationsFixture struct {
+	queueID          string
+	firstTaskID      string
+	addedTaskID      string
+	externalMCPName  string
+	fileDirectory    string
+	fileRelativePath string
+	fileAbsolutePath string
+}
+
+func desktopCreateOperationsFixture(t *testing.T, baseURL, token, managedUploadsRoot string) desktopOperationsFixture {
+	t.Helper()
+	fixture := desktopOperationsFixture{externalMCPName: "desktop-golden-mcp", fileDirectory: "desktop-golden-files"}
+	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks", token, map[string]interface{}{
+		"title":        "Desktop Golden Batch",
+		"tasks":        []string{"desktop-tool-execution batch one", "desktop-tool-execution batch two"},
+		"agentMode":    "eino_single",
+		"scheduleMode": "manual",
+		"executeNow":   false,
+		"concurrency":  2,
+	})
+	fixture.queueID, _ = body["queueId"].(string)
+	queue, _ := body["queue"].(map[string]interface{})
+	tasks := desktopNestedItems(queue, "tasks")
+	if status != http.StatusOK || fixture.queueID == "" || len(tasks) != 2 {
+		t.Fatalf("create desktop batch queue status = %d, body = %#v", status, body)
+	}
+	firstTask, _ := tasks[0].(map[string]interface{})
+	secondTask, _ := tasks[1].(map[string]interface{})
+	fixture.firstTaskID, _ = firstTask["id"].(string)
+	secondTaskID, _ := secondTask["id"].(string)
+	if fixture.firstTaskID == "" || secondTaskID == "" {
+		t.Fatalf("desktop batch task ids = %#v", tasks)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/batch-tasks/"+fixture.queueID+"/tasks/"+fixture.firstTaskID, token, map[string]string{
+		"message": "desktop-tool-execution persisted batch one",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("update desktop batch task status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks/"+fixture.queueID+"/tasks", token, map[string]string{
+		"message": "desktop-tool-execution added batch task",
+	})
+	addedTask, _ := body["task"].(map[string]interface{})
+	fixture.addedTaskID, _ = addedTask["id"].(string)
+	if status != http.StatusOK || fixture.addedTaskID == "" {
+		t.Fatalf("add desktop batch task status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodDelete, baseURL+"api/batch-tasks/"+fixture.queueID+"/tasks/"+secondTaskID, token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("delete desktop batch task status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/batch-tasks/"+fixture.queueID+"/metadata", token, map[string]interface{}{
+		"title":       "Desktop Persistent Batch",
+		"role":        "",
+		"agentMode":   "eino_single",
+		"concurrency": 2,
+	})
+	queue, _ = body["queue"].(map[string]interface{})
+	if status != http.StatusOK || queue["title"] != "Desktop Persistent Batch" {
+		t.Fatalf("update desktop batch metadata status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/batch-tasks/"+fixture.queueID+"/schedule", token, map[string]string{
+		"scheduleMode": "cron",
+		"cronExpr":     "0 0 * * *",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("update desktop batch schedule status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/batch-tasks/"+fixture.queueID+"/schedule-enabled", token, map[string]bool{"scheduleEnabled": false})
+	if status != http.StatusOK {
+		t.Fatalf("disable desktop batch schedule status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks/"+fixture.queueID+"/start", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("start desktop batch queue status = %d, body = %#v", status, body)
+	}
+	desktopWaitForBatchQueue(t, baseURL, token, fixture.queueID, "completed")
+
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/external-mcp/"+fixture.externalMCPName, token, map[string]interface{}{
+		"config": map[string]interface{}{
+			"command":     "desktop-disabled-mcp",
+			"args":        []string{"--stdio"},
+			"description": "Desktop MCP persistence check",
+			"disabled":    true,
+		},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create disabled desktop external MCP status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/external-mcp/"+fixture.externalMCPName, token, map[string]interface{}{
+		"config": map[string]interface{}{
+			"command":     "desktop-disabled-mcp",
+			"args":        []string{"--stdio", "--persistent"},
+			"description": "Desktop Persistent MCP",
+			"disabled":    true,
+		},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("update disabled desktop external MCP status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/external-mcp/"+fixture.externalMCPName, token, nil)
+	externalConfig, _ := body["config"].(map[string]interface{})
+	if status != http.StatusOK || body["status"] != "disabled" || externalConfig["description"] != "Desktop Persistent MCP" {
+		t.Fatalf("read disabled desktop external MCP status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/chat-uploads/mkdir", token, map[string]string{
+		"parent": "",
+		"name":   fixture.fileDirectory,
+	})
+	if status != http.StatusOK || body["relativePath"] != fixture.fileDirectory {
+		t.Fatalf("create desktop file directory status = %d, body = %#v", status, body)
+	}
+	status, upload := desktopMultipartUploadRequest(t, baseURL+"api/chat-uploads", token, "desktop-file.txt", []byte("initial desktop file"), map[string]string{
+		"relativeDir": fixture.fileDirectory,
+	})
+	uploadedPath, _ := upload["relativePath"].(string)
+	if status != http.StatusOK || uploadedPath == "" {
+		t.Fatalf("upload desktop managed file status = %d, body = %#v", status, upload)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/chat-uploads/rename", token, map[string]string{
+		"path":    uploadedPath,
+		"newName": "desktop-persistent-file.txt",
+	})
+	fixture.fileRelativePath, _ = body["relativePath"].(string)
+	if status != http.StatusOK || fixture.fileRelativePath == "" {
+		t.Fatalf("rename desktop managed file status = %d, body = %#v", status, body)
+	}
+	fixture.fileAbsolutePath = filepath.Join(managedUploadsRoot, filepath.FromSlash(fixture.fileRelativePath))
+	desktopAssertManagedPath(t, managedUploadsRoot, fixture.fileAbsolutePath)
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/chat-uploads/content", token, map[string]string{
+		"path":    fixture.fileRelativePath,
+		"content": "Persisted desktop managed file.",
+	})
+	if status != http.StatusOK || body["ok"] != true {
+		t.Fatalf("edit desktop managed file status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/chat-uploads?search=desktop-persistent-file", token, nil)
+	if status != http.StatusOK || desktopNestedItem(body, "files", "relativePath", fixture.fileRelativePath) == nil {
+		t.Fatalf("list desktop managed file status = %d, body = %#v", status, body)
+	}
+	archiveStatus, archiveHeaders, archiveData := desktopBodyRequest(t, http.MethodGet, baseURL+"api/chat-uploads/export?search=desktop-persistent-file", token, nil, "")
+	if archiveStatus != http.StatusOK || !strings.HasPrefix(archiveHeaders.Get("Content-Type"), "application/zip") {
+		t.Fatalf("export desktop managed file status = %d, headers = %#v, body = %q", archiveStatus, archiveHeaders, archiveData)
+	}
+	desktopAssertChatFilesArchive(t, archiveData, "Persisted desktop managed file.")
+	desktopAssertAuditExport(t, baseURL, token, fixture.externalMCPName)
+	return fixture
+}
+
+func desktopAssertOperationsFixture(t *testing.T, baseURL, token string, fixture desktopOperationsFixture) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/batch-tasks/"+fixture.queueID, token, nil)
+	queue, _ := body["queue"].(map[string]interface{})
+	if status != http.StatusOK || queue["title"] != "Desktop Persistent Batch" || queue["status"] != "completed" || queue["scheduleMode"] != "cron" || queue["cronExpr"] != "0 0 * * *" || queue["scheduleEnabled"] != false {
+		t.Fatalf("persisted desktop batch queue status = %d, body = %#v", status, body)
+	}
+	firstTask := desktopNestedItem(queue, "tasks", "id", fixture.firstTaskID)
+	addedTask := desktopNestedItem(queue, "tasks", "id", fixture.addedTaskID)
+	if len(desktopNestedItems(queue, "tasks")) != 2 || firstTask == nil || addedTask == nil || firstTask["status"] != "completed" || addedTask["status"] != "completed" {
+		t.Fatalf("persisted desktop batch tasks = %#v", queue["tasks"])
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks/"+fixture.queueID+"/rerun", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("rerun persisted desktop batch queue status = %d, body = %#v", status, body)
+	}
+	desktopWaitForBatchQueue(t, baseURL, token, fixture.queueID, "completed")
+
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/external-mcp/"+fixture.externalMCPName, token, nil)
+	externalConfig, _ := body["config"].(map[string]interface{})
+	if status != http.StatusOK || body["status"] != "disabled" || externalConfig["description"] != "Desktop Persistent MCP" || externalConfig["command"] != "desktop-disabled-mcp" {
+		t.Fatalf("persisted disabled desktop external MCP status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/chat-uploads/content?path="+url.QueryEscape(fixture.fileRelativePath), token, nil)
+	if status != http.StatusOK || body["content"] != "Persisted desktop managed file." {
+		t.Fatalf("persisted desktop managed file status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs?category=external_mcp&resource_id="+url.QueryEscape(fixture.externalMCPName), token, nil)
+	auditTotal, _ := body["total"].(float64)
+	if status != http.StatusOK || auditTotal < 2 {
+		t.Fatalf("persisted desktop operation audit status = %d, body = %#v", status, body)
+	}
+}
+
+func desktopDeleteOperationsFixture(t *testing.T, baseURL, token string, fixture desktopOperationsFixture) {
+	t.Helper()
+	for _, request := range []struct {
+		method string
+		target string
+		body   interface{}
+	}{
+		{method: http.MethodDelete, target: baseURL + "api/batch-tasks/" + fixture.queueID},
+		{method: http.MethodDelete, target: baseURL + "api/external-mcp/" + fixture.externalMCPName},
+		{method: http.MethodDelete, target: baseURL + "api/chat-uploads", body: map[string]string{"path": fixture.fileDirectory}},
+	} {
+		status, body := desktopJSONRequest(t, request.method, request.target, token, request.body)
+		if status != http.StatusOK {
+			t.Fatalf("delete desktop operations fixture %s status = %d, body = %#v", request.target, status, body)
+		}
+	}
+	for _, target := range []string{
+		baseURL + "api/batch-tasks/" + fixture.queueID,
+		baseURL + "api/external-mcp/" + fixture.externalMCPName,
+		baseURL + "api/chat-uploads/content?path=" + url.QueryEscape(fixture.fileRelativePath),
+	} {
+		status, _ := desktopJSONRequest(t, http.MethodGet, target, token, nil)
+		if status != http.StatusNotFound {
+			t.Fatalf("deleted desktop operations resource %s status = %d, want 404", target, status)
+		}
+	}
+	if _, err := os.Stat(fixture.fileAbsolutePath); !os.IsNotExist(err) {
+		t.Fatalf("deleted desktop managed file remains at %q: %v", fixture.fileAbsolutePath, err)
+	}
+}
+
+func desktopWaitForBatchQueue(t *testing.T, baseURL, token, queueID, wantStatus string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/batch-tasks/"+queueID, token, nil)
+		queue, _ := body["queue"].(map[string]interface{})
+		if status == http.StatusOK && queue["status"] == wantStatus {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/batch-tasks/"+queueID, token, nil)
+	t.Fatalf("desktop batch queue %s did not reach %s: status = %d, body = %#v", queueID, wantStatus, status, body)
+}
+
+func desktopAssertChatFilesArchive(t *testing.T, data []byte, wantContent string) {
+	t.Helper()
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("read desktop chat files archive: %v", err)
+	}
+	foundManifest := false
+	foundContent := false
+	for _, file := range archive.File {
+		reader, err := file.Open()
+		if err != nil {
+			t.Fatalf("open desktop chat files archive entry %q: %v", file.Name, err)
+		}
+		content, err := io.ReadAll(reader)
+		_ = reader.Close()
+		if err != nil {
+			t.Fatalf("read desktop chat files archive entry %q: %v", file.Name, err)
+		}
+		if file.Name == "manifest.json" {
+			foundManifest = bytes.Contains(content, []byte(`"fileCount": 1`))
+		}
+		if string(content) == wantContent {
+			foundContent = true
+		}
+	}
+	if !foundManifest || !foundContent {
+		t.Fatalf("desktop chat files archive missing manifest or content: files = %#v", archive.File)
+	}
+}
+
+func desktopAssertAuditExport(t *testing.T, baseURL, token, resourceID string) {
+	t.Helper()
+	status, headers, data := desktopBodyRequest(t, http.MethodGet, baseURL+"api/audit/logs/export?resource_id="+url.QueryEscape(resourceID), token, nil, "")
+	if status != http.StatusOK || !strings.HasPrefix(headers.Get("Content-Type"), "application/json") || !bytes.Contains(data, []byte(resourceID)) || bytes.Contains(data, []byte("stream-secret")) || bytes.Contains(data, []byte("desktop-embedding-secret")) {
+		t.Fatalf("desktop JSON audit export status = %d, headers = %#v, body = %q", status, headers, data)
+	}
+	status, headers, data = desktopBodyRequest(t, http.MethodGet, baseURL+"api/audit/logs/export?format=csv&resource_id="+url.QueryEscape(resourceID), token, nil, "")
+	if status != http.StatusOK || !strings.HasPrefix(headers.Get("Content-Type"), "text/csv") || !bytes.Contains(data, []byte("id,created_at,level,category,action,result,actor")) || !bytes.Contains(data, []byte(resourceID)) {
+		t.Fatalf("desktop CSV audit export status = %d, headers = %#v, body = %q", status, headers, data)
+	}
 }
 
 func desktopNestedItems(body map[string]interface{}, key string) []interface{} {
