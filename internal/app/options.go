@@ -10,7 +10,8 @@ import (
 type Option func(*appOptions) error
 
 type appOptions struct {
-	webFS fs.FS
+	webFS                        fs.FS
+	initialAdminPasswordProvider func() (string, error)
 }
 
 // WithWebFS replaces the default on-disk web directory with a caller-owned
@@ -21,6 +22,18 @@ func WithWebFS(webFS fs.FS) Option {
 			return errors.New("web filesystem is required")
 		}
 		options.webFS = webFS
+		return nil
+	}
+}
+
+// WithInitialAdminPasswordProvider supplies the first local administrator
+// password only when a fresh database requires bootstrap.
+func WithInitialAdminPasswordProvider(provider func() (string, error)) Option {
+	return func(options *appOptions) error {
+		if provider == nil {
+			return errors.New("initial admin password provider is required")
+		}
+		options.initialAdminPasswordProvider = provider
 		return nil
 	}
 }

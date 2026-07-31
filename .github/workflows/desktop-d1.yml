@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/desktop-d1.yml"
       - "cmd/desktop-poc-sidecar/**"
+      - "cmd/desktop-core/**"
       - "desktop/**"
       - "internal/desktopruntime/**"
       - "agents/**"
@@ -55,8 +56,8 @@ jobs:
       - name: Install locked Tauri CLI
         working-directory: desktop
         run: npm ci --ignore-scripts
-      - name: Test Go protocol sidecar
-        run: go test ./cmd/desktop-poc-sidecar ./internal/desktopruntime
+      - name: Test Go desktop core
+        run: go test ./cmd/desktop-poc-sidecar ./cmd/desktop-core ./internal/app ./internal/config ./internal/desktopprotocol ./internal/desktopruntime ./internal/security
       - name: Verify desktop resource manifest
         working-directory: desktop
         shell: bash

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -1333,6 +1334,13 @@ type ParameterConfig struct {
 }
 
 func Load(path string) (*Config, error) {
+	return LoadWithTransform(path, nil)
+}
+
+// LoadWithTransform applies runtime-only overrides after YAML decoding and
+// before any configured resource directory is read. The desktop core uses it
+// to resolve every path without changing the user's persisted configuration.
+func LoadWithTransform(path string, transform func(*Config) error) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("读取配置文件失败: %w", err)
@@ -1352,6 +1360,11 @@ func Load(path string) (*Config, error) {
 	cfg.ApplyDefaultAIChannel()
 	if err := validateModelOutputLimits(cfg.OpenAI, cfg.MultiAgent.EinoMiddleware); err != nil {
 		return nil, err
+	}
+	if transform != nil {
+		if err := transform(&cfg); err != nil {
+			return nil, fmt.Errorf("应用运行时配置失败: %w", err)
+		}
 	}
 	// 如果配置了工具目录，从目录加载工具配置
 	if cfg.Security.ToolsDir != "" {
@@ -1467,7 +1480,34 @@ func EnsureLocalConfig(path string) (EnsureLocalConfigResult, error) {
 	if err != nil {
 		return EnsureLocalConfigResult{}, fmt.Errorf("读取配置模板失败: %w", err)
 	}
+	return writeLocalConfig(path, examplePath, data)
+}
 
+// EnsureLocalConfigFromTemplate creates a local config from an explicit
+// bundled template. Existing user configuration is never overwritten.
+func EnsureLocalConfigFromTemplate(path, examplePath string) (EnsureLocalConfigResult, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return EnsureLocalConfigResult{}, errors.New("配置文件路径不能为空")
+	}
+	if _, err := os.Stat(path); err == nil {
+		return EnsureLocalConfigResult{}, nil
+	} else if !os.IsNotExist(err) {
+		return EnsureLocalConfigResult{}, fmt.Errorf("检查配置文件失败: %w", err)
+	}
+
+	examplePath = strings.TrimSpace(examplePath)
+	if examplePath == "" {
+		return EnsureLocalConfigResult{}, errors.New("配置模板路径不能为空")
+	}
+	data, err := os.ReadFile(examplePath)
+	if err != nil {
+		return EnsureLocalConfigResult{}, fmt.Errorf("读取配置模板失败: %w", err)
+	}
+	return writeLocalConfig(path, examplePath, data)
+}
+
+func writeLocalConfig(path, examplePath string, data []byte) (EnsureLocalConfigResult, error) {
 	if dir := filepath.Dir(path); dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return EnsureLocalConfigResult{}, fmt.Errorf("创建配置目录失败: %w", err)

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberstrike.ai/schemas/desktop/command-v1.json",
+  "title": "CyberStrikeAI desktop stdin command v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "type": { "const": "BOOTSTRAP" },
+        "protocol_version": { "const": 1 },
+        "password": { "type": "string", "minLength": 8 }
+      },
+      "required": ["type", "protocol_version", "password"],
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": { "const": "SHUTDOWN" },
+        "protocol_version": { "const": 1 }
+      },
+      "required": ["type", "protocol_version"],
+      "not": { "required": ["password"] },
+      "additionalProperties": true
+    }
+  ]
+}

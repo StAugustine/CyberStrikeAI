@@ -130,7 +130,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 
 	// 认证管理器（数据库初始化后挂载 RBAC）
 	authManager := security.NewAuthManager(cfg.Auth.SessionDurationHours)
-	if generatedPassword, err := authManager.AttachRBACStore(db); err != nil {
+	if generatedPassword, err := authManager.AttachRBACStoreWithPasswordProvider(db, resolvedOptions.initialAdminPasswordProvider); err != nil {
 		return nil, fmt.Errorf("初始化RBAC失败: %w", err)
 	} else if generatedPassword != "" {
 		config.PrintBootstrapAdminPassword(generatedPassword)
