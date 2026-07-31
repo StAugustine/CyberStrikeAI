@@ -52,6 +52,11 @@ jobs:
         run: go test ./cmd/desktop-poc-sidecar
       - name: Check Rust formatting
         run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
+      - name: Build Go sidecar for Tauri tests
+        working-directory: desktop
+        env:
+          CYBERSTRIKE_DESKTOP_TARGET: ${{ matrix.target }}
+        run: npm run poc:sidecar
       - name: Test Tauri shell
         run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
       - name: Build unbundled desktop PoC
