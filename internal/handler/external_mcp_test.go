@@ -367,11 +367,12 @@ func TestExternalMCPHandler_GetExternalMCPStats(t *testing.T) {
 func TestExternalMCPHandler_StartStopExternalMCP(t *testing.T) {
 	router, handler, configPath := setupTestRouter()
 	defer cleanupTestConfig(configPath)
+	defer handler.manager.StopAll()
 
 	// 添加一个禁用的配置
-	handler.manager.AddOrUpdateConfig("test-start-stop", config.ExternalMCPServerConfig{
-		Command: "python3",
-	})
+	cfg := config.ExternalMCPServerConfig{Command: "python3", Disabled: true}
+	handler.manager.AddOrUpdateConfig("test-start-stop", cfg)
+	handler.config.ExternalMCP.Servers["test-start-stop"] = cfg
 
 	// 测试启动（可能会失败，因为没有真实的服务器）
 	req := httptest.NewRequest("POST", "/api/external-mcp/test-start-stop/start", nil)
@@ -385,6 +386,10 @@ func TestExternalMCPHandler_StartStopExternalMCP(t *testing.T) {
 			t.Errorf("期望状态码200/400/500，实际%d: %s", w.Code, w.Body.String())
 		}
 	}
+	started := handler.config.ExternalMCP.Servers["test-start-stop"]
+	if started.Disabled || !started.ExternalMCPEnable {
+		t.Errorf("启动后持久化状态不一致: %#v", started)
+	}
 
 	// 测试停止
 	req2 := httptest.NewRequest("POST", "/api/external-mcp/test-start-stop/stop", nil)
@@ -393,6 +398,10 @@ func TestExternalMCPHandler_StartStopExternalMCP(t *testing.T) {
 
 	if w2.Code != http.StatusOK {
 		t.Errorf("期望状态码200，实际%d: %s", w2.Code, w2.Body.String())
+	}
+	stopped := handler.config.ExternalMCP.Servers["test-start-stop"]
+	if !stopped.Disabled || stopped.ExternalMCPEnable {
+		t.Errorf("停止后持久化状态不一致: %#v", stopped)
 	}
 }
 

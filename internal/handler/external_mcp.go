@@ -272,6 +272,7 @@ func (h *ExternalMCPHandler) StartExternalMCP(c *gin.Context) {
 	}
 	cfg := h.config.ExternalMCP.Servers[name]
 	cfg.ExternalMCPEnable = true
+	cfg.Disabled = false
 	h.config.ExternalMCP.Servers[name] = cfg
 
 	// 保存到配置文件
@@ -326,6 +327,7 @@ func (h *ExternalMCPHandler) StopExternalMCP(c *gin.Context) {
 	}
 	cfg := h.config.ExternalMCP.Servers[name]
 	cfg.ExternalMCPEnable = false
+	cfg.Disabled = true
 	h.config.ExternalMCP.Servers[name] = cfg
 
 	// 保存到配置文件

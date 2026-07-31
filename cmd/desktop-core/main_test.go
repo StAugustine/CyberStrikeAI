@@ -25,6 +25,7 @@ import (
 	"cyberstrike-ai/internal/desktopprotocol"
 	"cyberstrike-ai/internal/desktopruntime"
 	"github.com/gin-gonic/gin"
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
@@ -42,6 +43,8 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	t.Cleanup(releaseLive)
 	upstream := newDesktopFakeAI(t, cancelRequestStarted, liveResponseStarted, releaseLiveResponse)
 	t.Cleanup(upstream.Close)
+	externalMCP, externalMCPCalls := newDesktopFakeMCP(t)
+	t.Cleanup(externalMCP.Close)
 	credentialStore := newRecordingCredentialStore()
 	credentialStore.values["desktop-knowledge"] = "desktop-embedding-secret"
 	resourceDir := writeTestResources(t, root, "test-version")
@@ -823,7 +826,14 @@ openai:
 	if taskStatus, found := desktopTaskStatus(body, hitlConversationID); found {
 		t.Fatalf("resolved desktop HITL task remained active with status %q: %#v", taskStatus, body)
 	}
-	operationsFixture := desktopCreateOperationsFixture(t, ready.URL, token, filepath.Join(options.Roots.DataDir, "chat_uploads"))
+	operationsFixture := desktopCreateOperationsFixture(
+		t,
+		ready.URL,
+		token,
+		filepath.Join(options.Roots.DataDir, "chat_uploads"),
+		externalMCP.URL+"/mcp",
+		externalMCPCalls,
+	)
 
 	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/logout", token, nil)
 	if status != http.StatusOK {
@@ -1093,6 +1103,17 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveRe
 			desktopWriteToolCallResponse(response, payload, "call-desktop-respond", "respond", `{"response":"desktop plan-execute reply"}`)
 			return
 		}
+		if bytes.Contains(requestData, []byte("desktop-external-mcp-call")) &&
+			desktopPayloadHasTool(payload, "desktop-golden-mcp__desktop_echo") &&
+			!desktopPayloadHasRole(payload, "tool") {
+			desktopWriteToolCallResponse(response, payload, "call-desktop-external-mcp", "desktop-golden-mcp__desktop_echo", `{"text":"golden"}`)
+			return
+		}
+		if bytes.Contains(requestData, []byte("desktop-external-mcp-call")) &&
+			desktopPayloadHasRole(payload, "tool") &&
+			!bytes.Contains(requestData, []byte("desktop-mcp:golden")) {
+			t.Error("desktop external MCP result was not returned to the model")
+		}
 		if bytes.Contains(requestData, []byte("desktop-tool-execution")) &&
 			desktopPayloadHasTool(payload, "query_assets") &&
 			!desktopPayloadHasRole(payload, "tool") {
@@ -1116,6 +1137,44 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveRe
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(response, `{"id":"chatcmpl-desktop","object":"chat.completion","model":"desktop-test-model","choices":[{"index":0,"message":{"role":"assistant","content":"desktop streamed reply"},"finish_reason":"stop"}]}`)
 	}))
+}
+
+func newDesktopFakeMCP(t *testing.T) (*httptest.Server, <-chan string) {
+	t.Helper()
+	calls := make(chan string, 4)
+	server := sdkmcp.NewServer(&sdkmcp.Implementation{
+		Name:    "desktop-golden-mcp",
+		Version: "1.0.0",
+	}, nil)
+	type echoArgs struct {
+		Text string `json:"text"`
+	}
+	sdkmcp.AddTool(server, &sdkmcp.Tool{
+		Name:        "desktop_echo",
+		Description: "Echo text through the desktop external MCP golden path.",
+	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, args echoArgs) (*sdkmcp.CallToolResult, any, error) {
+		select {
+		case calls <- args.Text:
+		default:
+			t.Error("desktop fake MCP call buffer is full")
+		}
+		return &sdkmcp.CallToolResult{
+			Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: "desktop-mcp:" + args.Text}},
+		}, nil, nil
+	})
+	streamable := sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server {
+		return server
+	}, &sdkmcp.StreamableHTTPOptions{
+		JSONResponse: true,
+		Stateless:    true,
+	})
+	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/mcp" {
+			http.Error(response, "desktop fake MCP unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		streamable.ServeHTTP(response, request)
+	})), calls
 }
 
 func desktopWriteToolCallResponse(response http.ResponseWriter, payload map[string]interface{}, callID, name, arguments string) {
@@ -1738,14 +1797,25 @@ type desktopOperationsFixture struct {
 	firstTaskID      string
 	addedTaskID      string
 	externalMCPName  string
+	externalMCPURL   string
+	externalMCPCalls <-chan string
 	fileDirectory    string
 	fileRelativePath string
 	fileAbsolutePath string
 }
 
-func desktopCreateOperationsFixture(t *testing.T, baseURL, token, managedUploadsRoot string) desktopOperationsFixture {
+func desktopCreateOperationsFixture(
+	t *testing.T,
+	baseURL, token, managedUploadsRoot, externalMCPURL string,
+	externalMCPCalls <-chan string,
+) desktopOperationsFixture {
 	t.Helper()
-	fixture := desktopOperationsFixture{externalMCPName: "desktop-golden-mcp", fileDirectory: "desktop-golden-files"}
+	fixture := desktopOperationsFixture{
+		externalMCPName:  "desktop-golden-mcp",
+		externalMCPURL:   externalMCPURL,
+		externalMCPCalls: externalMCPCalls,
+		fileDirectory:    "desktop-golden-files",
+	}
 	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks", token, map[string]interface{}{
 		"title":        "Desktop Golden Batch",
 		"tasks":        []string{"desktop-tool-execution batch one", "desktop-tool-execution batch two"},
@@ -1814,31 +1884,45 @@ func desktopCreateOperationsFixture(t *testing.T, baseURL, token, managedUploads
 
 	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/external-mcp/"+fixture.externalMCPName, token, map[string]interface{}{
 		"config": map[string]interface{}{
-			"command":     "desktop-disabled-mcp",
-			"args":        []string{"--stdio"},
-			"description": "Desktop MCP persistence check",
+			"type":        "http",
+			"url":         fixture.externalMCPURL + "/unavailable",
+			"description": "Desktop unavailable MCP",
+			"timeout":     2,
 			"disabled":    true,
 		},
 	})
 	if status != http.StatusOK {
-		t.Fatalf("create disabled desktop external MCP status = %d, body = %#v", status, body)
+		t.Fatalf("create unavailable desktop external MCP status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/external-mcp/"+fixture.externalMCPName+"/start", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("start unavailable desktop external MCP status = %d, body = %#v", status, body)
+	}
+	desktopWaitForExternalMCP(t, baseURL, token, fixture.externalMCPName, "error", 0, true)
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/external-mcp/"+fixture.externalMCPName+"/stop", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("stop unavailable desktop external MCP status = %d, body = %#v", status, body)
 	}
 	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/external-mcp/"+fixture.externalMCPName, token, map[string]interface{}{
 		"config": map[string]interface{}{
-			"command":     "desktop-disabled-mcp",
-			"args":        []string{"--stdio", "--persistent"},
+			"type":        "http",
+			"url":         fixture.externalMCPURL,
 			"description": "Desktop Persistent MCP",
+			"timeout":     2,
+			"max_retries": 1,
 			"disabled":    true,
 		},
 	})
 	if status != http.StatusOK {
-		t.Fatalf("update disabled desktop external MCP status = %d, body = %#v", status, body)
+		t.Fatalf("recover desktop external MCP config status = %d, body = %#v", status, body)
 	}
-	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/external-mcp/"+fixture.externalMCPName, token, nil)
-	externalConfig, _ := body["config"].(map[string]interface{})
-	if status != http.StatusOK || body["status"] != "disabled" || externalConfig["description"] != "Desktop Persistent MCP" {
-		t.Fatalf("read disabled desktop external MCP status = %d, body = %#v", status, body)
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/external-mcp/"+fixture.externalMCPName+"/start", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("start recovered desktop external MCP status = %d, body = %#v", status, body)
 	}
+	desktopWaitForExternalMCP(t, baseURL, token, fixture.externalMCPName, "connected", 1, false)
+	desktopAssertExternalMCPTool(t, baseURL, token, fixture.externalMCPName)
+	desktopInvokeExternalMCP(t, baseURL, token, fixture.externalMCPName, fixture.externalMCPCalls)
 
 	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/chat-uploads/mkdir", token, map[string]string{
 		"parent": "",
@@ -1902,11 +1986,26 @@ func desktopAssertOperationsFixture(t *testing.T, baseURL, token string, fixture
 	}
 	desktopWaitForBatchQueue(t, baseURL, token, fixture.queueID, "completed")
 
-	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/external-mcp/"+fixture.externalMCPName, token, nil)
+	body = desktopWaitForExternalMCP(t, baseURL, token, fixture.externalMCPName, "connected", 1, false)
 	externalConfig, _ := body["config"].(map[string]interface{})
-	if status != http.StatusOK || body["status"] != "disabled" || externalConfig["description"] != "Desktop Persistent MCP" || externalConfig["command"] != "desktop-disabled-mcp" {
-		t.Fatalf("persisted disabled desktop external MCP status = %d, body = %#v", status, body)
+	if externalConfig["description"] != "Desktop Persistent MCP" ||
+		externalConfig["type"] != "http" ||
+		externalConfig["url"] != fixture.externalMCPURL ||
+		externalConfig["external_mcp_enable"] != true {
+		t.Fatalf("persisted enabled desktop external MCP body = %#v", body)
 	}
+	desktopAssertExternalMCPTool(t, baseURL, token, fixture.externalMCPName)
+	desktopInvokeExternalMCP(t, baseURL, token, fixture.externalMCPName, fixture.externalMCPCalls)
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/external-mcp/"+fixture.externalMCPName+"/stop", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("stop persisted desktop external MCP status = %d, body = %#v", status, body)
+	}
+	desktopWaitForExternalMCP(t, baseURL, token, fixture.externalMCPName, "disabled", 0, false)
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/external-mcp/"+fixture.externalMCPName+"/start", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("restart persisted desktop external MCP status = %d, body = %#v", status, body)
+	}
+	desktopWaitForExternalMCP(t, baseURL, token, fixture.externalMCPName, "connected", 1, false)
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/chat-uploads/content?path="+url.QueryEscape(fixture.fileRelativePath), token, nil)
 	if status != http.StatusOK || body["content"] != "Persisted desktop managed file." {
 		t.Fatalf("persisted desktop managed file status = %d, body = %#v", status, body)
@@ -1946,6 +2045,101 @@ func desktopDeleteOperationsFixture(t *testing.T, baseURL, token string, fixture
 	}
 	if _, err := os.Stat(fixture.fileAbsolutePath); !os.IsNotExist(err) {
 		t.Fatalf("deleted desktop managed file remains at %q: %v", fixture.fileAbsolutePath, err)
+	}
+}
+
+func desktopWaitForExternalMCP(
+	t *testing.T,
+	baseURL, token, name, wantStatus string,
+	wantToolCount int,
+	requireError bool,
+) map[string]interface{} {
+	t.Helper()
+	target := baseURL + "api/external-mcp/" + url.PathEscape(name)
+	deadline := time.Now().Add(10 * time.Second)
+	var status int
+	var body map[string]interface{}
+	for time.Now().Before(deadline) {
+		status, body = desktopJSONRequest(t, http.MethodGet, target, token, nil)
+		errorText, _ := body["error"].(string)
+		toolCount, _ := body["tool_count"].(float64)
+		if status == http.StatusOK &&
+			body["status"] == wantStatus &&
+			int(toolCount) == wantToolCount &&
+			(!requireError || strings.TrimSpace(errorText) != "") {
+			return body
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf(
+		"desktop external MCP %s did not reach status %s with %d tools: HTTP %d, body = %#v",
+		name,
+		wantStatus,
+		wantToolCount,
+		status,
+		body,
+	)
+	return nil
+}
+
+func desktopAssertExternalMCPTool(t *testing.T, baseURL, token, name string) {
+	t.Helper()
+	status, body := desktopJSONRequest(
+		t,
+		http.MethodGet,
+		baseURL+"api/config/tools?page=1&page_size=100&search=desktop_echo",
+		token,
+		nil,
+	)
+	tool := desktopNestedItem(body, "tools", "name", "desktop_echo")
+	if status != http.StatusOK ||
+		tool == nil ||
+		tool["external_mcp"] != name ||
+		tool["is_external"] != true ||
+		tool["enabled"] != true {
+		t.Fatalf("desktop external MCP tool listing status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(
+		t,
+		http.MethodGet,
+		baseURL+"api/config/tools/desktop_echo/schema?external_mcp="+url.QueryEscape(name),
+		token,
+		nil,
+	)
+	if schema, _ := body["input_schema"].(map[string]interface{}); status != http.StatusOK || schema == nil {
+		t.Fatalf("desktop external MCP tool schema status = %d, body = %#v", status, body)
+	}
+}
+
+func desktopInvokeExternalMCP(t *testing.T, baseURL, token, name string, calls <-chan string) {
+	t.Helper()
+	events := desktopSSERequest(t, baseURL+"api/eino-agent/stream", token, map[string]interface{}{
+		"message": "desktop-external-mcp-call",
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	if !desktopSSEHasEvent(events, "response") || !desktopSSEHasEvent(events, "done") {
+		t.Fatalf("desktop external MCP Agent events = %#v", events)
+	}
+	select {
+	case text := <-calls:
+		if text != "golden" {
+			t.Fatalf("desktop external MCP argument = %q, want golden", text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("desktop external MCP server did not receive the Agent tool call")
+	}
+	status, body := desktopJSONRequest(
+		t,
+		http.MethodGet,
+		baseURL+"api/monitor?tool="+url.QueryEscape(name+"__desktop_echo"),
+		token,
+		nil,
+	)
+	execution := desktopNestedItem(body, "executions", "toolName", name+"::desktop_echo")
+	if status != http.StatusOK || execution == nil || execution["status"] != "completed" {
+		t.Fatalf("desktop external MCP execution monitor status = %d, body = %#v", status, body)
 	}
 }
 
