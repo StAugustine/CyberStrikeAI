@@ -253,7 +253,11 @@ func (h *ChatUploadsHandler) resolveUnderChatUploads(relativePath string) (abs s
 	if rel == "" {
 		return "", fmt.Errorf("empty path")
 	}
-	rel = filepath.Clean(filepath.FromSlash(rel))
+	rel = filepath.FromSlash(rel)
+	if filepath.IsAbs(rel) || filepath.VolumeName(rel) != "" {
+		return "", fmt.Errorf("invalid path")
+	}
+	rel = filepath.Clean(rel)
 	if rel == "." || strings.HasPrefix(rel, "..") {
 		return "", fmt.Errorf("invalid path")
 	}
@@ -1302,7 +1306,7 @@ func (h *ChatUploadsHandler) Rename(c *gin.Context) {
 		return
 	}
 	newName := strings.TrimSpace(body.NewName)
-	if newName == "" || strings.ContainsAny(newName, `/\`) {
+	if newName == "" || strings.ContainsAny(newName, `/\`) || newName == "." || newName == ".." {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid newName"})
 		return
 	}

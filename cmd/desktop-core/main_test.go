@@ -3100,6 +3100,7 @@ func desktopCreateOperationsFixture(
 	if status != http.StatusOK || uploadedPath == "" {
 		t.Fatalf("upload desktop managed file status = %d, body = %#v", status, upload)
 	}
+	desktopAssertFilePathBoundaries(t, baseURL, token, managedUploadsRoot, uploadedPath)
 	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/chat-uploads/rename", token, map[string]string{
 		"path":    uploadedPath,
 		"newName": "desktop-persistent-file.txt",
@@ -3128,6 +3129,60 @@ func desktopCreateOperationsFixture(
 	desktopAssertChatFilesArchive(t, archiveData, "Persisted desktop managed file.")
 	fixture.auditLogID = desktopAssertAuditLifecycle(t, baseURL, token, fixture.queueID)
 	return fixture
+}
+
+func desktopAssertFilePathBoundaries(t *testing.T, baseURL, token, managedUploadsRoot, uploadedPath string) {
+	t.Helper()
+	const sentinel = "desktop file path boundary sentinel"
+	outOfRootPath := filepath.Join(filepath.Dir(managedUploadsRoot), "desktop-path-boundary-sentinel.txt")
+	if err := os.WriteFile(outOfRootPath, []byte(sentinel), 0600); err != nil {
+		t.Fatalf("write desktop out-of-root sentinel: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(outOfRootPath) })
+
+	status, body := desktopJSONRequest(t, http.MethodPut, baseURL+"api/chat-uploads/rename", token, map[string]string{
+		"path":    uploadedPath,
+		"newName": "..",
+	})
+	errorText, _ := body["error"].(string)
+	if status != http.StatusBadRequest || strings.TrimSpace(errorText) == "" {
+		t.Fatalf("reject desktop parent rename status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/chat-uploads/mkdir", token, map[string]string{
+		"parent": "",
+		"name":   "..",
+	})
+	errorText, _ = body["error"].(string)
+	if status != http.StatusBadRequest || strings.TrimSpace(errorText) == "" {
+		t.Fatalf("reject desktop parent directory status = %d, body = %#v", status, body)
+	}
+
+	outOfRootRelativePath := "../" + filepath.Base(outOfRootPath)
+	for _, path := range []string{outOfRootRelativePath, outOfRootPath} {
+		status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/chat-uploads/content?path="+url.QueryEscape(path), token, nil)
+		if status != http.StatusBadRequest || strings.Contains(fmt.Sprint(body), sentinel) {
+			t.Fatalf("reject desktop out-of-root read path %q status = %d, body = %#v", path, status, body)
+		}
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/chat-uploads/content", token, map[string]string{
+		"path":    outOfRootRelativePath,
+		"content": "tampered",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("reject desktop out-of-root write status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodDelete, baseURL+"api/chat-uploads", token, map[string]string{
+		"path": outOfRootRelativePath,
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("reject desktop out-of-root delete status = %d, body = %#v", status, body)
+	}
+	persistedSentinel, err := os.ReadFile(outOfRootPath)
+	if err != nil || string(persistedSentinel) != sentinel {
+		t.Fatalf("desktop out-of-root sentinel changed: content = %q, err = %v", persistedSentinel, err)
+	}
 }
 
 func desktopAssertOperationsFixture(t *testing.T, baseURL, token string, fixture desktopOperationsFixture) {
