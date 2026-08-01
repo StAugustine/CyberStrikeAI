@@ -46,13 +46,13 @@ jobs:
 
     env:
       CYBERSTRIKE_DESKTOP_TARGET: ${{ matrix.target }}
-      CARGO_TARGET_DIR: ${{ runner.temp }}/cyberstrike-tauri-target
-      CYBERSTRIKE_RELEASE_BUILD_ROOT: ${{ runner.temp }}/cyberstrike-tauri-target/${{ matrix.target }}/release
-      CYBERSTRIKE_PORTABLE_STAGE: ${{ runner.temp }}/cyberstrike-portable-stage/${{ matrix.target }}
-      CYBERSTRIKE_PORTABLE_EXTRACT: ${{ runner.temp }}/cyberstrike-portable-extract/${{ matrix.target }}
-      CYBERSTRIKE_PORTABLE_RUNTIME: ${{ runner.temp }}/cyberstrike-portable-runtime/${{ matrix.target }}
-      CYBERSTRIKE_RELEASE_OUTPUT: ${{ runner.temp }}/cyberstrike-release/${{ matrix.target }}
-      CYBERSTRIKE_RELEASE_SBOM: ${{ runner.temp }}/cyberstrike-release/${{ matrix.target }}/sbom.cdx.json
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.tmp/cyberstrike-tauri-target
+      CYBERSTRIKE_RELEASE_BUILD_ROOT: ${{ github.workspace }}/.tmp/cyberstrike-tauri-target/${{ matrix.target }}/release
+      CYBERSTRIKE_PORTABLE_STAGE: ${{ github.workspace }}/.tmp/cyberstrike-portable-stage/${{ matrix.target }}
+      CYBERSTRIKE_PORTABLE_EXTRACT: ${{ github.workspace }}/.tmp/cyberstrike-portable-extract/${{ matrix.target }}
+      CYBERSTRIKE_PORTABLE_RUNTIME: ${{ github.workspace }}/.tmp/cyberstrike-portable-runtime/${{ matrix.target }}
+      CYBERSTRIKE_RELEASE_OUTPUT: ${{ github.workspace }}/.tmp/cyberstrike-release/${{ matrix.target }}
+      CYBERSTRIKE_RELEASE_SBOM: ${{ github.workspace }}/.tmp/cyberstrike-release/${{ matrix.target }}/sbom.cdx.json
 
     steps:
       - uses: actions/checkout@v6
