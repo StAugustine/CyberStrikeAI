@@ -1702,15 +1702,18 @@ func desktopDeleteManagementFixture(t *testing.T, baseURL, token, conversationID
 }
 
 type desktopExtensionFixture struct {
-	roleName          string
-	rolePath          string
-	skillName         string
-	skillPath         string
-	agentFilename     string
-	agentPath         string
-	workflowID        string
-	knowledgeItemID   string
-	knowledgeItemPath string
+	roleName           string
+	rolePath           string
+	skillName          string
+	skillPath          string
+	agentFilename      string
+	agentPath          string
+	workflowID         string
+	importedWorkflowID string
+	workflowImportID   string
+	workflowRunID      string
+	knowledgeItemID    string
+	knowledgeItemPath  string
 }
 
 func desktopCreateExtensionFixture(t *testing.T, baseURL, token, managedResourcesRoot string) desktopExtensionFixture {
@@ -1765,6 +1768,13 @@ func desktopCreateExtensionFixture(t *testing.T, baseURL, token, managedResource
 	if status != http.StatusOK || workflow["name"] != "Desktop Persistent Workflow" || workflow["version"] != float64(2) {
 		t.Fatalf("update desktop workflow status = %d, body = %#v", status, body)
 	}
+	fixture.importedWorkflowID, fixture.workflowImportID = desktopExerciseWorkflowPackage(
+		t,
+		baseURL,
+		token,
+		fixture.workflowID,
+		workflowGraph,
+	)
 
 	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/roles", token, map[string]interface{}{
 		"name":             fixture.roleName,
@@ -1793,6 +1803,22 @@ func desktopCreateExtensionFixture(t *testing.T, baseURL, token, managedResource
 	if status != http.StatusOK || role["description"] != "Desktop Persistent Role" {
 		t.Fatalf("update desktop role status = %d, body = %#v", status, body)
 	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/eino-agent", token, map[string]interface{}{
+		"message": "desktop workflow execution",
+		"role":    fixture.roleName,
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	fixture.workflowRunID, _ = body["workflowRunId"].(string)
+	if status != http.StatusOK ||
+		fixture.workflowRunID == "" ||
+		body["agentMode"] != "workflow" ||
+		body["workflowStatus"] != "completed" ||
+		body["awaitingHitl"] != false {
+		t.Fatalf("execute desktop role workflow status = %d, body = %#v", status, body)
+	}
+	desktopAssertWorkflowRun(t, baseURL, token, fixture.workflowRunID, fixture.workflowID)
 	fixture.rolePath = filepath.Join(managedResourcesRoot, "roles", fixture.roleName+".yaml")
 	desktopAssertManagedPath(t, managedResourcesRoot, fixture.rolePath)
 	if _, err := os.Stat(fixture.rolePath); err != nil {
@@ -1889,13 +1915,166 @@ func desktopCreateExtensionFixture(t *testing.T, baseURL, token, managedResource
 	return fixture
 }
 
+func desktopExerciseWorkflowPackage(
+	t *testing.T,
+	baseURL, token, workflowID string,
+	workflowGraph map[string]interface{},
+) (string, string) {
+	t.Helper()
+	status, headers, archiveData := desktopBodyRequest(
+		t,
+		http.MethodGet,
+		baseURL+"api/workflows/"+url.PathEscape(workflowID)+"/package",
+		token,
+		nil,
+		"",
+	)
+	packageHash := headers.Get("X-Workflow-Package-SHA256")
+	if status != http.StatusOK ||
+		!strings.HasPrefix(headers.Get("Content-Type"), "application/zip") ||
+		!strings.HasPrefix(packageHash, "sha256:") ||
+		headers.Get("ETag") != `"`+packageHash+`"` {
+		t.Fatalf("export desktop workflow package status = %d, headers = %#v", status, headers)
+	}
+	desktopAssertWorkflowPackageArchive(t, archiveData, workflowID)
+
+	status, body := desktopJSONRequest(t, http.MethodPut, baseURL+"api/workflows/"+url.PathEscape(workflowID), token, map[string]interface{}{
+		"name":        "Desktop Persistent Workflow",
+		"description": "Desktop workflow changed after package export",
+		"version":     3,
+		"enabled":     true,
+		"graph":       workflowGraph,
+	})
+	workflow, _ := body["workflow"].(map[string]interface{})
+	if status != http.StatusOK || workflow["version"] != float64(3) {
+		t.Fatalf("prepare desktop workflow package conflict status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopMultipartUploadRequest(
+		t,
+		baseURL+"api/workflow-package-inspections",
+		token,
+		workflowID+".csapkg.zip",
+		archiveData,
+		nil,
+	)
+	inspection, _ := body["inspection"].(map[string]interface{})
+	inspectionID, _ := inspection["id"].(string)
+	conflict, _ := inspection["conflict"].(map[string]interface{})
+	if status != http.StatusCreated || inspectionID == "" || conflict["state"] != "id_conflict" {
+		t.Fatalf("inspect desktop workflow package status = %d, body = %#v", status, body)
+	}
+
+	importedWorkflowID := "desktop-imported-workflow"
+	requestBody := map[string]interface{}{
+		"inspection_id": inspectionID,
+		"resolution": map[string]string{
+			"action":          "rename",
+			"new_workflow_id": importedWorkflowID,
+		},
+		"confirm_overwrite": false,
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/workflow-package-imports", token, requestBody)
+	errorBody, _ := body["error"].(map[string]interface{})
+	if status != http.StatusBadRequest || errorBody["code"] != "WFPKG_IDEMPOTENCY_KEY_REQUIRED" {
+		t.Fatalf("desktop workflow package missing idempotency status = %d, body = %#v", status, body)
+	}
+
+	idempotencyKey := "00000000-0000-4000-8000-000000000001"
+	status, body = desktopJSONRequestWithHeaders(
+		t,
+		http.MethodPost,
+		baseURL+"api/workflow-package-imports",
+		token,
+		requestBody,
+		map[string]string{"Idempotency-Key": idempotencyKey},
+	)
+	importResult, _ := body["import"].(map[string]interface{})
+	importID, _ := importResult["id"].(string)
+	if status != http.StatusCreated ||
+		importID == "" ||
+		importResult["result"] != "renamed" ||
+		importResult["target_workflow_id"] != importedWorkflowID {
+		t.Fatalf("import desktop workflow package status = %d, body = %#v", status, body)
+	}
+	status, replayBody := desktopJSONRequestWithHeaders(
+		t,
+		http.MethodPost,
+		baseURL+"api/workflow-package-imports",
+		token,
+		requestBody,
+		map[string]string{"Idempotency-Key": idempotencyKey},
+	)
+	replayImport, _ := replayBody["import"].(map[string]interface{})
+	if status != http.StatusOK || replayImport["id"] != importID {
+		t.Fatalf("replay desktop workflow package import status = %d, body = %#v", status, replayBody)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/workflow-package-imports/"+url.PathEscape(importID), token, nil)
+	persistedImport, _ := body["import"].(map[string]interface{})
+	if status != http.StatusOK || persistedImport["id"] != importID || persistedImport["result"] != "renamed" {
+		t.Fatalf("read desktop workflow package import status = %d, body = %#v", status, body)
+	}
+	return importedWorkflowID, importID
+}
+
+func desktopAssertWorkflowPackageArchive(t *testing.T, data []byte, workflowID string) {
+	t.Helper()
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("read desktop workflow package: %v", err)
+	}
+	wantEntries := map[string]bool{
+		"checksums.sha256":                  false,
+		"manifest.json":                     false,
+		"workflows/" + workflowID + ".json": false,
+	}
+	for _, file := range archive.File {
+		if _, exists := wantEntries[file.Name]; exists {
+			wantEntries[file.Name] = true
+		}
+	}
+	for name, found := range wantEntries {
+		if !found {
+			t.Fatalf("desktop workflow package missing %q", name)
+		}
+	}
+}
+
+func desktopAssertWorkflowRun(t *testing.T, baseURL, token, runID, workflowID string) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/workflows/runs/"+url.PathEscape(runID), token, nil)
+	run, _ := body["run"].(map[string]interface{})
+	if status != http.StatusOK || run["id"] != runID || run["workflow_id"] != workflowID || run["status"] != "completed" {
+		t.Fatalf("desktop workflow run status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/workflows/runs/"+url.PathEscape(runID)+"/replay", token, nil)
+	steps, _ := body["steps"].([]interface{})
+	if status != http.StatusOK || body["workflowRunId"] != runID || len(steps) < 2 {
+		t.Fatalf("desktop workflow replay status = %d, body = %#v", status, body)
+	}
+}
+
 func desktopAssertExtensionFixture(t *testing.T, baseURL, token string, fixture desktopExtensionFixture) {
 	t.Helper()
 	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/workflows/"+fixture.workflowID, token, nil)
 	workflow, _ := body["workflow"].(map[string]interface{})
-	if status != http.StatusOK || workflow["name"] != "Desktop Persistent Workflow" || workflow["version"] != float64(2) {
+	if status != http.StatusOK ||
+		workflow["name"] != "Desktop Persistent Workflow" ||
+		workflow["description"] != "Desktop workflow changed after package export" ||
+		workflow["version"] != float64(3) {
 		t.Fatalf("persisted desktop workflow status = %d, body = %#v", status, body)
 	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/workflows/"+fixture.importedWorkflowID, token, nil)
+	importedWorkflow, _ := body["workflow"].(map[string]interface{})
+	if status != http.StatusOK || importedWorkflow["id"] != fixture.importedWorkflowID || importedWorkflow["version"] != float64(1) {
+		t.Fatalf("persisted imported desktop workflow status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/workflow-package-imports/"+fixture.workflowImportID, token, nil)
+	workflowImport, _ := body["import"].(map[string]interface{})
+	if status != http.StatusOK || workflowImport["id"] != fixture.workflowImportID || workflowImport["target_workflow_id"] != fixture.importedWorkflowID {
+		t.Fatalf("persisted desktop workflow package import status = %d, body = %#v", status, body)
+	}
+	desktopAssertWorkflowRun(t, baseURL, token, fixture.workflowRunID, fixture.workflowID)
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/roles/"+url.PathEscape(fixture.roleName), token, nil)
 	role, _ := body["role"].(map[string]interface{})
 	if status != http.StatusOK || role["description"] != "Desktop Persistent Role" || role["workflow_id"] != fixture.workflowID {
@@ -1929,6 +2108,11 @@ func desktopAssertExtensionFixture(t *testing.T, baseURL, token string, fixture 
 	if status != http.StatusOK || auditTotal < 2 {
 		t.Fatalf("persisted desktop audit status = %d, body = %#v", status, body)
 	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs?category=workflow_package", token, nil)
+	packageAuditTotal, _ := body["total"].(float64)
+	if status != http.StatusOK || packageAuditTotal < 3 {
+		t.Fatalf("persisted desktop workflow package audit status = %d, body = %#v", status, body)
+	}
 }
 
 func desktopDeleteExtensionFixture(t *testing.T, baseURL, token string, fixture desktopExtensionFixture) {
@@ -1940,6 +2124,7 @@ func desktopDeleteExtensionFixture(t *testing.T, baseURL, token string, fixture 
 		{target: baseURL + "api/multi-agent/markdown-agents/" + fixture.agentFilename},
 		{target: baseURL + "api/skills/" + fixture.skillName},
 		{target: baseURL + "api/roles/" + url.PathEscape(fixture.roleName)},
+		{target: baseURL + "api/workflows/" + fixture.importedWorkflowID},
 		{target: baseURL + "api/workflows/" + fixture.workflowID},
 	} {
 		status, body := desktopJSONRequest(t, http.MethodDelete, request.target, token, nil)
@@ -1954,6 +2139,7 @@ func desktopDeleteExtensionFixture(t *testing.T, baseURL, token string, fixture 
 		{target: baseURL + "api/multi-agent/markdown-agents/" + fixture.agentFilename},
 		{target: baseURL + "api/skills/" + fixture.skillName},
 		{target: baseURL + "api/roles/" + url.PathEscape(fixture.roleName)},
+		{target: baseURL + "api/workflows/" + fixture.importedWorkflowID},
 		{target: baseURL + "api/workflows/" + fixture.workflowID},
 	} {
 		status, _ := desktopJSONRequest(t, http.MethodGet, request.target, token, nil)
@@ -2570,6 +2756,16 @@ func desktopBodyRequest(t *testing.T, method, target, token string, body io.Read
 
 func desktopJSONRequest(t *testing.T, method, target, token string, body interface{}) (int, map[string]interface{}) {
 	t.Helper()
+	return desktopJSONRequestWithHeaders(t, method, target, token, body, nil)
+}
+
+func desktopJSONRequestWithHeaders(
+	t *testing.T,
+	method, target, token string,
+	body interface{},
+	headers map[string]string,
+) (int, map[string]interface{}) {
+	t.Helper()
 	var requestBody io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -2587,6 +2783,9 @@ func desktopJSONRequest(t *testing.T, method, target, token string, body interfa
 	}
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	for name, value := range headers {
+		request.Header.Set(name, value)
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
