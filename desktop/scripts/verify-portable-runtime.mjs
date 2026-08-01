@@ -244,11 +244,38 @@ function listArchive(archivePath) {
 }
 
 function extractArchive(archivePath, destination) {
-  const command = process.platform === "darwin" ? "/usr/bin/ditto" : "tar.exe";
-  const args = process.platform === "darwin"
-    ? ["-x", "-k", archivePath, destination]
-    : ["-xf", archivePath, "-C", destination];
-  ensureCommand(spawnSync(command, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }), "extract portable archive");
+  if (process.platform === "darwin") {
+    ensureCommand(
+      spawnSync("/usr/bin/ditto", ["-x", "-k", archivePath, destination], {
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+      }),
+      "extract portable archive",
+    );
+    return;
+  }
+  ensureCommand(
+    spawnSync(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory($env:CYBERSTRIKE_ZIP_ARCHIVE, $env:CYBERSTRIKE_ZIP_DESTINATION)",
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CYBERSTRIKE_ZIP_ARCHIVE: archivePath,
+          CYBERSTRIKE_ZIP_DESTINATION: destination,
+        },
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    ),
+    "extract portable archive",
+  );
 }
 
 async function resolveRuntimeLayout(extractionDirectory, kind) {

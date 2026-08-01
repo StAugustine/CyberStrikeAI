@@ -116,12 +116,34 @@ function portableReadme(kind) {
 
 function runArchive({ portableRoot, archivePath }) {
   const parent = path.dirname(portableRoot);
-  const name = path.basename(portableRoot);
-  const command = process.platform === "darwin" ? "/usr/bin/ditto" : "tar.exe";
-  const args = process.platform === "darwin"
-    ? ["-c", "-k", "--sequesterRsrc", "--keepParent", portableRoot, archivePath]
-    : ["-a", "-c", "-f", archivePath, name];
-  const result = spawnSync(command, args, { cwd: parent, stdio: "inherit" });
+  let result;
+  if (process.platform === "darwin") {
+    result = spawnSync(
+      "/usr/bin/ditto",
+      ["-c", "-k", "--sequesterRsrc", "--keepParent", portableRoot, archivePath],
+      { cwd: parent, stdio: "inherit" },
+    );
+  } else {
+    result = spawnSync(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory($env:CYBERSTRIKE_ZIP_SOURCE, $env:CYBERSTRIKE_ZIP_DESTINATION, [System.IO.Compression.CompressionLevel]::Optimal, $false)",
+      ],
+      {
+        cwd: parent,
+        env: {
+          ...process.env,
+          CYBERSTRIKE_ZIP_SOURCE: parent,
+          CYBERSTRIKE_ZIP_DESTINATION: archivePath,
+        },
+        stdio: "inherit",
+      },
+    );
+  }
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`portable archive command failed with status ${result.status}`);
 }
