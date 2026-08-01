@@ -32,9 +32,12 @@ test('桌面 AI 向导提供明确的凭据库和失败提示', () => {
 test('桌面主窗口只暴露固定的数据和日志目录入口', () => {
     const html = fs.readFileSync('web/templates/index.html', 'utf8');
     const script = fs.readFileSync('web/static/js/desktop-setup.js', 'utf8');
+    const capability = JSON.parse(fs.readFileSync('desktop/src-tauri/capabilities/desktop-paths.json', 'utf8'));
     assert.match(html, /id="desktop-directory-actions" hidden/);
     assert.match(script, /invoke\('open_desktop_directory', \{ directory \}\)/);
     assert.match(script, /window\.__TAURI__\?\.core\?\.invoke/);
+    assert.deepEqual(capability.windows, ['main']);
+    assert.deepEqual(capability.remote, { urls: ['http://127.0.0.1:*'] });
 });
 
 test('桌面数据维护入口仅打开受限的本地维护窗口', () => {

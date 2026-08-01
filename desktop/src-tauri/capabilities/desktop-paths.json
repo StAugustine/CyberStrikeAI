@@ -3,6 +3,9 @@
   "identifier": "desktop-paths",
   "description": "The main desktop window may open fixed application directories, enter data maintenance, and explicitly enable or disable local plugin discovery.",
   "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
   "permissions": [
     "allow-open-desktop-directory",
     "allow-open-data-maintenance",
