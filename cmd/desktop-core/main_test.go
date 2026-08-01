@@ -1069,7 +1069,8 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveRe
 			http.Error(response, "unexpected path", http.StatusBadRequest)
 			return
 		}
-		if request.Header.Get("Authorization") != "Bearer stream-secret" {
+		authorization := request.Header.Get("Authorization")
+		if authorization != "Bearer stream-secret" && authorization != "Bearer desktop-embedding-secret" {
 			t.Errorf("desktop fake AI authorization = %q", request.Header.Get("Authorization"))
 			http.Error(response, "unexpected authorization", http.StatusUnauthorized)
 			return
@@ -1162,6 +1163,17 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveRe
 			desktopPayloadHasRole(payload, "tool") &&
 			!bytes.Contains(requestData, []byte("desktop-mcp:golden")) {
 			t.Error("desktop external MCP result was not returned to the model")
+		}
+		if bytes.Contains(requestData, []byte("desktop-knowledge-retrieval")) &&
+			desktopPayloadHasTool(payload, "search_knowledge_base") &&
+			!desktopPayloadHasRole(payload, "tool") {
+			desktopWriteToolCallResponse(response, payload, "call-desktop-knowledge", "search_knowledge_base", `{"query":"Persisted desktop knowledge content","risk_type":"desktop-golden"}`)
+			return
+		}
+		if bytes.Contains(requestData, []byte("desktop-knowledge-retrieval")) &&
+			desktopPayloadHasRole(payload, "tool") &&
+			!bytes.Contains(requestData, []byte("Persisted desktop knowledge content.")) {
+			t.Error("desktop knowledge retrieval result was not returned to the model")
 		}
 		if bytes.Contains(requestData, []byte("desktop-tool-execution")) &&
 			desktopPayloadHasTool(payload, "query_assets") &&
@@ -1714,6 +1726,7 @@ type desktopExtensionFixture struct {
 	workflowRunID      string
 	knowledgeItemID    string
 	knowledgeItemPath  string
+	knowledgeLogID     string
 }
 
 func desktopCreateExtensionFixture(t *testing.T, baseURL, token, managedResourcesRoot string) desktopExtensionFixture {
@@ -1906,6 +1919,7 @@ func desktopCreateExtensionFixture(t *testing.T, baseURL, token, managedResource
 	}
 	desktopAssertManagedPath(t, managedResourcesRoot, fixture.knowledgeItemPath)
 	desktopWaitForKnowledgeIndex(t, baseURL, token, fixture.knowledgeItemID)
+	fixture.knowledgeLogID = desktopExerciseKnowledgeRetrieval(t, baseURL, token, fixture.knowledgeItemID)
 
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs?category=workflow&resource_id="+url.QueryEscape(fixture.workflowID), token, nil)
 	auditTotal, _ := body["total"].(float64)
@@ -2103,6 +2117,8 @@ func desktopAssertExtensionFixture(t *testing.T, baseURL, token string, fixture 
 	if status != http.StatusOK || body["enabled"] != true || knowledgeTotal < 1 {
 		t.Fatalf("persisted desktop knowledge stats status = %d, body = %#v", status, body)
 	}
+	desktopAssertKnowledgeSearch(t, baseURL, token, fixture.knowledgeItemID)
+	desktopAssertKnowledgeRetrievalLog(t, baseURL, token, fixture.knowledgeLogID, fixture.knowledgeItemID)
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs?category=workflow&resource_id="+url.QueryEscape(fixture.workflowID), token, nil)
 	auditTotal, _ := body["total"].(float64)
 	if status != http.StatusOK || auditTotal < 2 {
@@ -2117,6 +2133,10 @@ func desktopAssertExtensionFixture(t *testing.T, baseURL, token string, fixture 
 
 func desktopDeleteExtensionFixture(t *testing.T, baseURL, token string, fixture desktopExtensionFixture) {
 	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodDelete, baseURL+"api/knowledge/retrieval-logs/"+fixture.knowledgeLogID, token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("delete desktop knowledge retrieval log status = %d, body = %#v", status, body)
+	}
 	for _, request := range []struct {
 		target string
 	}{
@@ -2146,6 +2166,10 @@ func desktopDeleteExtensionFixture(t *testing.T, baseURL, token string, fixture 
 		if status != http.StatusNotFound {
 			t.Fatalf("deleted desktop extension resource %s status = %d, want 404", request.target, status)
 		}
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/retrieval-logs?limit=100", token, nil)
+	if status != http.StatusOK || desktopNestedItem(body, "logs", "id", fixture.knowledgeLogID) != nil {
+		t.Fatalf("deleted desktop knowledge retrieval log remained visible: status = %d, body = %#v", status, body)
 	}
 	for _, path := range []string{fixture.rolePath, fixture.skillPath, fixture.agentPath, fixture.knowledgeItemPath} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -2177,6 +2201,82 @@ func desktopWaitForKnowledgeIndex(t *testing.T, baseURL, token, itemID string) {
 	}
 	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/index-status", token, nil)
 	t.Fatalf("desktop knowledge item %s was not indexed: status = %d, body = %#v", itemID, status, body)
+}
+
+func desktopExerciseKnowledgeRetrieval(t *testing.T, baseURL, token, itemID string) string {
+	t.Helper()
+	desktopAssertKnowledgeSearch(t, baseURL, token, itemID)
+	events := desktopSSERequest(t, baseURL+"api/eino-agent/stream", token, map[string]interface{}{
+		"message": "desktop-knowledge-retrieval",
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	conversationID := ""
+	for _, event := range events {
+		if event["type"] != "conversation" {
+			continue
+		}
+		data, _ := event["data"].(map[string]interface{})
+		conversationID, _ = data["conversationId"].(string)
+	}
+	if conversationID == "" || !desktopSSEHasEvent(events, "response") || !desktopSSEHasEvent(events, "done") {
+		t.Fatalf("desktop knowledge retrieval Agent events = %#v", events)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/retrieval-logs?conversationId="+url.QueryEscape(conversationID)+"&limit=10", token, nil)
+		log := desktopNestedItem(body, "logs", "query", "Persisted desktop knowledge content")
+		if status == http.StatusOK && log != nil {
+			logID, _ := log["id"].(string)
+			if logID == "" || log["riskType"] != "desktop-golden" || !desktopJSONArrayValueContains(log["retrievedItems"], itemID) {
+				t.Fatalf("desktop knowledge retrieval log = %#v", log)
+			}
+			return logID
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/retrieval-logs?conversationId="+url.QueryEscape(conversationID)+"&limit=10", token, nil)
+	t.Fatalf("desktop knowledge retrieval log was not recorded: status = %d, body = %#v", status, body)
+	return ""
+}
+
+func desktopAssertKnowledgeSearch(t *testing.T, baseURL, token, itemID string) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/knowledge/search", token, map[string]interface{}{
+		"query":     "Persisted desktop knowledge content",
+		"riskType":  "desktop-golden",
+		"topK":      5,
+		"threshold": 0.99,
+	})
+	for _, raw := range desktopNestedItems(body, "results") {
+		result, _ := raw.(map[string]interface{})
+		item, _ := result["item"].(map[string]interface{})
+		if status == http.StatusOK && item["id"] == itemID && result["score"] == float64(1) {
+			return
+		}
+	}
+	t.Fatalf("desktop knowledge semantic search status = %d, body = %#v", status, body)
+}
+
+func desktopAssertKnowledgeRetrievalLog(t *testing.T, baseURL, token, logID, itemID string) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/retrieval-logs?limit=100", token, nil)
+	log := desktopNestedItem(body, "logs", "id", logID)
+	if status != http.StatusOK || log == nil || log["query"] != "Persisted desktop knowledge content" || !desktopJSONArrayValueContains(log["retrievedItems"], itemID) {
+		t.Fatalf("persisted desktop knowledge retrieval log status = %d, body = %#v", status, body)
+	}
+}
+
+func desktopJSONArrayValueContains(value interface{}, want string) bool {
+	items, _ := value.([]interface{})
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 type desktopOperationsFixture struct {
