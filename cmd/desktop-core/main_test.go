@@ -203,6 +203,25 @@ audit:
 	if status != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated conversations status = %d", status)
 	}
+	for _, path := range []string{
+		"api/projects",
+		"api/assets",
+		"api/vulnerabilities",
+		"api/batch-tasks",
+		"api/knowledge/items",
+		"api/workflows",
+		"api/roles",
+		"api/skills",
+		"api/multi-agent/markdown-agents",
+		"api/config/tools",
+		"api/external-mcp",
+		"api/chat-uploads",
+		"api/audit/logs",
+	} {
+		if status := desktopStatusRequest(t, http.MethodGet, ready.URL+path, ""); status != http.StatusUnauthorized {
+			t.Fatalf("unauthenticated desktop D5 route /%s status = %d, want 401", path, status)
+		}
+	}
 	status, _ = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/login", "", map[string]string{
 		"username": "admin",
 		"password": "wrong-password",
