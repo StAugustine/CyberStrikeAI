@@ -1189,6 +1189,17 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveRe
 			!bytes.Contains(requestData, []byte("Persisted desktop knowledge content.")) {
 			t.Error("desktop knowledge retrieval result was not returned to the model")
 		}
+		if bytes.Contains(requestData, []byte("desktop-skill-runtime")) &&
+			desktopPayloadHasTool(payload, "skill") &&
+			!desktopPayloadHasRole(payload, "tool") {
+			desktopWriteToolCallResponse(response, payload, "call-desktop-skill", "skill", `{"skill":"desktop-golden-skill"}`)
+			return
+		}
+		if bytes.Contains(requestData, []byte("desktop-skill-runtime")) &&
+			desktopPayloadHasRole(payload, "tool") &&
+			!bytes.Contains(requestData, []byte("Desktop Persistent Skill")) {
+			t.Error("desktop Skill content was not returned to the model")
+		}
 		if bytes.Contains(requestData, []byte("desktop-tool-execution")) &&
 			desktopPayloadHasTool(payload, "query_assets") &&
 			!desktopPayloadHasRole(payload, "tool") {
@@ -2193,6 +2204,24 @@ func desktopCreateExtensionFixture(t *testing.T, baseURL, token, managedResource
 	if status != http.StatusOK || body["path"] != "references/desktop.md" {
 		t.Fatalf("write desktop skill package file status = %d, body = %#v", status, body)
 	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/skills/"+fixture.skillName+"/files", token, nil)
+	if status != http.StatusOK || desktopNestedItem(body, "files", "path", "SKILL.md") == nil || desktopNestedItem(body, "files", "path", "references/desktop.md") == nil {
+		t.Fatalf("list desktop skill package files status = %d, body = %#v", status, body)
+	}
+	skillEvents := desktopSSERequest(t, baseURL+"api/eino-agent/stream", token, map[string]interface{}{
+		"message": "desktop-skill-runtime",
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	if !desktopSSEHasEvent(skillEvents, "response") || !desktopSSEHasEvent(skillEvents, "done") {
+		t.Fatalf("desktop Skill runtime events = %#v", skillEvents)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/skills/stats", token, nil)
+	skillStats := desktopNestedItem(body, "stats", "skill_name", fixture.skillName)
+	if status != http.StatusOK || skillStats == nil || skillStats["total_calls"] != float64(1) || skillStats["success_calls"] != float64(1) || skillStats["failed_calls"] != float64(0) {
+		t.Fatalf("desktop Skill runtime stats status = %d, body = %#v", status, body)
+	}
 
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/multi-agent/markdown-agents", token, nil)
 	agentsDir, _ := body["dir"].(string)
@@ -2434,6 +2463,11 @@ func desktopAssertExtensionFixture(t *testing.T, baseURL, token string, fixture 
 	if status != http.StatusOK || body["content"] != "desktop skill reference" {
 		t.Fatalf("persisted desktop skill package file status = %d, body = %#v", status, body)
 	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/skills/stats", token, nil)
+	skillStats := desktopNestedItem(body, "stats", "skill_name", fixture.skillName)
+	if status != http.StatusOK || skillStats == nil || skillStats["total_calls"] != float64(1) || skillStats["success_calls"] != float64(1) {
+		t.Fatalf("persisted desktop Skill runtime stats status = %d, body = %#v", status, body)
+	}
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/multi-agent/markdown-agents/"+fixture.agentFilename, token, nil)
 	if status != http.StatusOK || body["name"] != "Desktop Persistent Agent" || body["bind_role"] != fixture.roleName || body["max_iterations"] != float64(4) {
 		t.Fatalf("persisted desktop markdown agent status = %d, body = %#v", status, body)
@@ -2466,6 +2500,15 @@ func desktopDeleteExtensionFixture(t *testing.T, baseURL, token string, fixture 
 	status, body := desktopJSONRequest(t, http.MethodDelete, baseURL+"api/knowledge/retrieval-logs/"+fixture.knowledgeLogID, token, nil)
 	if status != http.StatusOK {
 		t.Fatalf("delete desktop knowledge retrieval log status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodDelete, baseURL+"api/skills/"+fixture.skillName+"/stats", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("clear desktop Skill runtime stats status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/skills/stats", token, nil)
+	skillStats := desktopNestedItem(body, "stats", "skill_name", fixture.skillName)
+	if status != http.StatusOK || skillStats == nil || skillStats["total_calls"] != float64(0) {
+		t.Fatalf("cleared desktop Skill runtime stats status = %d, body = %#v", status, body)
 	}
 	for _, request := range []struct {
 		target string
