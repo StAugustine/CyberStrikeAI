@@ -71,7 +71,7 @@ jobs:
       - name: Assemble plugin checksums
         shell: bash
         run: |
-          cp "$GITHUB_WORKSPACE/.tmp/burp-target/cyberstrikeai-burp-extension-1.0.0.jar" \
+          cp "$GITHUB_WORKSPACE/.tmp/burp-target/cyberstrikeai-burp-extension-1.1.0.jar" \
             "$GITHUB_WORKSPACE/.tmp/plugin-release/cyberstrikeai-burp-extension.jar"
           cd "$GITHUB_WORKSPACE/.tmp/plugin-release"
           sha256sum cyberstrikeai-browser-extension.zip cyberstrikeai-burp-extension.jar > SHA256SUMS

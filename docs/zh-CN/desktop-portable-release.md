@@ -1,5 +1,7 @@
 # 桌面免安装候选发布
 
+当前 R2 组件版本为：桌面壳/core/native host 0.2.0、浏览器扩展 0.4.0、Burp 插件 1.1.0。发布元数据门禁会阻止 npm、Cargo、Tauri、资源 manifest 或插件构建版本不一致的候选。
+
 桌面客户端当前为开发候选，提供以下三个免安装 ZIP：
 
 | 目标 | ZIP 内容 | 启动方式 |
@@ -17,6 +19,7 @@
 - 删除解压目录只删除程序，不自动删除用户数据。
 - 替换升级时先完全退出应用，再删除旧程序目录并解压新 ZIP。
 - 新版本首次启动会复用原用户数据，并执行既有的备份、迁移和失败恢复流程。
+- 从 R1 0.1.0 首次启动 R2 0.2.0 时会先创建可校验恢复点；升级后配置仍保存系统凭据库引用，不把 secret 写回 YAML。
 - 需要清除或恢复数据时使用应用内“数据导入与恢复”，不要手工拼接新旧 `defaults/`。
 
 Windows 便携包不安装 WebView2。目标电脑必须已有 Microsoft Edge WebView2 Evergreen Runtime；缺失或损坏时应先通过 Microsoft 官方渠道修复。macOS 开发候选未签名和公证，可能被 Gatekeeper 阻止；正式对外分发前必须完成 Developer ID 签名和 notarization，不能把关闭系统安全检查作为发布步骤。
@@ -36,6 +39,8 @@ Windows 便携包不安装 WebView2。目标电脑必须已有 Microsoft Edge We
 每个平台的 CI artifact 保留 7 天且明确标记 `portable-unsigned`。普通 PR 不读取任何发布私钥。
 
 同一流水线另生成跨平台 `desktop-plugin-integrations-unsigned` artifact，其中包含固定官方扩展 ID 的浏览器扩展 ZIP、Burp 插件 JAR 和 `SHA256SUMS`。插件联动默认关闭，必须先在桌面客户端中显式启用；发现信息不包含密码或会话，插件仍需正常登录。
+
+R2 的 `/api-docs` 使用当前本地实例，受认证 OpenAPI 规范只列出 desktop 实际注册的接口。Terminal、WebShell、C2、机器人、平台多用户 RBAC 和远程服务模式不属于桌面版；对应页面、路由、后台服务和专用资源不会随便携包恢复。
 
 当前已验证的候选由 [GitHub Actions 运行 30684180216](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30684180216) 生成，三个 artifact 均已通过上述全部步骤：
 

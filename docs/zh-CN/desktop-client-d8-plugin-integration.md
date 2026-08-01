@@ -2,7 +2,7 @@
 
 > 验证日期：2026-07-31
 > 分支：`codex/desktop-client`
-> 状态：实现与本机门禁已通过，等待三个一级平台 CI 复核
+> 状态：已完成，三个一级平台 CI 均通过
 
 ## 1. 交付结果
 
@@ -62,4 +62,4 @@ chrome-extension://okialefpaaimfgjelpednbehgebgkdgo
 - macOS arm64 真实 release `.app` 和免安装 ZIP；内容审计确认 native host 位于 `Contents/MacOS/`，三个可执行文件均为 arm64；
 - 打包后真实数据恢复、恢复前恢复点、程序目录删除后用户数据保留、重新解压复用、590 组件 CycloneDX SBOM 和 SHA-256 清单。
 
-三个干净原生 runner 的 Windows x64、macOS arm64 和 macOS x64 结果将在本提交 CI 完成后写入最终 R2 验收报告。
+三个干净原生 runner 已全部通过：[基础桌面流水线 30685977378](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30685977378)覆盖 Windows x64、macOS arm64 和 macOS x64 的 Go/Web/Rust、native host、Tauri 构建与生命周期；[插件/免安装流水线 30685977367](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30685977367)覆盖浏览器/Burp 产物和三个平台的免安装构建、内容审计、真实恢复、程序目录替换、SBOM 与校验和。

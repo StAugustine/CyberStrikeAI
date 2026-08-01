@@ -8,6 +8,7 @@ import { parseArguments, requireReleaseTarget } from "./release-support.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(scriptDirectory, "..");
+const r1Version = "0.1.0";
 
 export async function verifyPortableRuntime({
   targetTriple,
@@ -33,7 +34,43 @@ export async function verifyPortableRuntime({
       throw new Error(`${path.basename(binary)} architecture is ${architecture}, expected ${expectedArchitecture}`);
     }
   }
+  const upgradeFixture = await createPortableR1Fixture(runtimeDirectory, layout.resources);
+  const upgradedLifecycle = runCoreLifecycle(
+    layout.sidecar,
+    layout.resources,
+    runtimeDirectory,
+    packageJSON.version,
+    true,
+  );
+  await verifyPortableR1Fixture(upgradeFixture, packageJSON.version);
   const first = runMaintenance(layout.sidecar, layout.resources, runtimeDirectory, packageJSON.version);
+  const upgradeBackup = first.backups?.find((backup) => backup.valid
+    && backup.kind === "upgrade"
+    && backup.from_version === r1Version
+    && backup.to_version === packageJSON.version);
+  if (!upgradeBackup) {
+    throw new Error(`packaged sidecar did not create an ${r1Version} to ${packageJSON.version} recovery point`);
+  }
+  const markerPath = path.join(runtimeDirectory, "data", "portable-data-marker.txt");
+  await writeFile(markerPath, "portable data survives program replacement\n", "utf8");
+
+  await rm(layout.portableRoot, { recursive: true, force: false });
+  if ((await readFile(markerPath, "utf8")).trim() !== "portable data survives program replacement") {
+    throw new Error("portable user data marker changed after program removal");
+  }
+  extractArchive(archivePath, extractionDirectory);
+  layout = await resolveRuntimeLayout(extractionDirectory, releaseTarget.portableKind);
+  const replacedLifecycle = runCoreLifecycle(
+    layout.sidecar,
+    layout.resources,
+    runtimeDirectory,
+    packageJSON.version,
+    false,
+  );
+  const second = runMaintenance(layout.sidecar, layout.resources, runtimeDirectory, packageJSON.version);
+  if ((await readFile(markerPath, "utf8")).trim() !== "portable data survives program replacement") {
+    throw new Error("portable user data marker changed after program replacement");
+  }
   const restoreFixture = await createPortableRestoreFixture(runtimeDirectory, packageJSON.version);
   await writeFile(restoreFixture.liveMarker, "portable restore mutation\n", "utf8");
   const restored = runMaintenance(
@@ -56,19 +93,6 @@ export async function verifyPortableRuntime({
   if (!rollback?.valid) {
     throw new Error("packaged sidecar did not retain a verified pre-restore recovery point");
   }
-  const markerPath = path.join(runtimeDirectory, "data", "portable-data-marker.txt");
-  await writeFile(markerPath, "portable data survives program replacement\n", "utf8");
-
-  await rm(layout.portableRoot, { recursive: true, force: false });
-  if ((await readFile(markerPath, "utf8")).trim() !== "portable data survives program replacement") {
-    throw new Error("portable user data marker changed after program removal");
-  }
-  extractArchive(archivePath, extractionDirectory);
-  layout = await resolveRuntimeLayout(extractionDirectory, releaseTarget.portableKind);
-  const second = runMaintenance(layout.sidecar, layout.resources, runtimeDirectory, packageJSON.version);
-  if ((await readFile(markerPath, "utf8")).trim() !== "portable data survives program replacement") {
-    throw new Error("portable user data marker changed after program replacement");
-  }
 
   const report = {
     schemaVersion: 1,
@@ -82,11 +106,16 @@ export async function verifyPortableRuntime({
       applicationArchitecture: expectedArchitecture,
       sidecarArchitecture: expectedArchitecture,
       nativeHostArchitecture: expectedArchitecture,
+      r1VersionFixture: r1Version,
+      r1ToR2Lifecycle: upgradedLifecycle,
+      r1ToR2RecoveryPoint: upgradeBackup.id,
+      r1ConfigurationPreserved: "passed",
       firstExtractMaintenance: first.operation,
       packagedBackupRestore: restored.restore.backup_id,
       preRestoreRecoveryPoint: "verified",
       programDirectoryRemoval: "passed",
       externalUserDataPreserved: "passed",
+      replacementLifecycle: replacedLifecycle,
       replacementExtractMaintenance: second.operation,
     },
   };
@@ -96,6 +125,82 @@ export async function verifyPortableRuntime({
     "utf8",
   );
   return report;
+}
+
+function runCoreLifecycle(sidecar, resources, runtimeDirectory, version, bootstrapRequired) {
+  const commands = [];
+  if (bootstrapRequired) {
+    commands.push({
+      type: "BOOTSTRAP",
+      protocol_version: 1,
+      password: "portable-runtime-bootstrap",
+    });
+  }
+  commands.push({ type: "SHUTDOWN", protocol_version: 1 });
+  const result = spawnSync(sidecar, sidecarArguments(resources, runtimeDirectory, version), {
+    cwd: path.dirname(sidecar),
+    encoding: "utf8",
+    input: `${commands.map((command) => JSON.stringify(command)).join("\n")}\n`,
+    timeout: 60_000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  ensureCommand(result, "run packaged sidecar lifecycle");
+  const messages = result.stdout.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+  const types = messages.map((message) => message.type);
+  if (!messages.some((message) => message.type === "READY" && message.app_version === version)) {
+    throw new Error("packaged sidecar did not reach READY with the release version");
+  }
+  if (bootstrapRequired && !types.includes("BOOTSTRAP_REQUIRED")) {
+    throw new Error("R1 fixture did not preserve the expected first-start bootstrap state");
+  }
+  if (!bootstrapRequired && (types.includes("BOOTSTRAP_REQUIRED") || types.includes("CREDENTIAL_MIGRATION_REQUIRED"))) {
+    throw new Error("program replacement unexpectedly requested desktop reinitialization");
+  }
+  return bootstrapRequired ? "BOOTSTRAP_REQUIRED to READY" : "READY without reinitialization";
+}
+
+function sidecarArguments(resources, runtimeDirectory, version) {
+  return [
+    "--data-dir", path.join(runtimeDirectory, "data"),
+    "--config-dir", path.join(runtimeDirectory, "config"),
+    "--cache-dir", path.join(runtimeDirectory, "cache"),
+    "--log-dir", path.join(runtimeDirectory, "logs"),
+    "--temp-dir", path.join(runtimeDirectory, "temp"),
+    "--resource-dir", resources,
+    "--app-version", version,
+  ];
+}
+
+async function createPortableR1Fixture(runtimeDirectory, resources) {
+  const dataMarker = path.join(runtimeDirectory, "data", "portable-data-marker.txt");
+  const configFile = path.join(runtimeDirectory, "config", "config.yaml");
+  const resourceState = path.join(runtimeDirectory, "data", "resource-state.json");
+  const dataContent = "portable R1 data survives R2 replacement\n";
+  const configMarker = "# portable-r1-configuration-marker\n";
+  const template = await readFile(path.join(resources, "config.example.yaml"), "utf8");
+  await mkdir(path.dirname(dataMarker), { recursive: true });
+  await mkdir(path.dirname(configFile), { recursive: true });
+  await writeFile(dataMarker, dataContent, { encoding: "utf8", mode: 0o600 });
+  await writeFile(configFile, `${configMarker}${template}`, { encoding: "utf8", mode: 0o600 });
+  await writeFile(
+    resourceState,
+    `${JSON.stringify({ schema_version: 1, app_version: r1Version, files: {} }, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return { dataMarker, dataContent, configFile, configMarker, resourceState };
+}
+
+async function verifyPortableR1Fixture(fixture, version) {
+  if ((await readFile(fixture.dataMarker, "utf8")) !== fixture.dataContent) {
+    throw new Error("R1 data marker changed during the R2 upgrade");
+  }
+  if (!(await readFile(fixture.configFile, "utf8")).startsWith(fixture.configMarker)) {
+    throw new Error("R1 configuration changed during the R2 upgrade");
+  }
+  const state = JSON.parse(await readFile(fixture.resourceState, "utf8"));
+  if (state.app_version !== version) {
+    throw new Error(`desktop resource state is ${state.app_version}, expected ${version}`);
+  }
 }
 
 export async function binaryArchitecture(filePath) {
@@ -175,16 +280,8 @@ function runMaintenance(
   operation = "list-backups",
   backupID = "",
 ) {
-  const argumentsList = [
-    "--data-dir", path.join(runtimeDirectory, "data"),
-    "--config-dir", path.join(runtimeDirectory, "config"),
-    "--cache-dir", path.join(runtimeDirectory, "cache"),
-    "--log-dir", path.join(runtimeDirectory, "logs"),
-    "--temp-dir", path.join(runtimeDirectory, "temp"),
-    "--resource-dir", resources,
-    "--app-version", version,
-    "--maintenance", operation,
-  ];
+  const argumentsList = sidecarArguments(resources, runtimeDirectory, version);
+  argumentsList.push("--maintenance", operation);
   if (backupID) argumentsList.push("--backup-id", backupID);
   const result = spawnSync(sidecar, argumentsList, {
     cwd: path.dirname(sidecar),

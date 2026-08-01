@@ -30,4 +30,4 @@
 
 - [开发者指南](developer-guide.md) · [插件开发](plugin-development.md) · [前端国际化](frontend-i18n.md)
 - [测试指南](testing.md) · [贡献规范](contributing-guide.md) · [发布流程](release-process.md)
-- [桌面客户端二次开发计划](desktop-client-development-plan.md) · [桌面客户端计划审查](desktop-client-plan-review.md) · [D0 基线报告](desktop-client-d0-baseline.md) · [D1 技术验证报告](desktop-client-d1-poc.md)
+- [桌面免安装指南](desktop-portable-release.md) · [桌面客户端二次开发计划](desktop-client-development-plan.md) · [桌面客户端计划审查](desktop-client-plan-review.md) · [R1 验收](desktop-client-r1-acceptance.md) · [R2 验收](desktop-client-r2-acceptance.md)

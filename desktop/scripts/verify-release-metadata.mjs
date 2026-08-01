@@ -10,6 +10,18 @@ const repositoryDirectory = path.resolve(desktopDirectory, "..");
 
 export async function verifyReleaseMetadata(root = repositoryDirectory) {
   const desktop = path.join(root, "desktop");
+  const browserExtension = path.join(
+    root,
+    "plugins",
+    "browser-extension",
+    "cyberstrikeai-browser-extension",
+  );
+  const burpExtension = path.join(
+    root,
+    "plugins",
+    "burp-suite",
+    "cyberstrikeai-burp-extension",
+  );
   const packageJSON = await readJSON(path.join(desktop, "package.json"));
   const packageLock = await readJSON(path.join(desktop, "package-lock.json"));
   const tauriConfig = await readJSON(path.join(desktop, "src-tauri", "tauri.conf.json"));
@@ -17,6 +29,9 @@ export async function verifyReleaseMetadata(root = repositoryDirectory) {
   const cargoPackage = parseCargoPackage(
     await readFile(path.join(desktop, "src-tauri", "Cargo.toml"), "utf8"),
   );
+  const browserManifest = await readJSON(path.join(browserExtension, "manifest.json"));
+  const burpPOM = await readFile(path.join(burpExtension, "pom.xml"), "utf8");
+  const burpGradle = await readFile(path.join(burpExtension, "build.gradle"), "utf8");
 
   const versions = new Map([
     ["package.json", packageJSON.version],
@@ -29,6 +44,12 @@ export async function verifyReleaseMetadata(root = repositoryDirectory) {
   for (const [source, version] of versions) {
     assert(version === packageJSON.version, `${source} version ${version} does not match ${packageJSON.version}`);
   }
+  assert(browserManifest.version === "0.4.0", "browser extension version must be 0.4.0 for R2");
+  assert(
+    /<artifactId>cyberstrikeai-burp-extension<\/artifactId>\s*<version>1\.1\.0<\/version>/.test(burpPOM),
+    "Burp Maven version must be 1.1.0 for R2",
+  );
+  assert(/^version = '1\.1\.0'$/m.test(burpGradle), "Burp Gradle version must match Maven 1.1.0");
 
   assert(packageJSON.license === "Apache-2.0", "package.json license must be Apache-2.0");
   assert(packageLock.packages?.[""]?.license === "Apache-2.0", "package-lock root license must be Apache-2.0");
@@ -74,7 +95,13 @@ export async function verifyReleaseMetadata(root = repositoryDirectory) {
     assert(await exists(path.join(desktop, "src-tauri", icon)), `desktop icon is missing: ${icon}`);
   }
 
-  return { productName: tauriConfig.productName, identifier: tauriConfig.identifier, version: packageJSON.version };
+  return {
+    productName: tauriConfig.productName,
+    identifier: tauriConfig.identifier,
+    version: packageJSON.version,
+    browserExtensionVersion: browserManifest.version,
+    burpExtensionVersion: "1.1.0",
+  };
 }
 
 async function readJSON(filePath) {

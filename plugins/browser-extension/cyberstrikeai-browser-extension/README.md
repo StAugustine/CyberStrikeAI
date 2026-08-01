@@ -1,6 +1,6 @@
 ## CyberStrikeAI Browser Extension
 
-**Version 0.3.10** — Full docs: **README.zh-CN.md**
+**Version 0.4.0** — Full docs: **README.zh-CN.md**
 
 Chromium DevTools extension: capture Network traffic and send it to CyberStrikeAI for AI-assisted security testing. Aligned with the Burp Suite plugin.
 

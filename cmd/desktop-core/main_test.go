@@ -42,6 +42,10 @@ func TestDesktopCoreUpgradeTransactionResumesFromSingleRecoveryPoint(t *testing.
 		TempDir:   filepath.Join(root, "temp"),
 	}
 	v1Resources := writeTestResources(t, filepath.Join(root, "v1"), "1.0.0")
+	store.values["desktop-upgrade-fofa"] = "desktop-upgrade-api-secret"
+	appendTestResourceConfig(t, v1Resources, "1.0.0", `fofa:
+  api_key: keyring://desktop-upgrade-fofa
+`)
 	v1Options := runOptions{Roots: roots, ResourceDir: v1Resources, AppVersion: "1.0.0", CredentialStore: store}
 	v1 := startDesktopCoreTestProcess(t, v1Options, "desktop-upgrade-secret")
 	status, login := desktopJSONRequest(t, http.MethodPost, v1.URL+"api/auth/login", "", map[string]string{
@@ -128,6 +132,16 @@ func TestDesktopCoreUpgradeTransactionResumesFromSingleRecoveryPoint(t *testing.
 	closeErr := backupDatabase.Close()
 	if queryErr != nil || closeErr != nil || projectCount != 1 {
 		t.Fatalf("desktop upgrade backup project count = %d, query err=%v, close err=%v", projectCount, queryErr, closeErr)
+	}
+	if store.values["desktop-upgrade-fofa"] != "desktop-upgrade-api-secret" {
+		t.Fatal("desktop upgrade changed the system credential store value")
+	}
+	configData, err := os.ReadFile(paths.ConfigFile)
+	if err != nil {
+		t.Fatalf("read upgraded desktop config: %v", err)
+	}
+	if !bytes.Contains(configData, []byte("keyring://desktop-upgrade-fofa")) || bytes.Contains(configData, []byte("desktop-upgrade-api-secret")) {
+		t.Fatal("desktop upgrade did not preserve the credential reference boundary")
 	}
 	v2.Shutdown(t)
 }
@@ -304,6 +318,15 @@ audit:
 	if !bytes.Contains(desktopPageBody, []byte(`window.location.assign('/api-docs')`)) {
 		t.Fatal("desktop page does not contain the local API documentation entry")
 	}
+	apiDocsPage, err := http.Get(ready.URL + "api-docs")
+	if err != nil {
+		t.Fatalf("GET desktop API documentation: %v", err)
+	}
+	apiDocsBody, err := io.ReadAll(apiDocsPage.Body)
+	_ = apiDocsPage.Body.Close()
+	if err != nil || apiDocsPage.StatusCode != http.StatusOK || !bytes.Contains(apiDocsBody, []byte("/static/js/api-docs.js")) {
+		t.Fatalf("desktop API documentation status = %d, err = %v", apiDocsPage.StatusCode, err)
+	}
 
 	status, body := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/conversations", "", nil)
 	if status != http.StatusUnauthorized {
@@ -353,6 +376,19 @@ audit:
 	permissions, _ := login["permissions"].([]interface{})
 	if len(permissions) == 0 {
 		t.Fatalf("local admin login returned no permissions: %#v", login)
+	}
+	status, openAPISpec := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/openapi/spec", token, nil)
+	openAPIData, err := json.Marshal(openAPISpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK || !bytes.Contains(openAPIData, []byte("/api/conversations")) || !bytes.Contains(openAPIData, []byte("/api/chat-uploads")) {
+		t.Fatalf("desktop OpenAPI specification status = %d, body = %#v", status, openAPISpec)
+	}
+	for _, excludedPath := range []string{"/api/c2", "/api/rbac", "/api/robot", "/api/terminal", "/api/vulnerability-alerts", "/api/webshell"} {
+		if bytes.Contains(openAPIData, []byte(excludedPath)) {
+			t.Fatalf("desktop OpenAPI specification contains excluded path %q", excludedPath)
+		}
 	}
 
 	for _, path := range []string{
@@ -578,6 +614,18 @@ audit:
 	status, _, downloadedAttachment := desktopBodyRequest(t, http.MethodGet, ready.URL+"api/chat-uploads/download?path="+url.QueryEscape(attachmentRelativePath), token, nil, "")
 	if status != http.StatusOK || !bytes.Equal(downloadedAttachment, attachmentContent) {
 		t.Fatalf("download desktop attachment status = %d, body = %q", status, downloadedAttachment)
+	}
+	largeAttachmentContent := bytes.Repeat([]byte("desktop-d9-large-file-block\n"), 150_000)
+	status, largeUploadBody := desktopMultipartUploadRequest(t, ready.URL+"api/chat-uploads", token, "desktop-large.bin", largeAttachmentContent, map[string]string{
+		"conversationId": conversationID,
+	})
+	largeAttachmentRelativePath, _ := largeUploadBody["relativePath"].(string)
+	if status != http.StatusOK || largeUploadBody["ok"] != true || largeAttachmentRelativePath == "" {
+		t.Fatalf("large desktop attachment upload status = %d, body = %#v", status, largeUploadBody)
+	}
+	status, _, downloadedLargeAttachment := desktopBodyRequest(t, http.MethodGet, ready.URL+"api/chat-uploads/download?path="+url.QueryEscape(largeAttachmentRelativePath), token, nil, "")
+	if status != http.StatusOK || !bytes.Equal(downloadedLargeAttachment, largeAttachmentContent) {
+		t.Fatalf("large desktop attachment download status = %d, bytes = %d", status, len(downloadedLargeAttachment))
 	}
 	attachmentEvents := desktopSSERequest(t, ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
 		"conversationId": conversationID,
@@ -1169,6 +1217,10 @@ audit:
 	if status != http.StatusOK || body["content"] != string(attachmentContent) {
 		t.Fatalf("persisted desktop attachment after core restart status = %d, body = %#v", status, body)
 	}
+	status, _, downloadedLargeAttachment = desktopBodyRequest(t, http.MethodGet, restarted.URL+"api/chat-uploads/download?path="+url.QueryEscape(largeAttachmentRelativePath), restartedToken, nil, "")
+	if status != http.StatusOK || !bytes.Equal(downloadedLargeAttachment, largeAttachmentContent) {
+		t.Fatalf("persisted large desktop attachment after core restart status = %d, bytes = %d", status, len(downloadedLargeAttachment))
+	}
 	desktopAssertManagementFixture(t, restarted.URL, restartedToken, conversationID, managementFixture)
 	desktopAssertExtensionFixture(t, restarted.URL, restartedToken, extensionFixture)
 	desktopAssertOperationsFixture(t, restarted.URL, restartedToken, operationsFixture)
@@ -1190,6 +1242,10 @@ audit:
 	status, body = desktopJSONRequest(t, http.MethodDelete, restarted.URL+"api/chat-uploads", restartedToken, map[string]string{"path": attachmentRelativePath})
 	if status != http.StatusOK || body["ok"] != true {
 		t.Fatalf("delete persisted desktop attachment status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodDelete, restarted.URL+"api/chat-uploads", restartedToken, map[string]string{"path": largeAttachmentRelativePath})
+	if status != http.StatusOK || body["ok"] != true {
+		t.Fatalf("delete persisted large desktop attachment status = %d, body = %#v", status, body)
 	}
 
 	if err := json.NewEncoder(restartStdinWriter).Encode(desktopprotocol.Command{

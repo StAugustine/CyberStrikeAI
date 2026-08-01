@@ -3,6 +3,8 @@ package app
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -55,6 +57,37 @@ func TestCuratedEmbeddedWebAssetsServeWithoutWorkingDirectory(t *testing.T) {
 	}
 	if !strings.Contains(root.Body.String(), `window.location.assign('/api-docs')`) {
 		t.Fatal("desktop index does not contain the local API documentation entry")
+	}
+	pagePattern := regexp.MustCompile(`id="page-([a-z0-9-]+)"`)
+	desktopPages := make([]string, 0, 20)
+	for _, match := range pagePattern.FindAllStringSubmatch(root.Body.String(), -1) {
+		desktopPages = append(desktopPages, match[1])
+	}
+	sort.Strings(desktopPages)
+	expectedDesktopPages := []string{
+		"agents-management",
+		"asset-library",
+		"asset-overview",
+		"chat",
+		"chat-files",
+		"dashboard",
+		"hitl",
+		"info-collect",
+		"knowledge-management",
+		"knowledge-retrieval-logs",
+		"mcp-management",
+		"mcp-monitor",
+		"projects",
+		"roles-management",
+		"settings",
+		"skills-management",
+		"skills-monitor",
+		"tasks",
+		"vulnerabilities",
+		"workflows",
+	}
+	if strings.Join(desktopPages, ",") != strings.Join(expectedDesktopPages, ",") {
+		t.Fatalf("desktop page inventory = %v, want %v", desktopPages, expectedDesktopPages)
 	}
 
 	server := httptest.NewRecorder()

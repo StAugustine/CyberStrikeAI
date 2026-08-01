@@ -28,7 +28,9 @@ test("release target and argument parsing fail closed", () => {
 
 test("release metadata is synchronized and updater installation is disabled", async () => {
   const metadata = await verifyReleaseMetadata(repositoryDirectory);
-  assert.equal(metadata.version, "0.1.0");
+  assert.equal(metadata.version, "0.2.0");
+  assert.equal(metadata.browserExtensionVersion, "0.4.0");
+  assert.equal(metadata.burpExtensionVersion, "1.1.0");
 });
 
 test("lock file parsers create ecosystem components", () => {
@@ -108,7 +110,7 @@ test("portable archive audit and checksums cover all evidence", async () => {
     assert.equal(manifest.portable, true);
     assert.deepEqual(manifest.files.map((item) => item.name), [
       "audit-report.json",
-      "CyberStrikeAI-Desktop-0.1.0-macos-arm64-portable.zip",
+      "CyberStrikeAI-Desktop-0.2.0-macos-arm64-portable.zip",
       "portable-runtime-report.json",
       "sbom.cdx.json",
     ]);

@@ -1,5 +1,7 @@
 ## CyberStrikeAI Burp Suite 插件（中文说明）
 
+**当前版本：1.1.0**
+
 ### 功能概述
 
 - 在 Burp 的 `CyberStrikeAI` 标签页中配置 **Host、端口、密码**，或点击 **Use Desktop** 发现已显式启用插件联动的本地桌面客户端

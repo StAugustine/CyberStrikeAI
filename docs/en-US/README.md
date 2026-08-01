@@ -4,7 +4,7 @@
 
 ## Choose a path
 
-- **Try locally**: [Deployment](deployment.md) → [Configuration](configuration.md) → [Troubleshooting](troubleshooting.md)
+- **Try locally**: [Desktop portable ZIP](desktop-portable-release.md) or [Deployment](deployment.md) → [Configuration](configuration.md) → [Troubleshooting](troubleshooting.md)
 - **Run in production**: [Configuration Profiles](configuration-profiles.md) → [Security Hardening](security-hardening.md) → [Runbooks](runbooks.md) → [Audit and Monitoring](audit-and-monitoring.md)
 - **Integrate and automate**: [API Reference](api-reference.md) → [API Recipes](api-recipes.md) → [MCP Federation](mcp-federation.md)
 - **Contribute code**: [Developer Guide](developer-guide.md) → [Testing](testing.md) → [Contributing](contributing-guide.md)
@@ -29,4 +29,4 @@
 ## Development and release
 
 - [Developer Guide](developer-guide.md) · [Plugin Development](plugin-development.md) · [Frontend i18n](frontend-i18n.md)
-- [Testing](testing.md) · [Contributing](contributing-guide.md) · [Release Process](release-process.md)
+- [Testing](testing.md) · [Contributing](contributing-guide.md) · [Release Process](release-process.md) · [Desktop portable ZIP](desktop-portable-release.md)

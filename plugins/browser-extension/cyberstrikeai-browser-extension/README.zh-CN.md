@@ -1,6 +1,6 @@
 ## CyberStrikeAI 浏览器扩展
 
-**当前版本：0.3.10**（UI 为英文；中文说明见下文）
+**当前版本：0.4.0**（UI 为英文；中文说明见下文）
 
 Chrome / Edge（Chromium）DevTools 扩展：在开发者工具中捕获 **Network** 流量，发送到 CyberStrikeAI 进行 AI 辅助安全测试。能力与 Burp Suite 插件对齐，并按生产场景做了性能与体验优化。
 

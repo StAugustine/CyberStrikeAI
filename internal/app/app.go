@@ -511,6 +511,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 		db.SetVulnerabilityCreatedHook(robotHandler.NotifyNewVulnerability)
 	}
 	openAPIHandler := handler.NewOpenAPIHandler(db, log.Logger, conversationHandler, agentHandler)
+	openAPIHandler.SetDesktopMode(resolvedOptions.desktopMode)
 
 	// 创建 App 实例（部分字段稍后填充）
 	app := &App{

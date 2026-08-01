@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+#[cfg(debug_assertions)]
+use std::time::Instant;
 use std::{
     collections::HashSet,
     ffi::OsString,
@@ -10,7 +12,7 @@ use std::{
         Mutex,
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tauri::{
     webview::{DownloadEvent, NewWindowResponse},
@@ -24,6 +26,7 @@ mod plugin_integration;
 const SIDECAR_NAME: &str = "cyberstrike-core";
 const DESKTOP_PROTOCOL_VERSION: u32 = 1;
 const FORCE_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(debug_assertions)]
 const SMOKE_BOOTSTRAP_PASSWORD: &str = "desktop-smoke-password";
 static DESIRED_EXIT_CODE: AtomicI32 = AtomicI32::new(0);
 
