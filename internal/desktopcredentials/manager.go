@@ -44,6 +44,40 @@ type Manager struct {
 	references map[string]string
 }
 
+type ConfigCredentialInspection struct {
+	PlaintextPaths []string
+	ReferencePaths []string
+}
+
+// InspectConfigCredentials reports credential locations without returning
+// secret values or keyring account identifiers.
+func InspectConfigCredentials(cfg *config.Config) (ConfigCredentialInspection, error) {
+	inspection := ConfigCredentialInspection{
+		PlaintextPaths: []string{},
+		ReferencePaths: []string{},
+	}
+	err := visitSecretSlots(cfg, func(slot secretSlot) error {
+		value := strings.TrimSpace(slot.get())
+		if value == "" {
+			return nil
+		}
+		_, isReference, err := ParseReference(value)
+		if err != nil {
+			return fmt.Errorf("inspect desktop credential %s: %w", slot.path, err)
+		}
+		if isReference {
+			inspection.ReferencePaths = append(inspection.ReferencePaths, slot.path)
+		} else {
+			inspection.PlaintextPaths = append(inspection.PlaintextPaths, slot.path)
+		}
+		return nil
+	})
+	if err != nil {
+		return ConfigCredentialInspection{}, err
+	}
+	return inspection, nil
+}
+
 func NewManager(store Store) (*Manager, error) {
 	return newManager(store, randomAccount)
 }

@@ -214,6 +214,7 @@ func TestVerifyBackupRejectsReservedRestorePaths(t *testing.T) {
 		{path: "data/backups/replace.txt", want: "reserved path"},
 		{path: "data/upgrade-state.json", want: "reserved path"},
 		{path: "data/restore-state.json", want: "reserved path"},
+		{path: "data/import-state.json", want: "reserved path"},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {

@@ -41,12 +41,20 @@ func ListBackups(paths desktopruntime.Paths) ([]BackupSummary, error) {
 	if pendingErr != nil {
 		return nil, pendingErr
 	}
+	pendingImport, pendingImportExists, pendingImportErr := LoadImportState(paths.ImportStateFile)
+	if pendingImportErr != nil {
+		return nil, pendingImportErr
+	}
 	summaries := make([]BackupSummary, 0, len(entries))
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		summary := BackupSummary{ID: entry.Name(), Protected: pendingExists && pending.BackupID == entry.Name()}
+		summary := BackupSummary{
+			ID: entry.Name(),
+			Protected: (pendingExists && pending.BackupID == entry.Name()) ||
+				(pendingImportExists && pendingImport.BackupID == entry.Name()),
+		}
 		if !entry.IsDir() {
 			summary.Error = "backup entry is not a directory"
 			summaries = append(summaries, summary)

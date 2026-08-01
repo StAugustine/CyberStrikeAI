@@ -107,6 +107,31 @@ func TestResolveAndMigrateProtectsPlaintextAndRedactsResponses(t *testing.T) {
 	}
 }
 
+func TestInspectConfigCredentialsDoesNotExposeValuesOrAccounts(t *testing.T) {
+	reference, err := Reference("account-reference")
+	if err != nil {
+		t.Fatalf("Reference: %v", err)
+	}
+	cfg := &config.Config{
+		FOFA:   config.FofaConfig{APIKey: "plaintext-secret"},
+		Shodan: config.SpaceSearchConfig{APIKey: reference},
+	}
+	inspection, err := InspectConfigCredentials(cfg)
+	if err != nil {
+		t.Fatalf("InspectConfigCredentials: %v", err)
+	}
+	if len(inspection.PlaintextPaths) != 1 || inspection.PlaintextPaths[0] != PathFOFA {
+		t.Fatalf("plaintext credential paths = %v", inspection.PlaintextPaths)
+	}
+	if len(inspection.ReferencePaths) != 1 || inspection.ReferencePaths[0] != PathShodan {
+		t.Fatalf("reference credential paths = %v", inspection.ReferencePaths)
+	}
+	encoded := fmt.Sprintf("%#v", inspection)
+	if strings.Contains(encoded, "plaintext-secret") || strings.Contains(encoded, "account-reference") {
+		t.Fatalf("credential inspection exposed secret material: %s", encoded)
+	}
+}
+
 func TestResolveAndMigrateReadsExistingReferenceWithoutRewritingConfig(t *testing.T) {
 	store := newMemoryStore()
 	store.values["existing-account"] = "resolved-secret"

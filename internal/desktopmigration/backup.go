@@ -142,6 +142,9 @@ func CreateUpgradeBackup(
 		if path == filepath.Clean(paths.DataDir) {
 			return nil
 		}
+		if path == filepath.Clean(paths.UpgradeStateFile) || path == filepath.Clean(paths.RestoreStateFile) || path == filepath.Clean(paths.ImportStateFile) {
+			return nil
+		}
 		if entry.IsDir() {
 			return nil
 		}
@@ -343,7 +346,7 @@ func validateBackupManifest(manifest BackupManifest) error {
 	if manifest.ID == "" || filepath.Base(manifest.ID) != manifest.ID || strings.ContainsAny(manifest.ID, `/\`) {
 		return errors.New("desktop backup manifest has invalid id")
 	}
-	if manifest.Kind != "upgrade" {
+	if manifest.Kind != "upgrade" && manifest.Kind != "import" {
 		return fmt.Errorf("unsupported desktop backup kind: %q", manifest.Kind)
 	}
 	if strings.TrimSpace(manifest.FromVersion) == "" || strings.TrimSpace(manifest.ToVersion) == "" {
@@ -388,11 +391,18 @@ func validateBackupManifest(manifest BackupManifest) error {
 
 func reservedBackupPayloadPath(path string) bool {
 	return path == "data/backups" || strings.HasPrefix(path, "data/backups/") ||
-		path == "data/upgrade-state.json" || path == "data/restore-state.json"
+		path == "data/upgrade-state.json" || path == "data/restore-state.json" || path == "data/import-state.json"
 }
 
 func reserveBackupDirectory(backupsDir string, createdAt time.Time) (id, stagingDir, finalDir string, err error) {
-	baseID := "upgrade-" + createdAt.UTC().Format("20060102T150405.000000000Z")
+	return reserveBackupDirectoryWithPrefix(backupsDir, "upgrade", createdAt)
+}
+
+func reserveBackupDirectoryWithPrefix(backupsDir, prefix string, createdAt time.Time) (id, stagingDir, finalDir string, err error) {
+	if prefix == "" || filepath.Base(prefix) != prefix || strings.ContainsAny(prefix, `/\\`) {
+		return "", "", "", errors.New("desktop backup prefix is invalid")
+	}
+	baseID := prefix + "-" + createdAt.UTC().Format("20060102T150405.000000000Z")
 	for sequence := 0; sequence < 100; sequence++ {
 		id = baseID
 		if sequence != 0 {
