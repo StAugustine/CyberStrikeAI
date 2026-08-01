@@ -3,12 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseCargoPackage } from "./release-support.mjs";
+import { loadBuildConfig } from "./build-config.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(scriptDirectory, "..");
 const repositoryDirectory = path.resolve(desktopDirectory, "..");
 
 export async function verifyReleaseMetadata(root = repositoryDirectory) {
+  const windowsBinaryNames = loadBuildConfig(root);
   const desktop = path.join(root, "desktop");
   const browserExtension = path.join(
     root,
@@ -88,7 +90,7 @@ export async function verifyReleaseMetadata(root = repositoryDirectory) {
       "binaries/cyberstrike-core",
       "binaries/cyberstrike-native-host",
     ]),
-    "Tauri bundle must contain only the fixed desktop core and native messaging host",
+    "base Tauri bundle must contain only the default macOS core and native messaging host",
   );
   assert(await exists(path.join(root, "LICENSE")), "repository LICENSE is missing");
   for (const icon of tauriConfig.bundle.icon) {
@@ -101,6 +103,7 @@ export async function verifyReleaseMetadata(root = repositoryDirectory) {
     version: packageJSON.version,
     browserExtensionVersion: browserManifest.version,
     burpExtensionVersion: "1.1.0",
+    windowsBinaryNames,
   };
 }
 

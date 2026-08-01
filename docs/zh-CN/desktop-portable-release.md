@@ -12,6 +12,8 @@
 
 不要只复制主程序。主程序、sidecar 和 `defaults/` 属于同一个版本，必须保留 ZIP 中的目录结构。
 
+Windows x64 的 sidecar 文件名由构建期配置 `desktop/build-config.json` 决定。当前默认值为 Core `server.exe`、native messaging host `sihost.exe`；这是构建期设置，发布后直接重命名文件不受支持。macOS 继续使用 `cyberstrike-core` 和 `cyberstrike-native-host`。
+
 ## 数据与替换升级
 
 用户数据不写入解压目录，而是写入操作系统为 `com.cyberstrikeai.desktop` 分配的用户数据、配置、缓存和日志目录。因此：

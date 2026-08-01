@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseArguments, requireReleaseTarget } from "./release-support.mjs";
+import { binaryNamesForTarget } from "./build-config.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(scriptDirectory, "..");
@@ -18,6 +19,7 @@ export async function verifyPortableRuntime({
   root = desktopDirectory,
 }) {
   const releaseTarget = requireReleaseTarget(targetTriple);
+  const binaryNames = binaryNamesForTarget(targetTriple, path.resolve(root, ".."));
   const packageJSON = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
   const archivePath = await onlyFile(releaseDirectory, (name) => name.toLowerCase().endsWith("-portable.zip"));
   const archiveEntries = listArchive(archivePath);
@@ -26,7 +28,7 @@ export async function verifyPortableRuntime({
   await prepareEmptyDirectory(runtimeDirectory, "portable runtime");
 
   extractArchive(archivePath, extractionDirectory);
-  let layout = await resolveRuntimeLayout(extractionDirectory, releaseTarget.portableKind);
+  let layout = await resolveRuntimeLayout(extractionDirectory, releaseTarget.portableKind, binaryNames);
   const expectedArchitecture = targetTriple.startsWith("aarch64") ? "arm64" : "x86_64";
   for (const binary of [layout.application, layout.sidecar, layout.nativeHost]) {
     const architecture = await binaryArchitecture(binary);
@@ -59,7 +61,7 @@ export async function verifyPortableRuntime({
     throw new Error("portable user data marker changed after program removal");
   }
   extractArchive(archivePath, extractionDirectory);
-  layout = await resolveRuntimeLayout(extractionDirectory, releaseTarget.portableKind);
+  layout = await resolveRuntimeLayout(extractionDirectory, releaseTarget.portableKind, binaryNames);
   const replacedLifecycle = runCoreLifecycle(
     layout.sidecar,
     layout.resources,
@@ -278,14 +280,14 @@ function extractArchive(archivePath, destination) {
   );
 }
 
-async function resolveRuntimeLayout(extractionDirectory, kind) {
+async function resolveRuntimeLayout(extractionDirectory, kind, binaryNames) {
   const portableRoot = await onlyDirectory(extractionDirectory);
   if (kind === "windows-directory") {
     return {
       portableRoot,
       application: path.join(portableRoot, "CyberStrikeAI Desktop.exe"),
-      sidecar: path.join(portableRoot, "cyberstrike-core.exe"),
-      nativeHost: path.join(portableRoot, "cyberstrike-native-host.exe"),
+      sidecar: path.join(portableRoot, `${binaryNames.core}.exe`),
+      nativeHost: path.join(portableRoot, `${binaryNames.nativeHost}.exe`),
       resources: path.join(portableRoot, "defaults"),
     };
   }
@@ -293,8 +295,8 @@ async function resolveRuntimeLayout(extractionDirectory, kind) {
   return {
     portableRoot,
     application: path.join(appBundle, "Contents", "MacOS", "cyberstrike-desktop"),
-    sidecar: path.join(appBundle, "Contents", "MacOS", "cyberstrike-core"),
-    nativeHost: path.join(appBundle, "Contents", "MacOS", "cyberstrike-native-host"),
+    sidecar: path.join(appBundle, "Contents", "MacOS", binaryNames.core),
+    nativeHost: path.join(appBundle, "Contents", "MacOS", binaryNames.nativeHost),
     resources: path.join(appBundle, "Contents", "Resources", "defaults"),
   };
 }

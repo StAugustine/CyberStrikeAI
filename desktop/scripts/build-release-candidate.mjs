@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { requireReleaseTarget } from "./release-support.mjs";
 import { verifyReleaseMetadata } from "./verify-release-metadata.mjs";
+import { writeTauriBuildConfig } from "./build-config.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(scriptDirectory, "..");
@@ -15,6 +16,7 @@ await verifyReleaseMetadata();
 run(process.execPath, [path.join(scriptDirectory, "generate-resource-manifest.mjs")]);
 await verifyReleaseMetadata();
 run(process.execPath, [path.join(scriptDirectory, "build-sidecar.mjs")]);
+const generatedTauriConfig = writeTauriBuildConfig(requestedTriple);
 const tauriArguments = [
   path.join(desktopDirectory, "node_modules", "@tauri-apps", "cli", "tauri.js"),
   "build",
@@ -22,6 +24,8 @@ const tauriArguments = [
   requestedTriple,
   "--ci",
   "--no-sign",
+  "--config",
+  generatedTauriConfig,
 ];
 if (releaseTarget.tauriBundle) {
   tauriArguments.push("--bundles", releaseTarget.tauriBundle);

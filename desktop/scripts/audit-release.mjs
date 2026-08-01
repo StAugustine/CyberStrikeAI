@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseArguments, requireReleaseTarget, sha256File, toPosix } from "./release-support.mjs";
+import { binaryNamesForTarget } from "./build-config.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(scriptDirectory, "..");
@@ -23,6 +24,7 @@ const approvedResourceRoots = ["agents/", "roles/", "skills/", "tools/", "knowle
 
 export async function auditRelease({ root = repositoryDirectory, targetTriple, stageDirectory, outputDirectory }) {
   const releaseTarget = requireReleaseTarget(targetTriple);
+  const binaryNames = binaryNamesForTarget(targetTriple, root);
   const portableRoot = await onlyEntry(stageDirectory, (entry) => entry.isDirectory(), "portable root directory");
   const archivePath = await onlyEntry(
     outputDirectory,
@@ -33,7 +35,7 @@ export async function auditRelease({ root = repositoryDirectory, targetTriple, s
   const inventory = [];
   await collectInventory(portableRoot, portableRoot, inventory);
   inventory.sort((left, right) => left.path.localeCompare(right.path));
-  validatePortableLayout(releaseTarget.portableKind, inventory);
+  validatePortableLayout(releaseTarget.portableKind, inventory, binaryNames);
 
   const resourceAudit = await auditResources(root);
   const embedAudit = await auditDesktopEmbedAllowlist(root);
@@ -67,7 +69,7 @@ export async function auditRelease({ root = repositoryDirectory, targetTriple, s
   return report;
 }
 
-function validatePortableLayout(kind, inventory) {
+function validatePortableLayout(kind, inventory, binaryNames) {
   const filePaths = new Set(inventory.filter((item) => item.type === "file").map((item) => item.path));
   for (const required of ["LICENSE", "README.txt"]) {
     if (!filePaths.has(required)) throw new Error(`portable package is missing ${required}`);
@@ -75,20 +77,26 @@ function validatePortableLayout(kind, inventory) {
   if (kind === "windows-directory") {
     for (const required of [
       "CyberStrikeAI Desktop.exe",
-      "cyberstrike-core.exe",
-      "cyberstrike-native-host.exe",
+      `${binaryNames.core}.exe`,
+      `${binaryNames.nativeHost}.exe`,
       "defaults/manifest.json",
       "defaults/config.example.yaml",
     ]) {
       if (!filePaths.has(required)) throw new Error(`Windows portable package is missing ${required}`);
+    }
+    for (const stale of ["cyberstrike-core.exe", "cyberstrike-native-host.exe"]) {
+      if (![`${binaryNames.core}.exe`, `${binaryNames.nativeHost}.exe`].includes(stale)
+        && filePaths.has(stale)) {
+        throw new Error(`Windows portable package contains stale sidecar ${stale}`);
+      }
     }
     return;
   }
   const requiredSuffixes = [
     ".app/Contents/Info.plist",
     ".app/Contents/MacOS/cyberstrike-desktop",
-    ".app/Contents/MacOS/cyberstrike-core",
-    ".app/Contents/MacOS/cyberstrike-native-host",
+    `.app/Contents/MacOS/${binaryNames.core}`,
+    `.app/Contents/MacOS/${binaryNames.nativeHost}`,
     ".app/Contents/Resources/defaults/manifest.json",
     ".app/Contents/Resources/defaults/config.example.yaml",
   ];

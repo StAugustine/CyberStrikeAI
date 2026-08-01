@@ -3,6 +3,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { binaryNamesForTarget } from './build-config.mjs';
+
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = resolve(scriptDirectory, '..');
 const repositoryDirectory = resolve(desktopDirectory, '..');
@@ -18,6 +20,7 @@ const target = targets[targetTriple];
 if (!target) {
   throw new Error(`unsupported desktop target: ${targetTriple}`);
 }
+const binaryNames = binaryNamesForTarget(targetTriple, repositoryDirectory);
 
 const binaryDirectory = resolve(desktopDirectory, 'src-tauri', 'binaries');
 const goBinary = process.env.CYBERSTRIKE_DESKTOP_GO || 'go';
@@ -33,8 +36,8 @@ if (process.env.CYBERSTRIKE_DESKTOP_GO) {
 mkdirSync(binaryDirectory, { recursive: true });
 
 for (const binary of [
-  { name: 'cyberstrike-core', package: './cmd/desktop-core' },
-  { name: 'cyberstrike-native-host', package: './cmd/desktop-native-host' },
+  { name: binaryNames.core, package: './cmd/desktop-core' },
+  { name: binaryNames.nativeHost, package: './cmd/desktop-native-host' },
 ]) {
   const output = resolve(binaryDirectory, `${binary.name}-${targetTriple}${target.extension}`);
   const result = spawnSync(

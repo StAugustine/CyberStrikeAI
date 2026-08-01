@@ -6,18 +6,24 @@ import {
   desktopDirectory,
   prepareSmokeEnvironment
 } from './smoke-support.mjs';
+import { writeTauriBuildConfig } from './build-config.mjs';
+
+const targetTriple = process.env.CYBERSTRIKE_DESKTOP_TARGET
+  || execFileSync('rustc', ['--print', 'host-tuple'], { encoding: 'utf8' }).trim();
+const environment = { ...process.env, CYBERSTRIKE_DESKTOP_TARGET: targetTriple };
 
 execFileSync(process.execPath, [resolve(desktopDirectory, 'scripts', 'build-sidecar.mjs')], {
   cwd: desktopDirectory,
-  env: process.env,
+  env: environment,
   stdio: 'inherit'
 });
 
 const development = prepareSmokeEnvironment();
 const tauriCli = resolve(desktopDirectory, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
-const child = spawn(process.execPath, [tauriCli, 'dev'], {
+const tauriConfig = writeTauriBuildConfig(targetTriple);
+const child = spawn(process.execPath, [tauriCli, 'dev', '--config', tauriConfig], {
   cwd: desktopDirectory,
-  env: { ...process.env, ...development.environment },
+  env: { ...environment, ...development.environment },
   stdio: 'inherit'
 });
 

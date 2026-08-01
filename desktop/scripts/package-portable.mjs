@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseArguments, requireReleaseTarget } from "./release-support.mjs";
+import { binaryNamesForTarget } from "./build-config.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(scriptDirectory, "..");
@@ -50,10 +51,11 @@ export async function packagePortable({
 }
 
 async function stageWindowsPortable({ root, targetTriple, buildRoot, portableRoot, tauriConfig }) {
+  const binaryNames = binaryNamesForTarget(targetTriple, root);
   const executable = path.join(buildRoot, "cyberstrike-desktop.exe");
   await requireFile(executable, "Windows desktop executable");
   await cp(executable, path.join(portableRoot, "CyberStrikeAI Desktop.exe"));
-  for (const name of ["cyberstrike-core", "cyberstrike-native-host"]) {
+  for (const name of [binaryNames.core, binaryNames.nativeHost]) {
     const sidecar = path.join(
       root,
       "desktop",

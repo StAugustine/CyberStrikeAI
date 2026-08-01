@@ -20,6 +20,8 @@ const SETTING_FILE_NAME: &str = "plugin-integration.json";
 const DISCOVERY_FILE_NAME: &str = "plugin-discovery.json";
 const NATIVE_HOST_MANIFEST_FILE_NAME: &str = "plugin-native-host.json";
 const NATIVE_HOST_NAME: &str = "com.cyberstrikeai.desktop";
+const NATIVE_HOST_BINARY_BASENAME: &str =
+    env!("CYBERSTRIKE_DESKTOP_NATIVE_HOST_BINARY_BASENAME");
 const BROWSER_EXTENSION_ID: &str = "okialefpaaimfgjelpednbehgebgkdgo";
 const DISCOVERY_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const DISCOVERY_LIFETIME: Duration = Duration::from_secs(90);
@@ -370,9 +372,9 @@ fn native_host_executable() -> Result<PathBuf, String> {
         .parent()
         .ok_or_else(|| "desktop application path is unavailable".to_string())?;
     let name = if cfg!(windows) {
-        "cyberstrike-native-host.exe"
+        format!("{NATIVE_HOST_BINARY_BASENAME}.exe")
     } else {
-        "cyberstrike-native-host"
+        NATIVE_HOST_BINARY_BASENAME.to_string()
     };
     Ok(directory.join(name))
 }
@@ -515,6 +517,20 @@ mod tests {
         );
         let _ = fs::remove_file(executable);
         let _ = fs::remove_dir(root);
+    }
+
+    #[test]
+    fn native_host_path_uses_the_compiled_binary_name() {
+        let executable = native_host_executable().unwrap();
+        let expected = if cfg!(windows) {
+            format!("{NATIVE_HOST_BINARY_BASENAME}.exe")
+        } else {
+            NATIVE_HOST_BINARY_BASENAME.to_string()
+        };
+        assert_eq!(
+            executable.file_name().and_then(|name| name.to_str()),
+            Some(expected.as_str())
+        );
     }
 
     #[test]

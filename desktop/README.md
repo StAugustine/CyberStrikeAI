@@ -1,6 +1,6 @@
 # CyberStrikeAI Desktop
 
-This directory contains the Tauri v2 shell for the local CyberStrikeAI desktop client. The shell builds `cmd/desktop-core` as the `cyberstrike-core` sidecar and `cmd/desktop-native-host` as the narrow browser discovery host, resolves all writable platform directories to absolute paths, and passes only those paths plus the application version to the core.
+This directory contains the Tauri v2 shell for the local CyberStrikeAI desktop client. The shell builds `cmd/desktop-core` and `cmd/desktop-native-host` as the local core and narrow browser discovery host, resolves all writable platform directories to absolute paths, and passes only those paths plus the application version to the core. Windows x64 executable basenames come from `build-config.json` (`server.exe` and `sihost.exe` by default); macOS retains `cyberstrike-core` and `cyberstrike-native-host`.
 
 The sidecar reports versioned `BOOTSTRAP_REQUIRED` and `READY` messages on stdout. On a fresh profile, a separate local bootstrap window is the only window permitted to submit the initial administrator password. The password is sent as a versioned JSON line over inherited stdin; it is not placed in process arguments, environment variables, URLs, configuration, or logs. After `READY`, the main WebView is restricted to the exact random `127.0.0.1` origin reported by the core.
 
@@ -12,6 +12,8 @@ npm run desktop:dev
 ```
 
 Development mode stages bundled defaults and an isolated disposable profile under the repository `.tmp/` directory. Use `npm run desktop:build` for an unbundled debug build. A pinned Rust toolchain, the platform's native build prerequisites, a CGO-capable Go toolchain, Node.js, and npm are required.
+
+Use the npm desktop build commands so the generated Tauri configuration and Go outputs consume the same `build-config.json`; invoking `tauri build` directly bypasses the Windows filename configuration.
 
 After an unbundled debug build, the native integration smokes are:
 

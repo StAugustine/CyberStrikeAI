@@ -5,6 +5,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { auditRelease, validateReleasePath, validateSensitiveContent } from "./audit-release.mjs";
+import {
+  binaryNamesForTarget,
+  loadBuildConfig,
+  tauriBuildConfigForTarget,
+  validateBuildConfig,
+} from "./build-config.mjs";
 import { createReleaseChecksums } from "./create-release-checksums.mjs";
 import { createSBOM, parseCargoComponents, parseGoComponents, parseNPMComponents, stableSBOMDigest } from "./generate-sbom.mjs";
 import { packagePortable } from "./package-portable.mjs";
@@ -24,6 +30,45 @@ test("release target and argument parsing fail closed", () => {
     target: "aarch64-apple-darwin",
   });
   assert.throws(() => parseArguments(["--unknown", "value"], ["target"]), /unsupported/);
+});
+
+test("Windows x64 binary names come from the validated build configuration", () => {
+  assert.deepEqual(loadBuildConfig(repositoryDirectory), { core: "server", nativeHost: "sihost" });
+  assert.deepEqual(binaryNamesForTarget("x86_64-pc-windows-msvc", repositoryDirectory), {
+    core: "server",
+    nativeHost: "sihost",
+  });
+  assert.deepEqual(binaryNamesForTarget("aarch64-apple-darwin", repositoryDirectory), {
+    core: "cyberstrike-core",
+    nativeHost: "cyberstrike-native-host",
+  });
+  assert.deepEqual(tauriBuildConfigForTarget("x86_64-pc-windows-msvc", repositoryDirectory), {
+    bundle: { externalBin: ["binaries/server", "binaries/sihost"] },
+  });
+  assert.throws(
+    () => validateBuildConfig({
+      schema_version: 1,
+      core_binary_basename: "../server",
+      native_host_binary_basename: "sihost",
+    }),
+    /safe executable basename/,
+  );
+  assert.throws(
+    () => validateBuildConfig({
+      schema_version: 1,
+      core_binary_basename: "server.exe",
+      native_host_binary_basename: "sihost",
+    }),
+    /must not include the .exe extension/,
+  );
+  assert.throws(
+    () => validateBuildConfig({
+      schema_version: 1,
+      core_binary_basename: "server",
+      native_host_binary_basename: "SERVER",
+    }),
+    /must be different/,
+  );
 });
 
 test("release metadata is synchronized and updater installation is disabled", async () => {
@@ -65,6 +110,68 @@ test("portable archive paths reject traversal and absolute entries", () => {
   assert.doesNotThrow(() => validateArchiveEntries(["CyberStrikeAI/app.exe"]));
   assert.throws(() => validateArchiveEntries(["../escape"]), /unsafe portable archive path/);
   assert.throws(() => validateArchiveEntries(["C:\\escape.exe"]), /unsafe portable archive path/);
+});
+
+test("Windows portable packaging stages the configured executable names", async () => {
+  const fixtureRoot = path.join(temporaryRoot, "windows-root");
+  const buildRoot = path.join(temporaryRoot, "windows-build");
+  const stageDirectory = path.join(temporaryRoot, "windows-stage");
+  const outputDirectory = path.join(temporaryRoot, "windows-output");
+  const targetTriple = "x86_64-pc-windows-msvc";
+  await rm(temporaryRoot, { recursive: true, force: true });
+  await mkdir(path.join(fixtureRoot, "desktop", "src-tauri", "binaries"), { recursive: true });
+  await mkdir(buildRoot, { recursive: true });
+  await writeFile(path.join(fixtureRoot, "LICENSE"), "fixture", "utf8");
+  await writeFile(
+    path.join(fixtureRoot, "desktop", "package.json"),
+    JSON.stringify({ version: "0.2.0" }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(fixtureRoot, "desktop", "build-config.json"),
+    JSON.stringify({
+      schema_version: 1,
+      core_binary_basename: "server",
+      native_host_binary_basename: "sihost",
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(fixtureRoot, "desktop", "src-tauri", "tauri.conf.json"),
+    JSON.stringify({ bundle: { resources: {} } }),
+    "utf8",
+  );
+  await writeFile(path.join(buildRoot, "cyberstrike-desktop.exe"), "desktop", "utf8");
+  await writeFile(
+    path.join(fixtureRoot, "desktop", "src-tauri", "binaries", `server-${targetTriple}.exe`),
+    "core",
+    "utf8",
+  );
+  await writeFile(
+    path.join(fixtureRoot, "desktop", "src-tauri", "binaries", `sihost-${targetTriple}.exe`),
+    "native-host",
+    "utf8",
+  );
+
+  try {
+    const result = await packagePortable({
+      root: fixtureRoot,
+      targetTriple,
+      buildRoot,
+      stageDirectory,
+      outputDirectory,
+      archiveRunner: async ({ archivePath }) => writeFile(archivePath, "zip fixture", "utf8"),
+    });
+    assert.equal(await readFile(path.join(result.portableRoot, "server.exe"), "utf8"), "core");
+    assert.equal(await readFile(path.join(result.portableRoot, "sihost.exe"), "utf8"), "native-host");
+    await assert.rejects(readFile(path.join(result.portableRoot, "cyberstrike-core.exe")), /ENOENT/);
+    await assert.rejects(
+      readFile(path.join(result.portableRoot, "cyberstrike-native-host.exe")),
+      /ENOENT/,
+    );
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 test("portable archive audit and checksums cover all evidence", async () => {

@@ -23,7 +23,7 @@ use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt}
 mod maintenance;
 mod plugin_integration;
 
-const SIDECAR_NAME: &str = "cyberstrike-core";
+const SIDECAR_NAME: &str = env!("CYBERSTRIKE_DESKTOP_CORE_BINARY_BASENAME");
 const DESKTOP_PROTOCOL_VERSION: u32 = 1;
 const FORCE_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(debug_assertions)]

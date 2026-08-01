@@ -6,6 +6,8 @@ CyberStrikeAI Desktop 0.2.0 is delivered as unsigned development-candidate ZIP a
 
 Keep the archive layout intact. On Windows, extract the ZIP and run `CyberStrikeAI Desktop.exe`. On macOS, extract it and open `CyberStrikeAI Desktop.app`. The main executable, Go core, native-messaging host, and `defaults/` resources are one versioned unit.
 
+The Windows x64 sidecar filenames are selected at build time by `desktop/build-config.json`. The current defaults are `server.exe` for the core and `sihost.exe` for the native-messaging host. Renaming them after the application is built is not supported. macOS continues to use `cyberstrike-core` and `cyberstrike-native-host`.
+
 To replace an older portable build:
 
 1. Exit CyberStrikeAI completely.
