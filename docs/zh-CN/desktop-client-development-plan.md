@@ -417,15 +417,19 @@ CyberStrikeAI/
 
 ### D7：R1 构建、签名、发布与验收
 
+执行状态：进行中。按项目所有者当前决定，D7 先交付 Windows x64、macOS arm64 和 macOS x64 三个免安装 ZIP，安装器暂缓。Windows ZIP 由原生 release 可执行文件、同架构 Go sidecar、版本化默认资源、许可证和使用说明组成；macOS ZIP 包含同样完整的 `.app`、许可证和说明。候选构建显式禁用签名和更新安装产物，已实现产品版本/许可证/Bundle 配置一致性校验、桌面图标集、CycloneDX 1.6 SBOM、SHA-256 清单、资源清单哈希复核、敏感文件/私钥扫描和排除前端资源审计。macOS arm64 已在本机实际生成约 35 MB 的 ZIP，并通过安全解压路径、主程序与 sidecar 架构、打包后 sidecar 维护命令、删除程序目录不删除外置用户数据、重新解压后复用同一数据目录的验收；三架构干净 runner 结果尚待 CI 验证。
+
+当前便携交付门禁：三个一级架构均从干净 runner 生成可解压运行的 ZIP；压缩包内没有真实配置、数据库、凭据、日志、私钥或排除模块专用资源；主程序和 sidecar 架构匹配；删除或替换解压目录不删除操作系统用户数据目录；每个平台随包生成审计报告、SBOM 和 SHA-256。Windows 便携包不安装 WebView2，运行前必须存在 WebView2 Evergreen Runtime。
+
 工作项：
 
-- Windows 原生 runner 构建 x86_64 sidecar 和安装包；macOS runner 分别构建 arm64/x86_64 或经过验证的 Universal 发布物。
+- Windows 原生 runner 构建 x86_64 便携目录并压缩；macOS runner 分别构建 arm64/x86_64 `.app` 并压缩。
 - 锁定 Go、Rust、Node 与 Tauri 工具链；完成图标、Bundle ID、版本同步、许可证和第三方声明。
-- 配置 Windows 代码签名、macOS Developer ID、Hardened Runtime 和 notarization；生成 SBOM、SHA-256 和安装包内容扫描报告。
-- 执行 R1 功能矩阵、安装、首启、升级、卸载与重装验收；确认排除功能不可用，R2 插件联动入口尚未展示。
+- 为便携包生成 SBOM、SHA-256 和内容扫描报告；正式外部分发前仍配置 Windows 代码签名、macOS Developer ID、Hardened Runtime 和 notarization。
+- 执行 R1 功能矩阵、解压、首启、目录替换、程序目录删除、数据保留与重新解压验收；确认排除功能不可用，R2 插件联动入口尚未展示。
 - 在签名更新链路未准备好时禁用自动安装更新。
 
-完成门禁：三个一级架构从干净 runner 产生可安装、可验签且无敏感数据的 R1 发布物；R1 没有未处置的阻断/高风险缺陷，发布负责人批准。未通过此门禁不进入 R2 实现。
+当前便携门禁：三个一级架构从干净 runner 产生可解压运行且无敏感数据的 R1 ZIP；R1 没有未处置的阻断/高风险缺陷，发布负责人批准。正式对外发布仍必须可验签，未签名 ZIP 只能作为开发候选。未通过当前门禁不进入 R2 实现。
 
 ### D8：R2 本地插件联动
 
@@ -541,6 +545,8 @@ CyberStrikeAI/
 - 正式应用图标、安装界面素材和版权信息。
 - 更新元数据托管位置、下载域名和发布密钥管理方式。
 - Windows x64、macOS arm64、macOS x64 的 CI runner 或测试设备。
+
+当前免安装开发候选不需要 Windows Upgrade Code 和安装界面素材；这两项以及安装器升级/卸载语义顺延到恢复安装器交付时。正式产品名、Bundle Identifier、平台签名与公证凭据仍是公开分发前置条件。
 
 R2 进入 D8 前另需浏览器扩展和 Burp 插件测试环境。
 
