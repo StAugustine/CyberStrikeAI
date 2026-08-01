@@ -4137,6 +4137,25 @@ func TestDesktopCoreFailsClosedWhenCredentialStoreIsUnavailable(t *testing.T) {
 	if strings.Contains(err.Error(), "migration-secret") {
 		t.Fatal("credential store error exposed plaintext")
 	}
+	paths, pathErr := desktopruntime.ResolvePaths(runOptions{
+		Roots: desktopruntime.Roots{
+			DataDir:   filepath.Join(root, "data"),
+			ConfigDir: filepath.Join(root, "config"),
+			CacheDir:  filepath.Join(root, "cache"),
+			LogDir:    filepath.Join(root, "logs"),
+			TempDir:   filepath.Join(root, "temp"),
+		},
+	}.Roots)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
+	configData, readErr := os.ReadFile(paths.ConfigFile)
+	if readErr != nil {
+		t.Fatalf("read config after credential store failure: %v", readErr)
+	}
+	if !bytes.Contains(configData, []byte("migration-secret")) || bytes.Contains(configData, []byte(desktopcredentials.ReferencePrefix)) {
+		t.Fatalf("credential store failure did not preserve retryable plaintext config: %q", configData)
+	}
 }
 
 type failingCredentialStore struct{}

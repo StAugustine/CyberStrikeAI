@@ -45,6 +45,10 @@ type RestoreResult struct {
 // modified. A durable restore state makes every interrupted commit rollback
 // to the exact pre-restore top-level layout on the next startup.
 func RestoreBackup(ctx context.Context, paths desktopruntime.Paths, backupID string) (RestoreResult, error) {
+	return restoreBackup(ctx, paths, backupID, platformAvailableDiskBytes)
+}
+
+func restoreBackup(ctx context.Context, paths desktopruntime.Paths, backupID string, probe diskSpaceProbe) (RestoreResult, error) {
 	if ctx == nil {
 		return RestoreResult{}, errors.New("desktop restore context is required")
 	}
@@ -54,7 +58,7 @@ func RestoreBackup(ctx context.Context, paths desktopruntime.Paths, backupID str
 	if _, err := RecoverInterruptedRestore(paths); err != nil {
 		return RestoreResult{}, err
 	}
-	state, manifest, err := prepareRestoreTransaction(ctx, paths, backupID, time.Now())
+	state, manifest, err := prepareRestoreTransactionWithDiskSpace(ctx, paths, backupID, time.Now(), probe)
 	if err != nil {
 		return RestoreResult{}, err
 	}
@@ -142,6 +146,16 @@ func prepareRestoreTransaction(
 	backupID string,
 	startedAt time.Time,
 ) (RestoreState, BackupManifest, error) {
+	return prepareRestoreTransactionWithDiskSpace(ctx, paths, backupID, startedAt, platformAvailableDiskBytes)
+}
+
+func prepareRestoreTransactionWithDiskSpace(
+	ctx context.Context,
+	paths desktopruntime.Paths,
+	backupID string,
+	startedAt time.Time,
+	probe diskSpaceProbe,
+) (RestoreState, BackupManifest, error) {
 	if err := validateRestorePaths(paths); err != nil {
 		return RestoreState{}, BackupManifest{}, err
 	}
@@ -164,6 +178,13 @@ func prepareRestoreTransaction(
 	}
 	if manifest.ID != backupID {
 		return RestoreState{}, BackupManifest{}, errors.New("desktop restore backup directory does not match manifest id")
+	}
+	dataBytes, configBytes := restorePayloadDiskBytes(manifest)
+	if err := ensureAvailableDiskSpace(paths.BackupsDir, dataBytes, probe); err != nil {
+		return RestoreState{}, BackupManifest{}, err
+	}
+	if err := ensureAvailableDiskSpace(paths.ConfigDir, configBytes, probe); err != nil {
+		return RestoreState{}, BackupManifest{}, err
 	}
 	transactionID, dataWorkspace, configWorkspace, err := reserveRestoreWorkspaces(paths, startedAt)
 	if err != nil {

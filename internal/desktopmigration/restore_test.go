@@ -129,6 +129,30 @@ func TestRestoreVerificationFailureRollsBackLiveData(t *testing.T) {
 	assertNoRestoreWorkspaces(t, paths)
 }
 
+func TestRestoreBackupRejectsInsufficientDiskSpaceBeforeChangingLiveData(t *testing.T) {
+	paths, backup := prepareRestoreRollbackFixture(t)
+
+	_, err := restoreBackup(
+		context.Background(),
+		paths,
+		backup.Manifest.ID,
+		func(string) (uint64, error) { return 0, nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "insufficient disk space") {
+		t.Fatalf("restoreBackup error = %v, want insufficient disk space", err)
+	}
+	assertBackupTestFileContent(t, paths.ConfigFile, "version: new\n")
+	assertBackupTestFileContent(t, filepath.Join(paths.ResourcesDir, "roles", "restore.md"), "new role")
+	assertBackupTestFileContent(t, filepath.Join(paths.DataDir, "new-only.txt"), "keep me")
+	if _, exists, stateErr := LoadRestoreState(paths.RestoreStateFile); stateErr != nil || exists {
+		t.Fatalf("insufficient-space restore state exists=%t err=%v", exists, stateErr)
+	}
+	if _, verifyErr := VerifyBackup(backup.Directory); verifyErr != nil {
+		t.Fatalf("insufficient-space restore changed recovery point: %v", verifyErr)
+	}
+	assertNoRestoreWorkspaces(t, paths)
+}
+
 func TestListBackupsReportsValidAndCorruptedEntries(t *testing.T) {
 	paths := prepareBackupTestPaths(t)
 	writeBackupTestFile(t, paths.ConfigFile, "version: one\n", 0o600)

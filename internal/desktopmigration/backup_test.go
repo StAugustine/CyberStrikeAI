@@ -283,6 +283,30 @@ func TestCreateUpgradeBackupHonorsCancelledContext(t *testing.T) {
 	assertBackupTestDirectoryEmpty(t, paths.BackupsDir)
 }
 
+func TestCreateUpgradeBackupRejectsInsufficientDiskSpaceBeforeStaging(t *testing.T) {
+	paths := prepareBackupTestPaths(t)
+	writeBackupTestFile(t, paths.ConfigFile, "version: current\n", 0o600)
+	writeBackupTestFile(t, filepath.Join(paths.ResourcesDir, "roles", "current.md"), "current role\n", 0o600)
+
+	_, err := createUpgradeBackup(
+		context.Background(),
+		paths,
+		"1.0.0",
+		"1.1.0",
+		time.Now(),
+		func(string) (uint64, error) { return 0, nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "insufficient disk space") {
+		t.Fatalf("createUpgradeBackup error = %v, want insufficient disk space", err)
+	}
+	assertBackupTestDirectoryEmpty(t, paths.BackupsDir)
+	assertBackupTestFileContent(t, paths.ConfigFile, "version: current\n")
+	assertBackupTestFileContent(t, filepath.Join(paths.ResourcesDir, "roles", "current.md"), "current role\n")
+	if _, exists, stateErr := LoadUpgradeState(paths.UpgradeStateFile); stateErr != nil || exists {
+		t.Fatalf("insufficient-space upgrade state exists=%t err=%v", exists, stateErr)
+	}
+}
+
 func prepareBackupTestPaths(t *testing.T) desktopruntime.Paths {
 	t.Helper()
 	root := t.TempDir()

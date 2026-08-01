@@ -224,6 +224,17 @@ func PrepareLegacyImport(
 	targetVersion string,
 	preparedAt time.Time,
 ) (*ImportSession, error) {
+	return prepareLegacyImport(ctx, paths, sourceRoot, targetVersion, preparedAt, platformAvailableDiskBytes)
+}
+
+func prepareLegacyImport(
+	ctx context.Context,
+	paths desktopruntime.Paths,
+	sourceRoot string,
+	targetVersion string,
+	preparedAt time.Time,
+	probe diskSpaceProbe,
+) (*ImportSession, error) {
 	if ctx == nil {
 		return nil, errors.New("desktop import context is required")
 	}
@@ -258,6 +269,13 @@ func PrepareLegacyImport(
 
 	source, err := inspectLegacyImportSource(sourceRoot, paths)
 	if err != nil {
+		return nil, err
+	}
+	requiredBytes, err := estimateLegacyImportDiskBytes(source)
+	if err != nil {
+		return nil, fmt.Errorf("estimate desktop import storage: %w", err)
+	}
+	if err := ensureAvailableDiskSpace(paths.BackupsDir, requiredBytes, probe); err != nil {
 		return nil, err
 	}
 	id, stagingDirectory, finalDirectory, err := reserveBackupDirectoryWithPrefix(paths.BackupsDir, "import", preparedAt)

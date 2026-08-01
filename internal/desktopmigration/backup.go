@@ -60,6 +60,16 @@ func CreateUpgradeBackup(
 	fromVersion, toVersion string,
 	createdAt time.Time,
 ) (BackupResult, error) {
+	return createUpgradeBackup(ctx, paths, fromVersion, toVersion, createdAt, platformAvailableDiskBytes)
+}
+
+func createUpgradeBackup(
+	ctx context.Context,
+	paths desktopruntime.Paths,
+	fromVersion, toVersion string,
+	createdAt time.Time,
+	probe diskSpaceProbe,
+) (BackupResult, error) {
 	if ctx == nil {
 		return BackupResult{}, errors.New("desktop backup context is required")
 	}
@@ -89,6 +99,13 @@ func CreateUpgradeBackup(
 	}
 	if !backupInfo.IsDir() || backupInfo.Mode()&os.ModeSymlink != 0 {
 		return BackupResult{}, errors.New("desktop backup path is not a directory")
+	}
+	requiredBytes, err := estimateUpgradeBackupDiskBytes(paths)
+	if err != nil {
+		return BackupResult{}, fmt.Errorf("estimate desktop backup storage: %w", err)
+	}
+	if err := ensureAvailableDiskSpace(paths.BackupsDir, requiredBytes, probe); err != nil {
+		return BackupResult{}, err
 	}
 
 	id, stagingDir, finalDir, err := reserveBackupDirectory(paths.BackupsDir, createdAt)

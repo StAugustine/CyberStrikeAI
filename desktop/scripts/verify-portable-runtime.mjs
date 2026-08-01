@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,28 @@ export async function verifyPortableRuntime({
     }
   }
   const first = runMaintenance(layout.sidecar, layout.resources, runtimeDirectory, packageJSON.version);
+  const restoreFixture = await createPortableRestoreFixture(runtimeDirectory, packageJSON.version);
+  await writeFile(restoreFixture.liveMarker, "portable restore mutation\n", "utf8");
+  const restored = runMaintenance(
+    layout.sidecar,
+    layout.resources,
+    runtimeDirectory,
+    packageJSON.version,
+    "restore-backup",
+    restoreFixture.backupID,
+  );
+  if (restored.restore?.backup_id !== restoreFixture.backupID
+    || !restored.restore?.rollback_backup_id) {
+    throw new Error("packaged sidecar returned an invalid restore response");
+  }
+  if ((await readFile(restoreFixture.liveMarker, "utf8")) !== restoreFixture.expectedContent) {
+    throw new Error("packaged sidecar did not restore the verified portable fixture");
+  }
+  const restoredCatalog = runMaintenance(layout.sidecar, layout.resources, runtimeDirectory, packageJSON.version);
+  const rollback = restoredCatalog.backups?.find((backup) => backup.id === restored.restore.rollback_backup_id);
+  if (!rollback?.valid) {
+    throw new Error("packaged sidecar did not retain a verified pre-restore recovery point");
+  }
   const markerPath = path.join(runtimeDirectory, "data", "portable-data-marker.txt");
   await writeFile(markerPath, "portable data survives program replacement\n", "utf8");
 
@@ -59,6 +82,8 @@ export async function verifyPortableRuntime({
       applicationArchitecture: expectedArchitecture,
       sidecarArchitecture: expectedArchitecture,
       firstExtractMaintenance: first.operation,
+      packagedBackupRestore: restored.restore.backup_id,
+      preRestoreRecoveryPoint: "verified",
       programDirectoryRemoval: "passed",
       externalUserDataPreserved: "passed",
       replacementExtractMaintenance: second.operation,
@@ -139,7 +164,14 @@ async function resolveRuntimeLayout(extractionDirectory, kind) {
   };
 }
 
-function runMaintenance(sidecar, resources, runtimeDirectory, version) {
+function runMaintenance(
+  sidecar,
+  resources,
+  runtimeDirectory,
+  version,
+  operation = "list-backups",
+  backupID = "",
+) {
   const argumentsList = [
     "--data-dir", path.join(runtimeDirectory, "data"),
     "--config-dir", path.join(runtimeDirectory, "config"),
@@ -148,8 +180,9 @@ function runMaintenance(sidecar, resources, runtimeDirectory, version) {
     "--temp-dir", path.join(runtimeDirectory, "temp"),
     "--resource-dir", resources,
     "--app-version", version,
-    "--maintenance", "list-backups",
+    "--maintenance", operation,
   ];
+  if (backupID) argumentsList.push("--backup-id", backupID);
   const result = spawnSync(sidecar, argumentsList, {
     cwd: path.dirname(sidecar),
     encoding: "utf8",
@@ -158,11 +191,46 @@ function runMaintenance(sidecar, resources, runtimeDirectory, version) {
   });
   ensureCommand(result, "run packaged sidecar maintenance");
   const response = JSON.parse(result.stdout);
-  if (response.operation !== "list-backups"
-    || (response.backups !== undefined && !Array.isArray(response.backups))) {
+  if (response.operation !== operation
+    || (operation === "list-backups" && response.backups !== undefined && !Array.isArray(response.backups))) {
     throw new Error("packaged sidecar returned an invalid maintenance response");
   }
   return response;
+}
+
+async function createPortableRestoreFixture(runtimeDirectory, version) {
+  const backupID = "portable-restore-fixture";
+  const expectedContent = "portable restore verified\n";
+  const logicalPath = "data/portable-restore-marker.txt";
+  const backupDirectory = path.join(runtimeDirectory, "data", "backups", backupID);
+  const payloadPath = path.join(backupDirectory, "payload", "data", "portable-restore-marker.txt");
+  const liveMarker = path.join(runtimeDirectory, "data", "portable-restore-marker.txt");
+  await mkdir(path.dirname(payloadPath), { recursive: true });
+  await writeFile(payloadPath, expectedContent, { encoding: "utf8", mode: 0o600 });
+  await writeFile(liveMarker, expectedContent, { encoding: "utf8", mode: 0o600 });
+  const size = Buffer.byteLength(expectedContent);
+  const manifest = {
+    schema_version: 1,
+    id: backupID,
+    kind: "upgrade",
+    from_version: version,
+    to_version: version,
+    created_at: "2026-07-31T00:00:00Z",
+    total_bytes: size,
+    files: [{
+      path: logicalPath,
+      kind: "file",
+      sha256: createHash("sha256").update(expectedContent).digest("hex"),
+      size,
+      mode: 0o600,
+    }],
+  };
+  await writeFile(
+    path.join(backupDirectory, "manifest.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return { backupID, expectedContent, liveMarker };
 }
 
 function ensureCommand(result, label) {

@@ -1263,6 +1263,8 @@ fn classify_startup_failure(message: &str) -> StartupFailure {
         || normalized.contains("not writable")
         || normalized.contains("read-only")
         || normalized.contains("readonly")
+        || normalized.contains("disk space")
+        || normalized.contains("no space left")
         || normalized.contains("directory")
     {
         return StartupFailure {
@@ -1525,6 +1527,10 @@ mod tests {
         );
         assert_eq!(
             classify_startup_failure("prepare desktop data directory: access is denied").code,
+            "local_storage"
+        );
+        assert_eq!(
+            classify_startup_failure("insufficient disk space for desktop data operation").code,
             "local_storage"
         );
         assert_eq!(

@@ -203,6 +203,36 @@ func TestPrepareLegacyImportRejectsAbsoluteAndSymlinkedManagedPaths(t *testing.T
 	})
 }
 
+func TestPrepareLegacyImportRejectsInsufficientDiskSpaceWithoutChangingSource(t *testing.T) {
+	paths := prepareBackupTestPaths(t)
+	sourceRoot := prepareMinimalLegacyImportSource(t, "v1.7.9", "source remains")
+	databasePath := filepath.Join(sourceRoot, "data", "conversations.db")
+	before, err := hashFile(databasePath)
+	if err != nil {
+		t.Fatalf("hash legacy source before insufficient-space import: %v", err)
+	}
+
+	_, err = prepareLegacyImport(
+		context.Background(),
+		paths,
+		sourceRoot,
+		"0.1.0",
+		time.Now(),
+		func(string) (uint64, error) { return 0, nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "insufficient disk space") {
+		t.Fatalf("prepareLegacyImport error = %v, want insufficient disk space", err)
+	}
+	after, hashErr := hashFile(databasePath)
+	if hashErr != nil || after != before {
+		t.Fatalf("legacy source changed after insufficient-space import: before=%q after=%q err=%v", before, after, hashErr)
+	}
+	assertBackupTestDirectoryEmpty(t, paths.BackupsDir)
+	if _, exists, stateErr := LoadImportState(paths.ImportStateFile); stateErr != nil || exists {
+		t.Fatalf("insufficient-space import state exists=%t err=%v", exists, stateErr)
+	}
+}
+
 func TestCommitLegacyImportOfflineCreatesRollbackAndCanRestorePreviousDesktop(t *testing.T) {
 	paths := prepareBackupTestPaths(t)
 	writeBackupTestFile(t, paths.ConfigFile, "version: current\n", 0o600)

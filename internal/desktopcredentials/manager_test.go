@@ -14,10 +14,12 @@ import (
 )
 
 type memoryStore struct {
-	values   map[string]string
-	setError error
-	getError error
-	deleted  []string
+	values    map[string]string
+	setError  error
+	getError  error
+	deleted   []string
+	setCalls  int
+	failSetAt int
 }
 
 func newMemoryStore() *memoryStore {
@@ -36,7 +38,8 @@ func (s *memoryStore) Get(account string) (string, error) {
 }
 
 func (s *memoryStore) Set(account, secret string) error {
-	if s.setError != nil {
+	s.setCalls++
+	if s.setError != nil && (s.failSetAt == 0 || s.setCalls == s.failSetAt) {
 		return s.setError
 	}
 	s.values[account] = secret
@@ -220,6 +223,34 @@ func TestResolveAndMigrateRollsBackCredentialWhenPersistenceFails(t *testing.T) 
 	}
 	if len(store.values) != 0 || len(store.deleted) != 1 {
 		t.Fatalf("new credential was not rolled back: values=%v deleted=%v", store.values, store.deleted)
+	}
+}
+
+func TestResolveAndMigrateRollsBackPartialWritesWhenCredentialStoreFails(t *testing.T) {
+	store := newMemoryStore()
+	store.setError = errors.New("keychain locked")
+	store.failSetAt = 2
+	manager := deterministicManager(t, store)
+	cfg := &config.Config{
+		FOFA:   config.FofaConfig{APIKey: "fofa-secret"},
+		Shodan: config.SpaceSearchConfig{APIKey: "shodan-secret"},
+	}
+	persisted := false
+	err := manager.ResolveAndMigrate(cfg, func([]string) error { return nil }, func(*config.Config) error {
+		persisted = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "store desktop credential") {
+		t.Fatalf("ResolveAndMigrate error = %v, want credential store failure", err)
+	}
+	if persisted {
+		t.Fatal("credential references persisted after a partial keyring failure")
+	}
+	if len(store.values) != 0 || len(store.deleted) != 1 {
+		t.Fatalf("partial credential writes were not rolled back: values=%v deleted=%v", store.values, store.deleted)
+	}
+	if cfg.FOFA.APIKey != "fofa-secret" || cfg.Shodan.APIKey != "shodan-secret" {
+		t.Fatal("credential store failure changed the runtime configuration")
 	}
 }
 
