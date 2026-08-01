@@ -548,7 +548,8 @@ openai:
 		}
 	}
 	toolEvents := desktopSSERequest(t, ready.URL+"api/eino-agent/stream", token, map[string]interface{}{
-		"message": "desktop-tool-execution",
+		"conversationId": conversationID,
+		"message":        "desktop-tool-execution",
 		"finalization": map[string]interface{}{
 			"requireExecutionEvidence": false,
 		},
@@ -556,6 +557,7 @@ openai:
 	if !desktopSSEHasEvent(toolEvents, "response") || !desktopSSEHasEvent(toolEvents, "done") {
 		t.Fatalf("desktop tool execution events = %#v", toolEvents)
 	}
+	managementFixture = desktopExerciseAttackChainPromotion(t, ready.URL, token, conversationID, managementFixture)
 	status, monitorBody := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/monitor?tool=query_assets", token, nil)
 	if status != http.StatusOK {
 		t.Fatalf("desktop monitor query_assets status = %d, body = %#v", status, monitorBody)
@@ -1156,6 +1158,10 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveRe
 			desktopWriteToolCallResponse(response, payload, "call-desktop-respond", "respond", `{"response":"desktop plan-execute reply"}`)
 			return
 		}
+		if bytes.Contains(requestData, []byte("构建攻击链图")) {
+			desktopWriteChatCompletionResponse(response, `{"nodes":[{"id":"node_1","type":"target","label":"desktop.example.test","risk_score":40,"metadata":{"target":"desktop.example.test"}},{"id":"node_2","type":"action","label":"Query desktop assets","risk_score":0,"metadata":{"tool_name":"query_assets","findings":["desktop.example.test"]}}],"edges":[{"source":"node_1","target":"node_2","type":"leads_to","weight":3}]}`)
+			return
+		}
 		if bytes.Contains(requestData, []byte("desktop-external-mcp-call")) &&
 			desktopPayloadHasTool(payload, "desktop-golden-mcp__desktop_echo") &&
 			!desktopPayloadHasRole(payload, "tool") {
@@ -1452,6 +1458,23 @@ func desktopWriteToolCallResponse(response http.ResponseWriter, payload map[stri
 	})
 }
 
+func desktopWriteChatCompletionResponse(response http.ResponseWriter, content string) {
+	response.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(response).Encode(map[string]interface{}{
+		"id":     "chatcmpl-desktop-text",
+		"object": "chat.completion",
+		"model":  "desktop-test-model",
+		"choices": []interface{}{map[string]interface{}{
+			"index": 0,
+			"message": map[string]interface{}{
+				"role":    "assistant",
+				"content": content,
+			},
+			"finish_reason": "stop",
+		}},
+	})
+}
+
 func desktopSSERequest(t *testing.T, target, token string, body interface{}) []map[string]interface{} {
 	t.Helper()
 	events, err := desktopSSERequestResult(target, token, body)
@@ -1548,10 +1571,14 @@ func desktopNotificationContainsID(summary map[string]interface{}, id string) bo
 }
 
 type desktopManagementFixture struct {
-	projectID       string
-	assetID         string
-	vulnerabilityID string
-	factID          string
+	projectID        string
+	assetID          string
+	vulnerabilityID  string
+	factID           string
+	relatedFactID    string
+	factEdgeID       string
+	promotedFactIDs  []string
+	promotedFactKeys []string
 }
 
 func desktopCreateManagementFixture(t *testing.T, baseURL, token, conversationID string) desktopManagementFixture {
@@ -1666,9 +1693,69 @@ func desktopCreateManagementFixture(t *testing.T, baseURL, token, conversationID
 	if fixture.factID == "" {
 		t.Fatalf("create desktop project fact did not return an id: %#v", body)
 	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/projects/"+fixture.projectID+"/facts", token, map[string]interface{}{
+		"fact_key":   "finding.desktop_surface",
+		"category":   "finding",
+		"summary":    "Desktop exposed surface",
+		"body":       "The desktop golden target exposes an HTTPS service.",
+		"confidence": "confirmed",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create related desktop project fact status = %d, body = %#v", status, body)
+	}
+	fixture.relatedFactID, _ = body["id"].(string)
+	if fixture.relatedFactID == "" {
+		t.Fatalf("create related desktop project fact did not return an id: %#v", body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/projects/"+fixture.projectID+"/fact-edges", token, map[string]string{
+		"source_fact_key": "target.primary_domain",
+		"target_fact_key": "finding.desktop_surface",
+		"edge_type":       "discovered_on",
+		"confidence":      "confirmed",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create desktop project fact edge status = %d, body = %#v", status, body)
+	}
+	fixture.factEdgeID, _ = body["id"].(string)
+	if fixture.factEdgeID == "" {
+		t.Fatalf("create desktop project fact edge did not return an id: %#v", body)
+	}
+	status, factEdges := desktopJSONArrayRequest(t, baseURL+"api/projects/"+fixture.projectID+"/fact-edges", token)
+	if status != http.StatusOK || !desktopJSONArrayContains(factEdges, "id", fixture.factEdgeID) {
+		t.Fatalf("list desktop project fact edges status = %d, body = %#v", status, factEdges)
+	}
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/fact-graph?view=full", token, nil)
-	if status != http.StatusOK || len(desktopNestedItems(body, "nodes")) == 0 {
+	if status != http.StatusOK || desktopNestedItem(body, "nodes", "fact_key", "target.primary_domain") == nil || desktopNestedItem(body, "nodes", "fact_key", "finding.desktop_surface") == nil || desktopNestedItem(body, "edges", "id", fixture.factEdgeID) == nil {
 		t.Fatalf("desktop project fact graph status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/projects/"+fixture.projectID+"/facts/deprecate", token, map[string]string{"fact_key": "finding.desktop_surface"})
+	if status != http.StatusOK || body["success"] != true {
+		t.Fatalf("deprecate desktop project fact status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/fact-graph?view=full", token, nil)
+	if status != http.StatusOK || desktopNestedItem(body, "nodes", "fact_key", "finding.desktop_surface") != nil || desktopNestedItem(body, "edges", "id", fixture.factEdgeID) != nil {
+		t.Fatalf("deprecated desktop project fact remained in default graph: status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/fact-graph?view=full&exclude_deprecated=0", token, nil)
+	deprecatedEdge := desktopNestedItem(body, "edges", "id", fixture.factEdgeID)
+	if status != http.StatusOK || desktopNestedItem(body, "nodes", "fact_key", "finding.desktop_surface") == nil || deprecatedEdge == nil || deprecatedEdge["confidence"] != "deprecated" {
+		t.Fatalf("deprecated desktop project fact missing from full graph: status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/projects/"+fixture.projectID+"/facts/restore", token, map[string]string{
+		"fact_key":   "finding.desktop_surface",
+		"confidence": "confirmed",
+	})
+	if status != http.StatusOK || body["success"] != true {
+		t.Fatalf("restore desktop project fact status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/projects/"+fixture.projectID+"/fact-edges", token, map[string]string{
+		"source_fact_key": "target.primary_domain",
+		"target_fact_key": "finding.desktop_surface",
+		"edge_type":       "discovered_on",
+		"confidence":      "confirmed",
+	})
+	if status != http.StatusOK || body["id"] != fixture.factEdgeID || body["confidence"] != "confirmed" {
+		t.Fatalf("restore desktop project fact edge status = %d, body = %#v", status, body)
 	}
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/stats", token, nil)
 	if status != http.StatusOK {
@@ -1702,21 +1789,44 @@ func desktopAssertManagementFixture(t *testing.T, baseURL, token, conversationID
 	if status != http.StatusOK || body["id"] != fixture.factID || body["related_vulnerability_id"] != fixture.vulnerabilityID {
 		t.Fatalf("persisted desktop project fact status = %d, body = %#v", status, body)
 	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/facts?fact_key=finding.desktop_surface&include_links=1", token, nil)
+	if status != http.StatusOK || body["id"] != fixture.relatedFactID || body["confidence"] != "confirmed" || desktopNestedItem(body, "incoming_links", "id", fixture.factEdgeID) == nil {
+		t.Fatalf("persisted related desktop project fact status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/attack-chain/"+conversationID, token, nil)
+	if status != http.StatusOK || len(desktopNestedItems(body, "nodes")) != 2 || len(desktopNestedItems(body, "edges")) != 1 {
+		t.Fatalf("persisted desktop attack chain status = %d, body = %#v", status, body)
+	}
+	for index, factKey := range fixture.promotedFactKeys {
+		status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/facts?fact_key="+url.QueryEscape(factKey), token, nil)
+		if status != http.StatusOK || body["id"] != fixture.promotedFactIDs[index] || body["source_conversation_id"] != conversationID {
+			t.Fatalf("persisted promoted desktop fact %q status = %d, body = %#v", factKey, status, body)
+		}
+	}
 }
 
 func desktopDeleteManagementFixture(t *testing.T, baseURL, token, conversationID string, fixture desktopManagementFixture) {
 	t.Helper()
-	for _, request := range []struct {
+	type managementRequest struct {
 		method string
 		target string
 		body   interface{}
-	}{
-		{method: http.MethodDelete, target: baseURL + "api/projects/" + fixture.projectID + "/facts/" + fixture.factID},
-		{method: http.MethodDelete, target: baseURL + "api/vulnerabilities/" + fixture.vulnerabilityID},
-		{method: http.MethodDelete, target: baseURL + "api/assets/" + fixture.assetID},
-		{method: http.MethodPut, target: baseURL + "api/conversations/" + conversationID + "/project", body: map[string]string{"projectId": ""}},
-		{method: http.MethodDelete, target: baseURL + "api/projects/" + fixture.projectID},
-	} {
+	}
+	requests := []managementRequest{
+		{method: http.MethodDelete, target: baseURL + "api/projects/" + fixture.projectID + "/fact-edges/" + fixture.factEdgeID},
+	}
+	for _, promotedFactID := range fixture.promotedFactIDs {
+		requests = append(requests, managementRequest{method: http.MethodDelete, target: baseURL + "api/projects/" + fixture.projectID + "/facts/" + promotedFactID})
+	}
+	requests = append(requests,
+		managementRequest{method: http.MethodDelete, target: baseURL + "api/projects/" + fixture.projectID + "/facts/" + fixture.relatedFactID},
+		managementRequest{method: http.MethodDelete, target: baseURL + "api/projects/" + fixture.projectID + "/facts/" + fixture.factID},
+		managementRequest{method: http.MethodDelete, target: baseURL + "api/vulnerabilities/" + fixture.vulnerabilityID},
+		managementRequest{method: http.MethodDelete, target: baseURL + "api/assets/" + fixture.assetID},
+		managementRequest{method: http.MethodPut, target: baseURL + "api/conversations/" + conversationID + "/project", body: map[string]string{"projectId": ""}},
+		managementRequest{method: http.MethodDelete, target: baseURL + "api/projects/" + fixture.projectID},
+	)
+	for _, request := range requests {
 		status, body := desktopJSONRequest(t, request.method, request.target, token, request.body)
 		if status != http.StatusOK {
 			t.Fatalf("delete desktop management fixture %s %s status = %d, body = %#v", request.method, request.target, status, body)
@@ -1726,6 +1836,40 @@ func desktopDeleteManagementFixture(t *testing.T, baseURL, token, conversationID
 	if status != http.StatusNotFound {
 		t.Fatalf("deleted desktop project status = %d, want 404", status)
 	}
+}
+
+func desktopExerciseAttackChainPromotion(t *testing.T, baseURL, token, conversationID string, fixture desktopManagementFixture) desktopManagementFixture {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/attack-chain/"+conversationID+"/regenerate", token, nil)
+	if status != http.StatusOK || len(desktopNestedItems(body, "nodes")) != 2 || len(desktopNestedItems(body, "edges")) != 1 {
+		t.Fatalf("regenerate desktop attack chain status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/projects/"+fixture.projectID+"/promote-attack-chain/"+conversationID, token, nil)
+	if status != http.StatusOK || body["facts_created"] != float64(2) || body["edges_created"] != float64(1) {
+		t.Fatalf("promote desktop attack chain status = %d, body = %#v", status, body)
+	}
+	keys, _ := body["fact_keys"].([]interface{})
+	if len(keys) != 2 {
+		t.Fatalf("promote desktop attack chain fact keys = %#v", body)
+	}
+	for _, value := range keys {
+		factKey, _ := value.(string)
+		if factKey == "" {
+			t.Fatalf("promote desktop attack chain returned invalid fact key: %#v", body)
+		}
+		status, fact := desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/facts?fact_key="+url.QueryEscape(factKey), token, nil)
+		factID, _ := fact["id"].(string)
+		if status != http.StatusOK || factID == "" || fact["source_conversation_id"] != conversationID {
+			t.Fatalf("promoted desktop attack chain fact %q status = %d, body = %#v", factKey, status, fact)
+		}
+		fixture.promotedFactKeys = append(fixture.promotedFactKeys, factKey)
+		fixture.promotedFactIDs = append(fixture.promotedFactIDs, factID)
+	}
+	graph, _ := body["graph"].(map[string]interface{})
+	if desktopNestedItem(graph, "nodes", "fact_key", fixture.promotedFactKeys[0]) == nil || desktopNestedItem(graph, "nodes", "fact_key", fixture.promotedFactKeys[1]) == nil || len(desktopNestedItems(graph, "edges")) < 2 {
+		t.Fatalf("promoted desktop attack chain graph = %#v", body)
+	}
+	return fixture
 }
 
 func desktopExerciseAssetLifecycle(t *testing.T, baseURL, token, conversationID, projectID, assetID string) {
