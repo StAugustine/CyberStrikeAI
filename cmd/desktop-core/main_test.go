@@ -301,6 +301,9 @@ audit:
 	if !bytes.Contains(desktopPageBody, []byte(`/static/js/desktop-setup.js`)) {
 		t.Fatal("desktop page does not contain desktop setup script")
 	}
+	if !bytes.Contains(desktopPageBody, []byte(`window.location.assign('/api-docs')`)) {
+		t.Fatal("desktop page does not contain the local API documentation entry")
+	}
 
 	status, body := desktopJSONRequest(t, http.MethodGet, ready.URL+"api/conversations", "", nil)
 	if status != http.StatusUnauthorized {

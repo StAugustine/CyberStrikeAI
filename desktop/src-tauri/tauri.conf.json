@@ -39,7 +39,8 @@
       "../../knowledge_base/": "defaults/knowledge_base"
     },
     "externalBin": [
-      "binaries/cyberstrike-core"
+      "binaries/cyberstrike-core",
+      "binaries/cyberstrike-native-host"
     ],
     "macOS": {
       "hardenedRuntime": true,

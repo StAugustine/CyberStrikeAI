@@ -1,10 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop-paths",
-  "description": "The main desktop window may open the application's own data or log directory and enter the local maintenance window.",
+  "description": "The main desktop window may open fixed application directories, enter data maintenance, and explicitly enable or disable local plugin discovery.",
   "windows": ["main"],
   "permissions": [
     "allow-open-desktop-directory",
-    "allow-open-data-maintenance"
+    "allow-open-data-maintenance",
+    "allow-get-plugin-integration-status",
+    "allow-set-plugin-integration-enabled"
   ]
 }

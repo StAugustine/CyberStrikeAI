@@ -79,6 +79,8 @@ type App struct {
 	shutdownOnce       sync.Once
 }
 
+const desktopBrowserExtensionOrigin = "chrome-extension://okialefpaaimfgjelpednbehgebgkdgo"
+
 // New 创建新应用
 func New(cfg *config.Config, log *logger.Logger, configPath string, options ...Option) (*App, error) {
 	resolvedOptions, err := resolveOptions(options)
@@ -97,7 +99,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string, options ...O
 	router := gin.Default()
 
 	// CORS中间件
-	router.Use(corsMiddleware(cfg.Server.CORSAllowedOrigins))
+	corsOrigins := append([]string(nil), cfg.Server.CORSAllowedOrigins...)
+	if resolvedOptions.desktopMode {
+		corsOrigins = append(corsOrigins, desktopBrowserExtensionOrigin)
+	}
+	router.Use(corsMiddleware(corsOrigins, !resolvedOptions.desktopMode))
 
 	// 初始化数据库
 	dbPath := cfg.Database.Path
@@ -2156,7 +2162,7 @@ func initializeKnowledge(
 // corsMiddleware allows same-origin requests, valid Chromium extension
 // origins, and exact origins explicitly configured by the operator. CORS is
 // not an authentication boundary; API access still requires a valid session.
-func corsMiddleware(configuredOrigins []string) gin.HandlerFunc {
+func corsMiddleware(configuredOrigins []string, allowAnyChromiumExtension bool) gin.HandlerFunc {
 	allowedOrigins := make(map[string]struct{}, len(configuredOrigins))
 	for _, origin := range configuredOrigins {
 		if normalized, ok := normalizeCORSOrigin(origin); ok {
@@ -2172,7 +2178,7 @@ func corsMiddleware(configuredOrigins []string) gin.HandlerFunc {
 			_, explicitlyAllowed := allowedOrigins[normalized]
 			parsed, _ := url.Parse(origin)
 			sameHost := valid && strings.EqualFold(parsed.Host, c.Request.Host)
-			browserExtension := valid && isChromiumExtensionOrigin(parsed)
+			browserExtension := allowAnyChromiumExtension && valid && isChromiumExtensionOrigin(parsed)
 			if !sameHost && !browserExtension && !explicitlyAllowed {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "cross-origin request denied"})
 				return

@@ -20,7 +20,6 @@ if (!target) {
 }
 
 const binaryDirectory = resolve(desktopDirectory, 'src-tauri', 'binaries');
-const output = resolve(binaryDirectory, `cyberstrike-core-${targetTriple}${target.extension}`);
 const goBinary = process.env.CYBERSTRIKE_DESKTOP_GO || 'go';
 const buildEnvironment = {
   ...process.env,
@@ -33,20 +32,21 @@ if (process.env.CYBERSTRIKE_DESKTOP_GO) {
 }
 mkdirSync(binaryDirectory, { recursive: true });
 
-const result = spawnSync(
-  goBinary,
-  ['build', '-trimpath', '-o', output, './cmd/desktop-core'],
-  {
-    cwd: repositoryDirectory,
-    env: buildEnvironment,
-    stdio: 'inherit'
-  }
-);
-if (result.error) {
-  throw result.error;
+for (const binary of [
+  { name: 'cyberstrike-core', package: './cmd/desktop-core' },
+  { name: 'cyberstrike-native-host', package: './cmd/desktop-native-host' },
+]) {
+  const output = resolve(binaryDirectory, `${binary.name}-${targetTriple}${target.extension}`);
+  const result = spawnSync(
+    goBinary,
+    ['build', '-trimpath', '-o', output, binary.package],
+    {
+      cwd: repositoryDirectory,
+      env: buildEnvironment,
+      stdio: 'inherit'
+    }
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+  console.log(`built desktop sidecar: ${output}`);
 }
-if (result.status !== 0) {
-  process.exit(result.status ?? 1);
-}
-
-console.log(`built desktop core sidecar: ${output}`);

@@ -63,8 +63,11 @@ export async function verifyReleaseMetadata(root = repositoryDirectory) {
     "Tauri bundle resources do not match the approved desktop allowlist",
   );
   assert(
-    JSON.stringify(tauriConfig.bundle?.externalBin) === JSON.stringify(["binaries/cyberstrike-core"]),
-    "Tauri bundle must contain only the fixed desktop core sidecar",
+    JSON.stringify(tauriConfig.bundle?.externalBin) === JSON.stringify([
+      "binaries/cyberstrike-core",
+      "binaries/cyberstrike-native-host",
+    ]),
+    "Tauri bundle must contain only the fixed desktop core and native messaging host",
   );
   assert(await exists(path.join(root, "LICENSE")), "repository LICENSE is missing");
   for (const icon of tauriConfig.bundle.icon) {

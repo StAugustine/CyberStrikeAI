@@ -11,7 +11,7 @@ import (
 func TestCORSMiddlewareAllowsSameOriginAndRejectsForeignOrigin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(corsMiddleware(nil))
+	router.Use(corsMiddleware(nil, true))
 	router.GET("/test", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
 	same := httptest.NewRequest(http.MethodGet, "http://app.example/test", nil)
@@ -36,7 +36,7 @@ func TestCORSMiddlewareAllowsSameOriginAndRejectsForeignOrigin(t *testing.T) {
 func TestCORSMiddlewareAllowsBrowserExtensionWithoutConfiguration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(corsMiddleware(nil))
+	router.Use(corsMiddleware(nil, true))
 	router.POST("/api/auth/login", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
 	req := httptest.NewRequest(http.MethodOptions, "https://server.example/api/auth/login", nil)
@@ -64,7 +64,7 @@ func TestCORSMiddlewareRejectsInvalidExtensionOrigins(t *testing.T) {
 	} {
 		t.Run(origin, func(t *testing.T) {
 			router := gin.New()
-			router.Use(corsMiddleware(nil))
+			router.Use(corsMiddleware(nil, true))
 			router.GET("/test", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
 			req := httptest.NewRequest(http.MethodGet, "https://server.example/test", nil)
@@ -89,7 +89,7 @@ func TestCORSMiddlewareRejectsUnsafeConfiguredEntries(t *testing.T) {
 	} {
 		t.Run(configured, func(t *testing.T) {
 			router := gin.New()
-			router.Use(corsMiddleware([]string{configured}))
+			router.Use(corsMiddleware([]string{configured}, true))
 			router.GET("/test", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
 			req := httptest.NewRequest(http.MethodGet, "https://server.example/test", nil)
@@ -101,5 +101,31 @@ func TestCORSMiddlewareRejectsUnsafeConfiguredEntries(t *testing.T) {
 				t.Fatalf("response = %d, want %d", w.Code, http.StatusForbidden)
 			}
 		})
+	}
+}
+
+func TestDesktopCORSMiddlewareAllowsOnlyThePinnedBrowserExtension(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(corsMiddleware([]string{desktopBrowserExtensionOrigin}, false))
+	router.POST("/api/auth/login", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	for _, test := range []struct {
+		origin string
+		want   int
+	}{
+		{origin: desktopBrowserExtensionOrigin, want: http.StatusNoContent},
+		{origin: "chrome-extension://abcdefghijklmnopabcdefghijklmnop", want: http.StatusForbidden},
+		{origin: "https://remote.example", want: http.StatusForbidden},
+	} {
+		req := httptest.NewRequest(http.MethodOptions, "http://127.0.0.1/api/auth/login", nil)
+		req.Host = "127.0.0.1"
+		req.Header.Set("Origin", test.origin)
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		if response.Code != test.want {
+			t.Fatalf("desktop CORS origin %q status = %d, want %d", test.origin, response.Code, test.want)
+		}
 	}
 }

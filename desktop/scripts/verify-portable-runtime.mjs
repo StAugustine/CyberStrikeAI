@@ -27,7 +27,7 @@ export async function verifyPortableRuntime({
   extractArchive(archivePath, extractionDirectory);
   let layout = await resolveRuntimeLayout(extractionDirectory, releaseTarget.portableKind);
   const expectedArchitecture = targetTriple.startsWith("aarch64") ? "arm64" : "x86_64";
-  for (const binary of [layout.application, layout.sidecar]) {
+  for (const binary of [layout.application, layout.sidecar, layout.nativeHost]) {
     const architecture = await binaryArchitecture(binary);
     if (architecture !== expectedArchitecture) {
       throw new Error(`${path.basename(binary)} architecture is ${architecture}, expected ${expectedArchitecture}`);
@@ -81,6 +81,7 @@ export async function verifyPortableRuntime({
       safeArchivePaths: archiveEntries.length,
       applicationArchitecture: expectedArchitecture,
       sidecarArchitecture: expectedArchitecture,
+      nativeHostArchitecture: expectedArchitecture,
       firstExtractMaintenance: first.operation,
       packagedBackupRestore: restored.restore.backup_id,
       preRestoreRecoveryPoint: "verified",
@@ -152,6 +153,7 @@ async function resolveRuntimeLayout(extractionDirectory, kind) {
       portableRoot,
       application: path.join(portableRoot, "CyberStrikeAI Desktop.exe"),
       sidecar: path.join(portableRoot, "cyberstrike-core.exe"),
+      nativeHost: path.join(portableRoot, "cyberstrike-native-host.exe"),
       resources: path.join(portableRoot, "defaults"),
     };
   }
@@ -160,6 +162,7 @@ async function resolveRuntimeLayout(extractionDirectory, kind) {
     portableRoot,
     application: path.join(appBundle, "Contents", "MacOS", "cyberstrike-desktop"),
     sidecar: path.join(appBundle, "Contents", "MacOS", "cyberstrike-core"),
+    nativeHost: path.join(appBundle, "Contents", "MacOS", "cyberstrike-native-host"),
     resources: path.join(appBundle, "Contents", "Resources", "defaults"),
   };
 }

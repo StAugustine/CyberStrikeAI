@@ -6,10 +6,12 @@ on:
     paths:
       - ".github/workflows/desktop-release-candidate.yml"
       - "cmd/desktop-core/**"
+      - "cmd/desktop-native-host/**"
       - "desktop/**"
       - "internal/app/**"
       - "internal/desktopcredentials/**"
       - "internal/desktopmigration/**"
+      - "internal/desktopplugin/**"
       - "internal/desktopprotocol/**"
       - "internal/desktopruntime/**"
       - "web/**"
@@ -18,6 +20,8 @@ on:
       - "skills/**"
       - "tools/**"
       - "knowledge_base/**"
+      - "plugins/browser-extension/cyberstrikeai-browser-extension/**"
+      - "plugins/burp-suite/cyberstrikeai-burp-extension/**"
       - "config.example.yaml"
       - "go.mod"
       - "go.sum"
@@ -27,6 +31,74 @@ permissions:
   contents: read
 
 jobs:
+  plugin-artifacts:
+    name: Browser and Burp integration artifacts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "11"
+      - name: Test browser desktop discovery
+        run: node --test plugins/browser-extension/cyberstrikeai-browser-extension/lib/desktop-discovery.test.cjs
+      - name: Test Burp desktop discovery
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.tmp/burp-discovery-classes" "$GITHUB_WORKSPACE/.tmp/burp-discovery-runtime"
+          javac --release 11 -d "$GITHUB_WORKSPACE/.tmp/burp-discovery-classes" \
+            plugins/burp-suite/cyberstrikeai-burp-extension/src/main/java/burp/DesktopDiscovery.java \
+            plugins/burp-suite/cyberstrikeai-burp-extension/src/test/java/burp/DesktopDiscoveryTest.java
+          java -Dcyberstrike.test.tmp="$GITHUB_WORKSPACE/.tmp/burp-discovery-runtime" \
+            -cp "$GITHUB_WORKSPACE/.tmp/burp-discovery-classes" burp.DesktopDiscoveryTest
+      - name: Build browser integration ZIP
+        working-directory: plugins/browser-extension/cyberstrikeai-browser-extension
+        env:
+          CYBERSTRIKE_BROWSER_EXTENSION_OUTPUT: ${{ github.workspace }}/.tmp/plugin-release/cyberstrikeai-browser-extension.zip
+        run: bash package.sh
+      - name: Build Burp integration JAR
+        working-directory: plugins/burp-suite/cyberstrikeai-burp-extension
+        shell: bash
+        run: >-
+          mvn --batch-mode --quiet
+          -Dmaven.repo.local="$GITHUB_WORKSPACE/.tmp/m2"
+          -Dcyberstrike.build.directory="$GITHUB_WORKSPACE/.tmp/burp-target"
+          package
+      - name: Assemble plugin checksums
+        shell: bash
+        run: |
+          cp "$GITHUB_WORKSPACE/.tmp/burp-target/cyberstrikeai-burp-extension-1.0.0.jar" \
+            "$GITHUB_WORKSPACE/.tmp/plugin-release/cyberstrikeai-burp-extension.jar"
+          cd "$GITHUB_WORKSPACE/.tmp/plugin-release"
+          sha256sum cyberstrikeai-browser-extension.zip cyberstrikeai-burp-extension.jar > SHA256SUMS
+      - name: Audit plugin artifacts
+        shell: bash
+        run: |
+          browser="$GITHUB_WORKSPACE/.tmp/plugin-release/cyberstrikeai-browser-extension.zip"
+          burp="$GITHUB_WORKSPACE/.tmp/plugin-release/cyberstrikeai-burp-extension.jar"
+          if unzip -Z1 "$browser" | grep -E '(\.test\.|\.(pem|key|p12|pfx)$)'; then
+            echo "Browser artifact contains test or private-key files" >&2
+            exit 1
+          fi
+          for archive in "$browser" "$burp"; do
+            if unzip -p "$archive" | grep -aE 'BEGIN ([A-Z]+ )?PRIVATE KEY|AKIA[A-Z0-9]{16}'; then
+              echo "Plugin artifact contains sensitive key material" >&2
+              exit 1
+            fi
+          done
+          jar tf "$burp" | grep -Fx 'burp/DesktopDiscovery.class'
+      - name: Upload plugin integration artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-plugin-integrations-unsigned
+          path: ${{ github.workspace }}/.tmp/plugin-release
+          if-no-files-found: error
+          retention-days: 7
+
   portable-archive:
     name: ${{ matrix.name }} portable ZIP
     runs-on: ${{ matrix.runner }}
@@ -83,7 +155,7 @@ jobs:
         working-directory: desktop
         run: npm run release:test
       - name: Verify excluded desktop web assets
-        run: go test ./web
+        run: go test ./web ./internal/desktopplugin ./cmd/desktop-native-host
       - name: Build unsigned portable application
         working-directory: desktop
         run: npm run desktop:bundle:candidate

@@ -52,6 +52,19 @@ test('桌面数据维护入口仅打开受限的本地维护窗口', () => {
     assert.doesNotMatch(maintenance, /innerHTML|localStorage|sessionStorage|sourceDir/);
 });
 
+test('桌面插件联动必须由用户显式启用且不接收凭据', () => {
+    const html = fs.readFileSync('web/templates/index.html', 'utf8');
+    const script = fs.readFileSync('web/static/js/desktop-setup.js', 'utf8');
+    const capability = JSON.parse(fs.readFileSync('desktop/src-tauri/capabilities/desktop-paths.json', 'utf8'));
+    assert.match(html, /manageDesktopPluginIntegration\(\)[\s\S]*?本地插件联动/);
+    assert.match(script, /invoke\('get_plugin_integration_status'\)/);
+    assert.match(script, /window\.confirm\(prompt\)/);
+    assert.match(script, /invoke\('set_plugin_integration_enabled', \{ enabled: enabling \}\)/);
+    assert.doesNotMatch(script, /plugin[\s\S]{0,40}(password|token|credential)/i);
+    assert.ok(capability.permissions.includes('allow-get-plugin-integration-status'));
+    assert.ok(capability.permissions.includes('allow-set-plugin-integration-enabled'));
+});
+
 test('桌面启动错误页提供安全诊断、重试和退出路径', () => {
     const html = fs.readFileSync('desktop/loading/startup-error.html', 'utf8');
     const script = fs.readFileSync('desktop/loading/startup-error.js', 'utf8');

@@ -109,6 +109,16 @@
                 </div>
                 <div class="header-right">
                     <div class="header-actions">
+                        {{if .DesktopMode}}
+                        <button class="openapi-doc-btn" onclick="window.location.assign('/api-docs')" data-i18n="header.apiDocs" data-i18n-attr="title" data-i18n-skip-text="true" title="API 文档">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M16 13H8M16 17H8M10 9H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <span data-i18n="header.apiDocs">API 文档</span>
+                        </button>
+                        {{end}}
                         {{if not .DesktopMode}}
                         <button class="openapi-doc-btn" onclick="window.open('/api-docs', '_blank')" data-i18n="header.apiDocs" data-i18n-attr="title" data-i18n-skip-text="true" title="API 文档">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -199,6 +209,9 @@
                                     </div>
                                     <div class="user-menu-item" role="menuitem" tabindex="0" onclick="openDesktopDataMaintenance()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDesktopDataMaintenance();}">
                                         <span>数据导入与恢复</span>
+                                    </div>
+                                    <div class="user-menu-item" role="menuitem" tabindex="0" onclick="manageDesktopPluginIntegration()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();manageDesktopPluginIntegration();}">
+                                        <span>本地插件联动</span>
                                     </div>
                                     <div class="user-menu-divider" role="separator"></div>
                                 </div>

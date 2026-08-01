@@ -51,17 +51,19 @@ export async function packagePortable({
 
 async function stageWindowsPortable({ root, targetTriple, buildRoot, portableRoot, tauriConfig }) {
   const executable = path.join(buildRoot, "cyberstrike-desktop.exe");
-  const sidecar = path.join(
-    root,
-    "desktop",
-    "src-tauri",
-    "binaries",
-    `cyberstrike-core-${targetTriple}.exe`,
-  );
   await requireFile(executable, "Windows desktop executable");
-  await requireFile(sidecar, "Windows desktop sidecar");
   await cp(executable, path.join(portableRoot, "CyberStrikeAI Desktop.exe"));
-  await cp(sidecar, path.join(portableRoot, "cyberstrike-core.exe"));
+  for (const name of ["cyberstrike-core", "cyberstrike-native-host"]) {
+    const sidecar = path.join(
+      root,
+      "desktop",
+      "src-tauri",
+      "binaries",
+      `${name}-${targetTriple}.exe`,
+    );
+    await requireFile(sidecar, `Windows ${name} sidecar`);
+    await cp(sidecar, path.join(portableRoot, `${name}.exe`));
+  }
 
   const configDirectory = path.join(root, "desktop", "src-tauri");
   for (const [source, destination] of Object.entries(tauriConfig.bundle.resources)) {

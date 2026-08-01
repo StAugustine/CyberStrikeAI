@@ -53,6 +53,9 @@ func TestCuratedEmbeddedWebAssetsServeWithoutWorkingDirectory(t *testing.T) {
 	if !strings.Contains(root.Body.String(), `/static/js/desktop-setup.js`) {
 		t.Fatal("desktop index does not contain desktop setup script")
 	}
+	if !strings.Contains(root.Body.String(), `window.location.assign('/api-docs')`) {
+		t.Fatal("desktop index does not contain the local API documentation entry")
+	}
 
 	server := httptest.NewRecorder()
 	router.ServeHTTP(server, httptest.NewRequest(http.MethodGet, "/server", nil))

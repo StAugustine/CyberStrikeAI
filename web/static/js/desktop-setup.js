@@ -68,6 +68,30 @@ async function openDesktopDataMaintenance() {
     }
 }
 
+async function manageDesktopPluginIntegration() {
+    if (!window.__TAURI__?.core?.invoke) return;
+    try {
+        const status = await window.__TAURI__.core.invoke('get_plugin_integration_status');
+        const enabling = !status.enabled;
+        const prompt = enabling
+            ? '启用后，Chrome/Edge 与 Burp 只能发现当前本地实例的短期地址；仍需本地管理员登录，发现信息不包含密码或令牌。是否启用？'
+            : '禁用后将删除本地发现信息并注销浏览器原生消息宿主。是否继续？';
+        if (!window.confirm(prompt)) return;
+        const updated = await window.__TAURI__.core.invoke('set_plugin_integration_enabled', { enabled: enabling });
+        const message = updated.enabled
+            ? (updated.browser_registered
+                ? '本地插件联动已启用；请在浏览器扩展或 Burp 中选择“Use Desktop”。'
+                : '本地发现已启用，但浏览器原生消息注册失败；Burp 仍可使用发现文件。')
+            : '本地插件联动已禁用。';
+        if (typeof showNotification === 'function') showNotification(message, updated.enabled ? 'success' : 'info');
+        if (typeof setUserMenuOpen === 'function') setUserMenuOpen(false);
+    } catch (error) {
+        if (typeof showNotification === 'function') {
+            showNotification(typeof error === 'string' ? error : '无法更新本地插件联动', 'error');
+        }
+    }
+}
+
 function initializeDesktopDirectoryActions() {
     const actions = document.getElementById('desktop-directory-actions');
     if (actions && window.__TAURI__?.core?.invoke) actions.hidden = false;
@@ -203,4 +227,5 @@ document.getElementById('desktop-ai-later')?.addEventListener('click', closeDesk
 window.maybeShowDesktopAISetup = maybeShowDesktopAISetup;
 window.openDesktopDirectory = openDesktopDirectory;
 window.openDesktopDataMaintenance = openDesktopDataMaintenance;
+window.manageDesktopPluginIntegration = manageDesktopPluginIntegration;
 initializeDesktopDirectoryActions();

@@ -19,6 +19,7 @@ use tauri::{
 use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
 
 mod maintenance;
+mod plugin_integration;
 
 const SIDECAR_NAME: &str = "cyberstrike-core";
 const DESKTOP_PROTOCOL_VERSION: u32 = 1;
@@ -131,6 +132,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(SidecarState::default())
+        .manage(plugin_integration::PluginIntegrationState::default())
         .invoke_handler(tauri::generate_handler![
             get_credential_migration_paths,
             confirm_credential_migration,
@@ -147,7 +149,9 @@ pub fn run() {
             maintenance::cancel_legacy_import,
             maintenance::restore_desktop_backup,
             maintenance::delete_desktop_backup,
-            maintenance::close_data_maintenance
+            maintenance::close_data_maintenance,
+            plugin_integration::get_plugin_integration_status,
+            plugin_integration::set_plugin_integration_enabled
         ])
         .setup(|app| {
             let navigation_handle = app.handle().clone();
@@ -179,6 +183,7 @@ pub fn run() {
                         .lock()
                         .map_err(|_| "desktop paths state lock poisoned")?
                         .replace(paths.clone());
+                    plugin_integration::initialize(app.handle(), &paths);
                     if let Err(error) = start_sidecar(app.handle(), paths) {
                         fail_sidecar(app.handle(), &error.to_string());
                     }
@@ -469,10 +474,12 @@ fn start_sidecar(
                             {
                                 failure.take();
                             }
+                            let origin = url.origin().ascii_serialization();
                             if let Err(error) = show_main_window(&task_handle, url) {
                                 fail_sidecar(&task_handle, &error);
                                 return;
                             }
+                            plugin_integration::core_ready(&task_handle, &origin, &app_version);
                             eprintln!("desktop core ready");
                         }
                     }
@@ -512,6 +519,7 @@ fn start_sidecar(
                     return;
                 }
                 CommandEvent::Terminated(payload) => {
+                    plugin_integration::core_unavailable(&task_handle);
                     let state = task_handle.state::<SidecarState>();
                     if let Ok(mut child) = state.child.lock() {
                         child.take();
@@ -1179,6 +1187,7 @@ fn request_shutdown(handle: &AppHandle) {
     }
     *phase = StartupPhase::ShuttingDown;
     drop(phase);
+    plugin_integration::core_unavailable(handle);
 
     let mut has_child = false;
     if let Ok(mut child) = state.child.lock() {
@@ -1220,6 +1229,7 @@ fn fail_sidecar(handle: &AppHandle, message: &str) {
         *phase = StartupPhase::Failed;
     }
     record_failure_exit_code(1);
+    plugin_integration::core_unavailable(handle);
     if let Ok(mut failure) = state.startup_failure.lock() {
         let classified = classify_startup_failure(message);
         if classified.code != "core_startup" || failure.is_none() {

@@ -4,7 +4,7 @@
 
 ### What it does
 
-- Configure **Host / Port / HTTPS / Password** and choose an agent mode
+- Configure **Host / Port / HTTPS / Password**, or click **Use Desktop** after local plugin integration has been explicitly enabled in the desktop client
 - Click **Validate** to login (`POST /api/auth/login`) and verify token (`GET /api/auth/validate`)
 - Right-click any HTTP message in Burp and send it to CyberStrikeAI for **streaming web pentest** (agent modes: **Eino Single**, Deep, Plan-Execute, Supervisor — maps to `/api/eino-agent/stream` or `/api/multi-agent/stream`)
 - Keep a **test history sidebar** (searchable) so you can revisit previous runs
@@ -63,7 +63,7 @@ If you already have Gradle available, you can still use `build.gradle` to build.
 
 ### Notes
 
+- **Use Desktop** reads only a private, short-lived local discovery file. It accepts only `http://127.0.0.1:<port>`, rejects expired/unknown/credential fields, clears the previous in-memory token, and still requires the local administrator password plus **Validate**.
 - Default connection is `https://127.0.0.1:8080` (**HTTPS** checked). Self-signed / local certs are trusted automatically (no import).
 - Uncheck **HTTPS** only if your server runs plain HTTP.
 - It uses **Bearer Token** authentication obtained from the configured password.
-

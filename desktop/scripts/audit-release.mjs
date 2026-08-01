@@ -76,6 +76,7 @@ function validatePortableLayout(kind, inventory) {
     for (const required of [
       "CyberStrikeAI Desktop.exe",
       "cyberstrike-core.exe",
+      "cyberstrike-native-host.exe",
       "defaults/manifest.json",
       "defaults/config.example.yaml",
     ]) {
@@ -87,6 +88,7 @@ function validatePortableLayout(kind, inventory) {
     ".app/Contents/Info.plist",
     ".app/Contents/MacOS/cyberstrike-desktop",
     ".app/Contents/MacOS/cyberstrike-core",
+    ".app/Contents/MacOS/cyberstrike-native-host",
     ".app/Contents/Resources/defaults/manifest.json",
     ".app/Contents/Resources/defaults/config.example.yaml",
   ];

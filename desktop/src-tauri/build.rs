@@ -17,6 +17,8 @@ fn main() {
             "restore_desktop_backup",
             "delete_desktop_backup",
             "close_data_maintenance",
+            "get_plugin_integration_status",
+            "set_plugin_integration_enabled",
         ]),
     ))
     .expect("failed to build CyberStrikeAI desktop metadata")

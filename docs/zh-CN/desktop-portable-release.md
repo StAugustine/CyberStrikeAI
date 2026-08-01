@@ -4,9 +4,9 @@
 
 | 目标 | ZIP 内容 | 启动方式 |
 | --- | --- | --- |
-| Windows x64 | 主程序、Go sidecar、`defaults/`、许可证和说明 | 解压后运行 `CyberStrikeAI Desktop.exe` |
-| macOS arm64 | 完整 `.app`、许可证和说明 | 解压后打开 `CyberStrikeAI Desktop.app` |
-| macOS x64 | 完整 `.app`、许可证和说明 | 解压后打开 `CyberStrikeAI Desktop.app` |
+| Windows x64 | 主程序、Go core/native-host sidecar、`defaults/`、许可证和说明 | 解压后运行 `CyberStrikeAI Desktop.exe` |
+| macOS arm64 | 含 core/native-host sidecar 的完整 `.app`、许可证和说明 | 解压后打开 `CyberStrikeAI Desktop.app` |
+| macOS x64 | 含 core/native-host sidecar 的完整 `.app`、许可证和说明 | 解压后打开 `CyberStrikeAI Desktop.app` |
 
 不要只复制主程序。主程序、sidecar 和 `defaults/` 属于同一个版本，必须保留 ZIP 中的目录结构。
 
@@ -34,6 +34,8 @@ Windows 便携包不安装 WebView2。目标电脑必须已有 Microsoft Edge We
 7. 生成 CycloneDX 1.6 SBOM、`audit-report.json`、`portable-runtime-report.json`、`release-manifest.json` 和 `SHA256SUMS`。
 
 每个平台的 CI artifact 保留 7 天且明确标记 `portable-unsigned`。普通 PR 不读取任何发布私钥。
+
+同一流水线另生成跨平台 `desktop-plugin-integrations-unsigned` artifact，其中包含固定官方扩展 ID 的浏览器扩展 ZIP、Burp 插件 JAR 和 `SHA256SUMS`。插件联动默认关闭，必须先在桌面客户端中显式启用；发现信息不包含密码或会话，插件仍需正常登录。
 
 当前已验证的候选由 [GitHub Actions 运行 30684180216](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30684180216) 生成，三个 artifact 均已通过上述全部步骤：
 

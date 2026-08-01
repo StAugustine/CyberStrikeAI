@@ -2,9 +2,11 @@
   "manifest_version": 3,
   "name": "CyberStrikeAI",
   "version": "0.3.10",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArB+mrzaOHVRJkazTNyG0keUs0aq1idTidAq15AebsY+J2/1vUuKpb5OMyogtkeJskes5+uyVK0bVW/FEW9zNFqg2AeOQyEnsliVH/va0S9fchZVYuauUsLbUYU5vnTXjuJ43qAU2HT6OMy72JcWRZJCE4Gm7Cd5r7BRx8LPZ24j/BHSpiyziAgStQcIAjPj64CpuwZVzz6OOYhS+A27Vnq0Z94QjzkIsboqJEpVzqXq3G1T3KVgG23iy1OUd4TK5+EhKsM8oeIcL83nbbyxJHqp3WrrwSOVOG8VAWOE7fjqNKn1EXQrQ33c+IzZhqebz14vO6MnEs42iU7rv//7NfQIDAQAB",
   "description": "Capture browser HTTP traffic and send to CyberStrikeAI for AI-assisted security testing.",
   "devtools_page": "devtools.html",
-  "permissions": ["storage"],
+  "permissions": ["storage", "nativeMessaging"],
+  "host_permissions": ["http://127.0.0.1/*"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {
     "service_worker": "background/service-worker.js"

@@ -76,6 +76,7 @@ test("portable archive audit and checksums cover all evidence", async () => {
   await writeFile(path.join(contents, "Info.plist"), "fixture", "utf8");
   await writeFile(path.join(contents, "MacOS", "cyberstrike-desktop"), "fixture", "utf8");
   await writeFile(path.join(contents, "MacOS", "cyberstrike-core"), "fixture", "utf8");
+  await writeFile(path.join(contents, "MacOS", "cyberstrike-native-host"), "fixture", "utf8");
   await writeFile(path.join(contents, "Resources", "defaults", "manifest.json"), "{}", "utf8");
   await writeFile(path.join(contents, "Resources", "defaults", "config.example.yaml"), "fixture", "utf8");
 
