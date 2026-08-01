@@ -46,6 +46,8 @@ func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	t.Cleanup(upstream.Close)
 	externalMCP, externalMCPCalls := newDesktopFakeMCP(t)
 	t.Cleanup(externalMCP.Close)
+	externalSSEMCP, externalSSEMCPCalls := newDesktopFakeSSEMCP(t)
+	t.Cleanup(externalSSEMCP.Close)
 	infoCollect := newDesktopFakeInfoCollect(t)
 	t.Cleanup(infoCollect.Close)
 	credentialStore := newRecordingCredentialStore()
@@ -890,6 +892,8 @@ audit:
 		filepath.Join(options.Roots.DataDir, "chat_uploads"),
 		externalMCP.URL+"/mcp",
 		externalMCPCalls,
+		externalSSEMCP.URL,
+		externalSSEMCPCalls,
 		cancelRequestStarted,
 		filepath.Join(options.Roots.TempDir, "desktop-stdio-mcp-exited"),
 	)
@@ -1219,6 +1223,17 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveRe
 			!bytes.Contains(requestData, []byte("desktop-stdio:stdio;env=controlled;path=desktop-controlled-path")) {
 			t.Error("desktop stdio MCP did not receive its controlled environment")
 		}
+		if bytes.Contains(requestData, []byte("desktop-sse-mcp-call")) &&
+			desktopPayloadHasTool(payload, "desktop-sse-mcp__desktop_sse_echo") &&
+			!desktopPayloadHasRole(payload, "tool") {
+			desktopWriteToolCallResponse(response, payload, "call-desktop-sse-mcp", "desktop-sse-mcp__desktop_sse_echo", `{"text":"sse"}`)
+			return
+		}
+		if bytes.Contains(requestData, []byte("desktop-sse-mcp-call")) &&
+			desktopPayloadHasRole(payload, "tool") &&
+			!bytes.Contains(requestData, []byte("desktop-sse:sse")) {
+			t.Error("desktop SSE MCP result was not returned to the model")
+		}
 		if bytes.Contains(requestData, []byte("desktop-external-mcp-call")) &&
 			desktopPayloadHasTool(payload, "desktop-golden-mcp__desktop_echo") &&
 			!desktopPayloadHasRole(payload, "tool") {
@@ -1312,6 +1327,40 @@ func newDesktopFakeMCP(t *testing.T) (*httptest.Server, <-chan string) {
 			return
 		}
 		streamable.ServeHTTP(response, request)
+	})), calls
+}
+
+func newDesktopFakeSSEMCP(t *testing.T) (*httptest.Server, <-chan string) {
+	t.Helper()
+	calls := make(chan string, 4)
+	server := sdkmcp.NewServer(&sdkmcp.Implementation{
+		Name:    "desktop-sse-mcp",
+		Version: "1.0.0",
+	}, nil)
+	type echoArgs struct {
+		Text string `json:"text"`
+	}
+	sdkmcp.AddTool(server, &sdkmcp.Tool{
+		Name:        "desktop_sse_echo",
+		Description: "Echo text through the desktop SSE MCP golden path.",
+	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, args echoArgs) (*sdkmcp.CallToolResult, any, error) {
+		select {
+		case calls <- args.Text:
+		default:
+			t.Error("desktop fake SSE MCP call buffer is full")
+		}
+		return &sdkmcp.CallToolResult{
+			Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: "desktop-sse:" + args.Text}},
+		}, nil, nil
+	})
+	handler := sdkmcp.NewSSEHandler(func(*http.Request) *sdkmcp.Server { return server }, nil)
+	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("X-Desktop-MCP") != "controlled-sse" {
+			t.Errorf("desktop fake SSE MCP header = %q", request.Header.Get("X-Desktop-MCP"))
+			http.Error(response, "missing desktop SSE MCP header", http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(response, request)
 	})), calls
 }
 
@@ -2739,6 +2788,9 @@ type desktopOperationsFixture struct {
 	stdioMCPName     string
 	stdioMCPCommand  string
 	stdioMCPExitPath string
+	sseMCPName       string
+	sseMCPURL        string
+	sseMCPCalls      <-chan string
 	fileDirectory    string
 	fileRelativePath string
 	fileAbsolutePath string
@@ -2749,6 +2801,8 @@ func desktopCreateOperationsFixture(
 	t *testing.T,
 	baseURL, token, managedUploadsRoot, externalMCPURL string,
 	externalMCPCalls <-chan string,
+	sseMCPURL string,
+	sseMCPCalls <-chan string,
 	cancelRequestStarted <-chan struct{},
 	stdioMCPExitPath string,
 ) desktopOperationsFixture {
@@ -2760,6 +2814,9 @@ func desktopCreateOperationsFixture(
 		stdioMCPName:     "desktop-stdio-mcp",
 		stdioMCPCommand:  os.Args[0],
 		stdioMCPExitPath: stdioMCPExitPath,
+		sseMCPName:       "desktop-sse-mcp",
+		sseMCPURL:        sseMCPURL,
+		sseMCPCalls:      sseMCPCalls,
 		fileDirectory:    "desktop-golden-files",
 	}
 	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks", token, map[string]interface{}{
@@ -2951,6 +3008,29 @@ func desktopCreateOperationsFixture(
 	desktopAssertExternalMCPTool(t, baseURL, token, fixture.stdioMCPName, "desktop_stdio_echo")
 	desktopInvokeStdioExternalMCP(t, baseURL, token, fixture.stdioMCPName)
 
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/external-mcp/"+fixture.sseMCPName, token, map[string]interface{}{
+		"config": map[string]interface{}{
+			"type":        "sse",
+			"url":         fixture.sseMCPURL,
+			"description": "Desktop Persistent SSE MCP",
+			"timeout":     5,
+			"headers": map[string]string{
+				"X-Desktop-MCP": "controlled-sse",
+			},
+			"disabled": true,
+		},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create desktop SSE MCP status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/external-mcp/"+fixture.sseMCPName+"/start", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("start desktop SSE MCP status = %d, body = %#v", status, body)
+	}
+	desktopWaitForExternalMCP(t, baseURL, token, fixture.sseMCPName, "connected", 1, false)
+	desktopAssertExternalMCPTool(t, baseURL, token, fixture.sseMCPName, "desktop_sse_echo")
+	desktopInvokeSSEExternalMCP(t, baseURL, token, fixture.sseMCPName, fixture.sseMCPCalls)
+
 	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/chat-uploads/mkdir", token, map[string]string{
 		"parent": "",
 		"name":   fixture.fileDirectory,
@@ -3059,6 +3139,18 @@ func desktopAssertOperationsFixture(t *testing.T, baseURL, token string, fixture
 	}
 	desktopAssertExternalMCPTool(t, baseURL, token, fixture.stdioMCPName, "desktop_stdio_echo")
 	desktopInvokeStdioExternalMCP(t, baseURL, token, fixture.stdioMCPName)
+	sseBody := desktopWaitForExternalMCP(t, baseURL, token, fixture.sseMCPName, "connected", 1, false)
+	sseConfig, _ := sseBody["config"].(map[string]interface{})
+	sseHeaders, _ := sseConfig["headers"].(map[string]interface{})
+	if sseConfig["type"] != "sse" ||
+		sseConfig["url"] != fixture.sseMCPURL ||
+		sseConfig["description"] != "Desktop Persistent SSE MCP" ||
+		sseConfig["external_mcp_enable"] != true ||
+		sseHeaders["X-Desktop-MCP"] != "controlled-sse" {
+		t.Fatalf("persisted enabled desktop SSE MCP body = %#v", sseBody)
+	}
+	desktopAssertExternalMCPTool(t, baseURL, token, fixture.sseMCPName, "desktop_sse_echo")
+	desktopInvokeSSEExternalMCP(t, baseURL, token, fixture.sseMCPName, fixture.sseMCPCalls)
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/chat-uploads/content?path="+url.QueryEscape(fixture.fileRelativePath), token, nil)
 	if status != http.StatusOK || body["content"] != "Persisted desktop managed file." {
 		t.Fatalf("persisted desktop managed file status = %d, body = %#v", status, body)
@@ -3078,6 +3170,7 @@ func desktopDeleteOperationsFixture(t *testing.T, baseURL, token string, fixture
 		{method: http.MethodDelete, target: baseURL + "api/batch-tasks/" + fixture.pausedQueueID},
 		{method: http.MethodDelete, target: baseURL + "api/external-mcp/" + fixture.externalMCPName},
 		{method: http.MethodDelete, target: baseURL + "api/external-mcp/" + fixture.stdioMCPName},
+		{method: http.MethodDelete, target: baseURL + "api/external-mcp/" + fixture.sseMCPName},
 		{method: http.MethodDelete, target: baseURL + "api/chat-uploads", body: map[string]string{"path": fixture.fileDirectory}},
 	} {
 		status, body := desktopJSONRequest(t, request.method, request.target, token, request.body)
@@ -3092,6 +3185,7 @@ func desktopDeleteOperationsFixture(t *testing.T, baseURL, token string, fixture
 		baseURL + "api/batch-tasks/" + fixture.pausedQueueID,
 		baseURL + "api/external-mcp/" + fixture.externalMCPName,
 		baseURL + "api/external-mcp/" + fixture.stdioMCPName,
+		baseURL + "api/external-mcp/" + fixture.sseMCPName,
 		baseURL + "api/chat-uploads/content?path=" + url.QueryEscape(fixture.fileRelativePath),
 	} {
 		status, _ := desktopJSONRequest(t, http.MethodGet, target, token, nil)
@@ -3188,6 +3282,38 @@ func desktopInvokeStdioExternalMCP(t *testing.T, baseURL, token, name string) {
 	execution := desktopNestedItem(body, "executions", "toolName", name+"::desktop_stdio_echo")
 	if status != http.StatusOK || execution == nil || execution["status"] != "completed" {
 		t.Fatalf("desktop stdio MCP execution monitor status = %d, body = %#v", status, body)
+	}
+}
+
+func desktopInvokeSSEExternalMCP(t *testing.T, baseURL, token, name string, calls <-chan string) {
+	t.Helper()
+	events := desktopSSERequest(t, baseURL+"api/eino-agent/stream", token, map[string]interface{}{
+		"message": "desktop-sse-mcp-call",
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	if !desktopSSEHasEvent(events, "response") || !desktopSSEHasEvent(events, "done") {
+		t.Fatalf("desktop SSE MCP Agent events = %#v", events)
+	}
+	select {
+	case text := <-calls:
+		if text != "sse" {
+			t.Fatalf("desktop SSE MCP argument = %q, want sse", text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("desktop SSE MCP server did not receive the Agent tool call")
+	}
+	status, body := desktopJSONRequest(
+		t,
+		http.MethodGet,
+		baseURL+"api/monitor?tool="+url.QueryEscape(name+"__desktop_sse_echo"),
+		token,
+		nil,
+	)
+	execution := desktopNestedItem(body, "executions", "toolName", name+"::desktop_sse_echo")
+	if status != http.StatusOK || execution == nil || execution["status"] != "completed" {
+		t.Fatalf("desktop SSE MCP execution monitor status = %d, body = %#v", status, body)
 	}
 }
 
