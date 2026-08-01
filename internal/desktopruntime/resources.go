@@ -232,6 +232,29 @@ func loadResourceState(path string) (resourceState, error) {
 	return state, nil
 }
 
+// InstalledResourceVersion returns the version last published by a complete
+// resource installation. A missing state file identifies a fresh install.
+func InstalledResourceVersion(path string) (version string, exists bool, err error) {
+	if strings.TrimSpace(path) == "" || !filepath.IsAbs(path) {
+		return "", false, fmt.Errorf("resource state path must be absolute: %q", path)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("inspect resource state: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return "", false, errors.New("resource state is not a regular file")
+	}
+	state, err := loadResourceState(path)
+	if err != nil {
+		return "", false, err
+	}
+	return state.AppVersion, true, nil
+}
+
 func hashExistingRegularFile(path string) (hash string, exists bool, err error) {
 	info, err := os.Lstat(path)
 	if err != nil {

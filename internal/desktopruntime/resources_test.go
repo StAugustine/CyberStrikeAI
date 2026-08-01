@@ -36,6 +36,18 @@ func TestInstallResourcesFirstInstallAndUnchangedRestart(t *testing.T) {
 	if !reflect.DeepEqual(restarted.Unchanged, []string{"agents/recon.md", "tools/nmap.yaml"}) {
 		t.Fatalf("unchanged = %#v", restarted.Unchanged)
 	}
+	version, exists, err := InstalledResourceVersion(state)
+	if err != nil || !exists || version != "v1" {
+		t.Fatalf("InstalledResourceVersion = %q, %t, %v", version, exists, err)
+	}
+}
+
+func TestInstalledResourceVersionReportsFreshInstall(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resource-state.json")
+	version, exists, err := InstalledResourceVersion(path)
+	if err != nil || exists || version != "" {
+		t.Fatalf("InstalledResourceVersion = %q, %t, %v", version, exists, err)
+	}
 }
 
 func TestInstallResourcesUpdatesOnlyUnmodifiedFiles(t *testing.T) {

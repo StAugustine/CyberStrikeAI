@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -23,11 +24,113 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/desktopcredentials"
+	"cyberstrike-ai/internal/desktopmigration"
 	"cyberstrike-ai/internal/desktopprotocol"
 	"cyberstrike-ai/internal/desktopruntime"
 	"github.com/gin-gonic/gin"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func TestDesktopCoreUpgradeTransactionResumesFromSingleRecoveryPoint(t *testing.T) {
+	root := t.TempDir()
+	store := newRecordingCredentialStore()
+	roots := desktopruntime.Roots{
+		DataDir:   filepath.Join(root, "data"),
+		ConfigDir: filepath.Join(root, "config"),
+		CacheDir:  filepath.Join(root, "cache"),
+		LogDir:    filepath.Join(root, "logs"),
+		TempDir:   filepath.Join(root, "temp"),
+	}
+	v1Resources := writeTestResources(t, filepath.Join(root, "v1"), "1.0.0")
+	v1Options := runOptions{Roots: roots, ResourceDir: v1Resources, AppVersion: "1.0.0", CredentialStore: store}
+	v1 := startDesktopCoreTestProcess(t, v1Options, "desktop-upgrade-secret")
+	status, login := desktopJSONRequest(t, http.MethodPost, v1.URL+"api/auth/login", "", map[string]string{
+		"username": "admin",
+		"password": "desktop-upgrade-secret",
+	})
+	token, _ := login["token"].(string)
+	if status != http.StatusOK || token == "" {
+		t.Fatalf("login before desktop upgrade status = %d, body = %#v", status, login)
+	}
+	status, project := desktopJSONRequest(t, http.MethodPost, v1.URL+"api/projects", token, map[string]string{
+		"name":        "Desktop Upgrade Source Project",
+		"description": "must exist in the pre-upgrade backup",
+		"status":      "active",
+	})
+	projectID, _ := project["id"].(string)
+	if status != http.StatusOK || strings.TrimSpace(projectID) == "" {
+		t.Fatalf("create pre-upgrade project status = %d, body = %#v", status, project)
+	}
+	v1.Shutdown(t)
+
+	paths, err := desktopruntime.ResolvePaths(roots)
+	if err != nil {
+		t.Fatalf("ResolvePaths: %v", err)
+	}
+	customRolePath := filepath.Join(paths.ResourcesDir, "roles", "upgrade-custom.md")
+	if err := os.MkdirAll(filepath.Dir(customRolePath), 0o700); err != nil {
+		t.Fatalf("prepare custom role: %v", err)
+	}
+	if err := os.WriteFile(customRolePath, []byte("custom desktop upgrade role"), 0o600); err != nil {
+		t.Fatalf("write custom role: %v", err)
+	}
+
+	v2Resources := writeTestResources(t, filepath.Join(root, "v2"), "1.1.0")
+	if err := os.WriteFile(filepath.Join(v2Resources, "config.example.yaml"), []byte("corrupt bundled resource"), 0o600); err != nil {
+		t.Fatalf("corrupt v2 resource fixture: %v", err)
+	}
+	v2Options := runOptions{Roots: roots, ResourceDir: v2Resources, AppVersion: "1.1.0", CredentialStore: store}
+	err = runDesktopCore(context.Background(), emptyReader{}, io.Discard, v2Options)
+	if err == nil || !strings.Contains(err.Error(), "hash mismatch") {
+		t.Fatalf("interrupted desktop upgrade error = %v", err)
+	}
+	upgradeState, exists, err := desktopmigration.LoadUpgradeState(paths.UpgradeStateFile)
+	if err != nil || !exists {
+		t.Fatalf("pending desktop upgrade state = %#v, exists=%t, err=%v", upgradeState, exists, err)
+	}
+	installedVersion, exists, err := desktopruntime.InstalledResourceVersion(paths.ResourceStateFile)
+	if err != nil || !exists || installedVersion != "1.0.0" {
+		t.Fatalf("installed version after interruption = %q, exists=%t, err=%v", installedVersion, exists, err)
+	}
+	backupEntries, err := os.ReadDir(paths.BackupsDir)
+	if err != nil || len(backupEntries) != 1 {
+		t.Fatalf("upgrade backups after interruption = %#v, err=%v", backupEntries, err)
+	}
+
+	appendTestResourceConfig(t, v2Resources, "1.1.0", "")
+	v2 := startDesktopCoreTestProcess(t, v2Options, "")
+	if _, exists, err := desktopmigration.LoadUpgradeState(paths.UpgradeStateFile); err != nil || exists {
+		t.Fatalf("upgrade state after READY exists=%t err=%v", exists, err)
+	}
+	installedVersion, exists, err = desktopruntime.InstalledResourceVersion(paths.ResourceStateFile)
+	if err != nil || !exists || installedVersion != "1.1.0" {
+		t.Fatalf("installed version after resumed upgrade = %q, exists=%t, err=%v", installedVersion, exists, err)
+	}
+	backupEntries, err = os.ReadDir(paths.BackupsDir)
+	if err != nil || len(backupEntries) != 1 {
+		t.Fatalf("resumed upgrade created another backup: entries=%#v err=%v", backupEntries, err)
+	}
+	backupDirectory := filepath.Join(paths.BackupsDir, upgradeState.BackupID)
+	manifest, err := desktopmigration.VerifyBackup(backupDirectory)
+	if err != nil || manifest.FromVersion != "1.0.0" || manifest.ToVersion != "1.1.0" {
+		t.Fatalf("desktop upgrade backup manifest = %#v, err=%v", manifest, err)
+	}
+	roleBackup, err := os.ReadFile(filepath.Join(backupDirectory, "payload", "data", "resources", "roles", "upgrade-custom.md"))
+	if err != nil || string(roleBackup) != "custom desktop upgrade role" {
+		t.Fatalf("desktop upgrade custom role backup = %q, err=%v", roleBackup, err)
+	}
+	backupDatabase, err := sql.Open("sqlite3", filepath.Join(backupDirectory, "payload", "data", "databases", "conversations.db")+"?_query_only=1")
+	if err != nil {
+		t.Fatalf("open desktop upgrade backup database: %v", err)
+	}
+	var projectCount int
+	queryErr := backupDatabase.QueryRow(`SELECT COUNT(*) FROM projects WHERE name = ?`, "Desktop Upgrade Source Project").Scan(&projectCount)
+	closeErr := backupDatabase.Close()
+	if queryErr != nil || closeErr != nil || projectCount != 1 {
+		t.Fatalf("desktop upgrade backup project count = %d, query err=%v, close err=%v", projectCount, queryErr, closeErr)
+	}
+	v2.Shutdown(t)
+}
 
 func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	root := t.TempDir()
@@ -3802,6 +3905,89 @@ func desktopJSONRequestWithHeaders(
 		t.Fatalf("decode desktop response: %v", err)
 	}
 	return response.StatusCode, payload
+}
+
+type desktopCoreTestProcess struct {
+	URL          string
+	stdinWriter  *io.PipeWriter
+	stdoutReader *io.PipeReader
+	done         <-chan error
+	stopped      bool
+}
+
+func startDesktopCoreTestProcess(t *testing.T, options runOptions, bootstrapPassword string) *desktopCoreTestProcess {
+	t.Helper()
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		done <- runDesktopCore(context.Background(), stdinReader, stdoutWriter, options)
+		_ = stdoutWriter.Close()
+		_ = stdinReader.Close()
+	}()
+	process := &desktopCoreTestProcess{
+		stdinWriter:  stdinWriter,
+		stdoutReader: stdoutReader,
+		done:         done,
+	}
+	t.Cleanup(func() { process.Shutdown(t) })
+	decoder := json.NewDecoder(stdoutReader)
+	for {
+		var handshake desktopprotocol.Handshake
+		decodeWithTimeout(t, decoder, &handshake)
+		if err := handshake.Validate(); err != nil {
+			t.Fatalf("desktop core test handshake validation: %v", err)
+		}
+		switch handshake.Type {
+		case desktopprotocol.MessageCredentialMigrationRequired:
+			if err := json.NewEncoder(stdinWriter).Encode(desktopprotocol.Command{
+				Type:            desktopprotocol.CommandMigrateCredentials,
+				ProtocolVersion: desktopprotocol.Version,
+			}); err != nil {
+				t.Fatalf("confirm desktop core test credential migration: %v", err)
+			}
+		case desktopprotocol.MessageBootstrapRequired:
+			if bootstrapPassword == "" {
+				t.Fatal("desktop core test unexpectedly requires bootstrap password")
+			}
+			if err := json.NewEncoder(stdinWriter).Encode(desktopprotocol.Command{
+				Type:            desktopprotocol.CommandBootstrap,
+				ProtocolVersion: desktopprotocol.Version,
+				Password:        bootstrapPassword,
+			}); err != nil {
+				t.Fatalf("send desktop core test bootstrap password: %v", err)
+			}
+		case desktopprotocol.MessageReady:
+			process.URL = handshake.URL
+			return process
+		default:
+			t.Fatalf("unexpected desktop core test handshake: %#v", handshake)
+		}
+	}
+}
+
+func (p *desktopCoreTestProcess) Shutdown(t *testing.T) {
+	t.Helper()
+	if p == nil || p.stopped {
+		return
+	}
+	p.stopped = true
+	if err := json.NewEncoder(p.stdinWriter).Encode(desktopprotocol.Command{
+		Type:            desktopprotocol.CommandShutdown,
+		ProtocolVersion: desktopprotocol.Version,
+	}); err != nil {
+		t.Errorf("send desktop core test shutdown: %v", err)
+	}
+	select {
+	case err := <-p.done:
+		if err != nil {
+			t.Errorf("desktop core test shutdown: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("desktop core test did not shut down")
+	}
+	_ = p.stdinWriter.Close()
+	_ = p.stdoutReader.Close()
 }
 
 func TestDesktopCoreMigratesCredentialsOnlyAfterConfirmation(t *testing.T) {

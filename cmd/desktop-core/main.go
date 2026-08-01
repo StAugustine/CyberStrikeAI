@@ -20,6 +20,7 @@ import (
 	"cyberstrike-ai/internal/app"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/desktopcredentials"
+	"cyberstrike-ai/internal/desktopmigration"
 	"cyberstrike-ai/internal/desktopprotocol"
 	"cyberstrike-ai/internal/desktopruntime"
 	"cyberstrike-ai/internal/logger"
@@ -102,6 +103,17 @@ func runDesktopCore(parent context.Context, stdin io.Reader, stdout io.Writer, o
 	}
 	if manifest.AppVersion != options.AppVersion {
 		return fmt.Errorf("desktop resource version %q does not match app version %q", manifest.AppVersion, options.AppVersion)
+	}
+	var upgradeSession *desktopmigration.UpgradeSession
+	installedVersion, installed, err := desktopruntime.InstalledResourceVersion(paths.ResourceStateFile)
+	if err != nil {
+		return fmt.Errorf("inspect desktop installed version: %w", err)
+	}
+	if installed {
+		upgradeSession, err = desktopmigration.PrepareUpgrade(parent, paths, installedVersion, options.AppVersion, time.Now())
+		if err != nil {
+			return fmt.Errorf("prepare desktop upgrade migration: %w", err)
+		}
 	}
 	if _, err := desktopruntime.InstallResources(resourceSource, manifest, paths.ResourcesDir, paths.ResourceStateFile); err != nil {
 		return fmt.Errorf("install desktop resources: %w", err)
@@ -229,6 +241,11 @@ func runDesktopCore(parent context.Context, stdin io.Reader, stdout io.Writer, o
 	if err := waitForReady(runContext, application, serveErrors); err != nil {
 		cancel()
 		return err
+	}
+	if err := upgradeSession.Complete(); err != nil {
+		cancel()
+		<-serveErrors
+		return fmt.Errorf("complete desktop upgrade migration: %w", err)
 	}
 	if err := encoder.Encode(desktopprotocol.NewReady(options.AppVersion, baseURL)); err != nil {
 		cancel()
