@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -67,7 +68,7 @@ func TestCreateUpgradeBackupIncludesCommittedWALAndVerifiesPayload(t *testing.T)
 		info, err := os.Stat(filepath.Join(result.Directory, "payload", filepath.FromSlash(path)))
 		if err != nil {
 			t.Errorf("inspect backup SQLite permissions for %q: %v", path, err)
-		} else if info.Mode().Perm()&0o077 != 0 {
+		} else if !isPrivateTestFileMode(info.Mode()) {
 			t.Errorf("backup SQLite permissions for %q = %v", path, info.Mode().Perm())
 		}
 	}
@@ -94,6 +95,18 @@ func TestCreateUpgradeBackupIncludesCommittedWALAndVerifiesPayload(t *testing.T)
 	if _, err := os.Stat(filepath.Join(result.Directory, "payload", "data", "databases", "conversations.db-wal")); !os.IsNotExist(err) {
 		t.Fatalf("backup unexpectedly contains SQLite WAL: %v", err)
 	}
+}
+
+func isPrivateTestFileMode(mode os.FileMode) bool {
+	if !mode.IsRegular() {
+		return false
+	}
+	// Go's FileMode does not expose Windows ACLs. Files under the per-user
+	// application directory inherit its ACL and appear as 0666 to Go.
+	if runtime.GOOS == "windows" {
+		return mode.Perm()&0o111 == 0
+	}
+	return mode.Perm()&0o077 == 0
 }
 
 func TestCreateUpgradeBackupRejectsSymlinkAndRemovesStaging(t *testing.T) {

@@ -30,7 +30,7 @@ func TestPrepareUpgradeCreatesOneBackupAndResumesUntilCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect upgrade state permissions: %v", err)
 	}
-	if stateInfo.Mode().Perm()&0o077 != 0 {
+	if !isPrivateTestFileMode(stateInfo.Mode()) {
 		t.Fatalf("upgrade state permissions = %v", stateInfo.Mode().Perm())
 	}
 	backupDirectory := filepath.Join(paths.BackupsDir, state.BackupID)

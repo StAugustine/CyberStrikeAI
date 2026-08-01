@@ -131,7 +131,7 @@ func TestPrepareLegacyImportBuildsPrivateVerifiedSnapshotWithoutChangingSource(t
 		t.Fatal("desktop import state exposed a secret or absolute source path")
 	}
 	stateInfo, err := os.Stat(paths.ImportStateFile)
-	if err != nil || stateInfo.Mode().Perm()&0o077 != 0 {
+	if err != nil || !isPrivateTestFileMode(stateInfo.Mode()) {
 		t.Fatalf("desktop import state permissions = %v, err=%v", stateInfo, err)
 	}
 	loaded, exists, err := LoadImportState(paths.ImportStateFile)
