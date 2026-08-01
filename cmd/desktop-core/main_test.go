@@ -1614,6 +1614,7 @@ func desktopCreateManagementFixture(t *testing.T, baseURL, token, conversationID
 	if status != http.StatusOK || body["updated"] != float64(1) {
 		t.Fatalf("update desktop asset status = %d, body = %#v", status, body)
 	}
+	desktopExerciseAssetLifecycle(t, baseURL, token, conversationID, fixture.projectID, fixture.assetID)
 
 	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/vulnerabilities", token, map[string]string{
 		"conversation_id":    conversationID,
@@ -1647,6 +1648,7 @@ func desktopCreateManagementFixture(t *testing.T, baseURL, token, conversationID
 		t.Fatalf("update desktop vulnerability status = %d, body = %#v", status, body)
 	}
 	desktopExerciseVulnerabilityReporting(t, baseURL, token, conversationID, fixture.projectID, fixture.vulnerabilityID)
+	desktopAssertAssetLifecycle(t, baseURL, token, conversationID, fixture.projectID, fixture.assetID)
 
 	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/projects/"+fixture.projectID+"/facts", token, map[string]interface{}{
 		"fact_key":                 "target.primary_domain",
@@ -1690,6 +1692,7 @@ func desktopAssertManagementFixture(t *testing.T, baseURL, token, conversationID
 	if status != http.StatusOK || asset == nil || asset["status"] != "inactive" || asset["project_id"] != fixture.projectID {
 		t.Fatalf("persisted desktop asset status = %d, body = %#v", status, body)
 	}
+	desktopAssertAssetLifecycle(t, baseURL, token, conversationID, fixture.projectID, fixture.assetID)
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/vulnerabilities/"+fixture.vulnerabilityID, token, nil)
 	if status != http.StatusOK || body["status"] != "confirmed" || body["project_id"] != fixture.projectID {
 		t.Fatalf("persisted desktop vulnerability status = %d, body = %#v", status, body)
@@ -1722,6 +1725,85 @@ func desktopDeleteManagementFixture(t *testing.T, baseURL, token, conversationID
 	status, _ := desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID, token, nil)
 	if status != http.StatusNotFound {
 		t.Fatalf("deleted desktop project status = %d, want 404", status)
+	}
+}
+
+func desktopExerciseAssetLifecycle(t *testing.T, baseURL, token, conversationID, projectID, assetID string) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/assets/import", token, map[string]interface{}{
+		"source": "desktop-duplicate",
+		"assets": []map[string]interface{}{{
+			"host":               "desktop.example.test",
+			"domain":             "desktop.example.test",
+			"port":               8443,
+			"protocol":           "https",
+			"title":              "Desktop duplicate asset",
+			"responsible_person": "Desktop Owner",
+			"status":             "active",
+			"tags":               []string{"duplicate"},
+		}},
+	})
+	if status != http.StatusOK || body["created"] != float64(1) {
+		t.Fatalf("create desktop duplicate asset status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/assets?domain=desktop.example.test&port=8443", token, nil)
+	duplicateID := desktopNestedItemID(body, "assets", "port", float64(8443))
+	if status != http.StatusOK || duplicateID == "" {
+		t.Fatalf("find desktop duplicate asset status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/assets/merge", token, map[string]interface{}{
+		"asset_ids":  []string{assetID, duplicateID},
+		"primary_id": assetID,
+	})
+	mergedAsset, _ := body["asset"].(map[string]interface{})
+	if status != http.StatusOK || body["merged"] != float64(1) || mergedAsset["id"] != assetID || mergedAsset["responsible_person"] != "Desktop Owner" || !desktopJSONArrayValueContains(mergedAsset["tags"], "duplicate") {
+		t.Fatalf("merge desktop duplicate asset status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/assets?domain=desktop.example.test&port=8443", token, nil)
+	if status != http.StatusOK || body["total"] != float64(0) {
+		t.Fatalf("merged desktop duplicate remained visible: status = %d, body = %#v", status, body)
+	}
+
+	for _, targetProjectID := range []string{"", projectID} {
+		status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/assets/project-binding", token, map[string]interface{}{
+			"asset_ids":  []string{assetID},
+			"project_id": targetProjectID,
+		})
+		if status != http.StatusOK || body["updated"] != float64(1) || body["project_id"] != targetProjectID {
+			t.Fatalf("bind desktop asset project %q status = %d, body = %#v", targetProjectID, status, body)
+		}
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/assets/scan-links", token, map[string]interface{}{
+		"scans": []map[string]string{{
+			"asset_id":        assetID,
+			"conversation_id": conversationID,
+		}},
+	})
+	if status != http.StatusOK || body["updated"] != float64(1) {
+		t.Fatalf("record desktop asset scan status = %d, body = %#v", status, body)
+	}
+}
+
+func desktopAssertAssetLifecycle(t *testing.T, baseURL, token, conversationID, projectID, assetID string) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/assets?host=desktop.example.test&port=443&project_id="+url.QueryEscape(projectID)+"&scan_state=scanned", token, nil)
+	asset := desktopNestedItem(body, "assets", "id", assetID)
+	if status != http.StatusOK || body["total"] != float64(1) || asset == nil ||
+		asset["last_scan_conversation_id"] != conversationID || asset["last_scan_at"] == nil ||
+		asset["vulnerability_count"] != float64(1) || asset["risk_level"] != "high" ||
+		asset["responsible_person"] != "Desktop Owner" ||
+		!desktopJSONArrayValueContains(asset["tags"], "persistent") ||
+		!desktopJSONArrayValueContains(asset["tags"], "duplicate") {
+		t.Fatalf("desktop asset lifecycle status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/assets/selection?risk_level=high&project_id="+url.QueryEscape(projectID), token, nil)
+	if status != http.StatusOK || body["total"] != float64(1) || desktopNestedItem(body, "assets", "id", assetID) == nil {
+		t.Fatalf("desktop high-risk asset selection status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/assets/stats?days=30", token, nil)
+	coverage, _ := body["coverage"].(map[string]interface{})
+	if status != http.StatusOK || body["total"] != float64(1) || coverage["scanned"] != float64(1) || coverage["never_scanned"] != float64(0) {
+		t.Fatalf("desktop asset scan stats status = %d, body = %#v", status, body)
 	}
 }
 
