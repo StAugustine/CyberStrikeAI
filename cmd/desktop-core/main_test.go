@@ -886,6 +886,7 @@ openai:
 		filepath.Join(options.Roots.DataDir, "chat_uploads"),
 		externalMCP.URL+"/mcp",
 		externalMCPCalls,
+		cancelRequestStarted,
 	)
 
 	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/logout", token, nil)
@@ -2606,6 +2607,8 @@ func desktopJSONArrayValueContains(value interface{}, want string) bool {
 
 type desktopOperationsFixture struct {
 	queueID          string
+	singleQueueID    string
+	pausedQueueID    string
 	firstTaskID      string
 	addedTaskID      string
 	externalMCPName  string
@@ -2620,6 +2623,7 @@ func desktopCreateOperationsFixture(
 	t *testing.T,
 	baseURL, token, managedUploadsRoot, externalMCPURL string,
 	externalMCPCalls <-chan string,
+	cancelRequestStarted <-chan struct{},
 ) desktopOperationsFixture {
 	t.Helper()
 	fixture := desktopOperationsFixture{
@@ -2693,6 +2697,60 @@ func desktopCreateOperationsFixture(
 		t.Fatalf("start desktop batch queue status = %d, body = %#v", status, body)
 	}
 	desktopWaitForBatchQueue(t, baseURL, token, fixture.queueID, "completed")
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks", token, map[string]interface{}{
+		"title":        "Desktop Single Task Batch",
+		"tasks":        []string{"desktop-tool-execution single task", "desktop-tool-execution pending sibling"},
+		"agentMode":    "eino_single",
+		"scheduleMode": "manual",
+		"executeNow":   false,
+		"concurrency":  1,
+	})
+	fixture.singleQueueID, _ = body["queueId"].(string)
+	singleQueue, _ := body["queue"].(map[string]interface{})
+	singleTasks := desktopNestedItems(singleQueue, "tasks")
+	if status != http.StatusOK || fixture.singleQueueID == "" || len(singleTasks) != 2 {
+		t.Fatalf("create single-task desktop batch queue status = %d, body = %#v", status, body)
+	}
+	singleTask, _ := singleTasks[0].(map[string]interface{})
+	singleTaskID, _ := singleTask["id"].(string)
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks/"+fixture.singleQueueID+"/tasks/"+singleTaskID+"/run", token, nil)
+	if status != http.StatusOK || body["autoStarted"] != true {
+		t.Fatalf("run single desktop batch task status = %d, body = %#v", status, body)
+	}
+	desktopWaitForBatchQueue(t, baseURL, token, fixture.singleQueueID, "paused")
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/batch-tasks/"+fixture.singleQueueID, token, nil)
+	singleQueue, _ = body["queue"].(map[string]interface{})
+	if status != http.StatusOK || desktopNestedItem(singleQueue, "tasks", "status", "completed") == nil || desktopNestedItem(singleQueue, "tasks", "status", "pending") == nil {
+		t.Fatalf("single desktop batch task result status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks", token, map[string]interface{}{
+		"title":        "Desktop Paused Batch",
+		"tasks":        []string{"desktop-cancel-running-agent"},
+		"agentMode":    "eino_single",
+		"scheduleMode": "manual",
+		"executeNow":   false,
+		"concurrency":  1,
+	})
+	fixture.pausedQueueID, _ = body["queueId"].(string)
+	if status != http.StatusOK || fixture.pausedQueueID == "" {
+		t.Fatalf("create pausable desktop batch queue status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks/"+fixture.pausedQueueID+"/start", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("start pausable desktop batch queue status = %d, body = %#v", status, body)
+	}
+	select {
+	case <-cancelRequestStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pausable desktop batch task did not reach fake AI")
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks/"+fixture.pausedQueueID+"/pause", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("pause running desktop batch queue status = %d, body = %#v", status, body)
+	}
+	desktopWaitForBatchTaskStatus(t, baseURL, token, fixture.pausedQueueID, "cancelled")
 
 	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/external-mcp/"+fixture.externalMCPName, token, map[string]interface{}{
 		"config": map[string]interface{}{
@@ -2797,6 +2855,20 @@ func desktopAssertOperationsFixture(t *testing.T, baseURL, token string, fixture
 		t.Fatalf("rerun persisted desktop batch queue status = %d, body = %#v", status, body)
 	}
 	desktopWaitForBatchQueue(t, baseURL, token, fixture.queueID, "completed")
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/batch-tasks/"+fixture.singleQueueID, token, nil)
+	singleQueue, _ := body["queue"].(map[string]interface{})
+	if status != http.StatusOK || singleQueue["status"] != "paused" || desktopNestedItem(singleQueue, "tasks", "status", "completed") == nil || desktopNestedItem(singleQueue, "tasks", "status", "pending") == nil {
+		t.Fatalf("persisted single-task desktop batch queue status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/batch-tasks/"+fixture.pausedQueueID, token, nil)
+	pausedQueue, _ := body["queue"].(map[string]interface{})
+	if status != http.StatusOK || pausedQueue["status"] != "paused" {
+		t.Fatalf("persisted paused desktop batch queue status = %d, body = %#v", status, body)
+	}
+	pausedTasks := desktopNestedItems(pausedQueue, "tasks")
+	if len(pausedTasks) != 1 || desktopNestedItem(pausedQueue, "tasks", "status", "cancelled") == nil {
+		t.Fatalf("persisted paused desktop batch task = %#v", pausedQueue)
+	}
 
 	body = desktopWaitForExternalMCP(t, baseURL, token, fixture.externalMCPName, "connected", 1, false)
 	externalConfig, _ := body["config"].(map[string]interface{})
@@ -2837,6 +2909,8 @@ func desktopDeleteOperationsFixture(t *testing.T, baseURL, token string, fixture
 		body   interface{}
 	}{
 		{method: http.MethodDelete, target: baseURL + "api/batch-tasks/" + fixture.queueID},
+		{method: http.MethodDelete, target: baseURL + "api/batch-tasks/" + fixture.singleQueueID},
+		{method: http.MethodDelete, target: baseURL + "api/batch-tasks/" + fixture.pausedQueueID},
 		{method: http.MethodDelete, target: baseURL + "api/external-mcp/" + fixture.externalMCPName},
 		{method: http.MethodDelete, target: baseURL + "api/chat-uploads", body: map[string]string{"path": fixture.fileDirectory}},
 	} {
@@ -2847,6 +2921,8 @@ func desktopDeleteOperationsFixture(t *testing.T, baseURL, token string, fixture
 	}
 	for _, target := range []string{
 		baseURL + "api/batch-tasks/" + fixture.queueID,
+		baseURL + "api/batch-tasks/" + fixture.singleQueueID,
+		baseURL + "api/batch-tasks/" + fixture.pausedQueueID,
 		baseURL + "api/external-mcp/" + fixture.externalMCPName,
 		baseURL + "api/chat-uploads/content?path=" + url.QueryEscape(fixture.fileRelativePath),
 	} {
@@ -2968,6 +3044,21 @@ func desktopWaitForBatchQueue(t *testing.T, baseURL, token, queueID, wantStatus 
 	}
 	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/batch-tasks/"+queueID, token, nil)
 	t.Fatalf("desktop batch queue %s did not reach %s: status = %d, body = %#v", queueID, wantStatus, status, body)
+}
+
+func desktopWaitForBatchTaskStatus(t *testing.T, baseURL, token, queueID, wantStatus string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/batch-tasks/"+queueID, token, nil)
+		queue, _ := body["queue"].(map[string]interface{})
+		if status == http.StatusOK && queue["status"] == "paused" && desktopNestedItem(queue, "tasks", "status", wantStatus) != nil {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/batch-tasks/"+queueID, token, nil)
+	t.Fatalf("desktop batch queue %s task did not reach %s: status = %d, body = %#v", queueID, wantStatus, status, body)
 }
 
 func desktopAssertChatFilesArchive(t *testing.T, data []byte, wantContent string) {
