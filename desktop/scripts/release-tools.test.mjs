@@ -14,9 +14,9 @@ import {
 import { createReleaseChecksums } from "./create-release-checksums.mjs";
 import { createSBOM, parseCargoComponents, parseGoComponents, parseNPMComponents, stableSBOMDigest } from "./generate-sbom.mjs";
 import { packagePortable } from "./package-portable.mjs";
-import { parseArguments, requireReleaseTarget } from "./release-support.mjs";
+import { parseArguments, requireReleaseTarget, sidecarBuildArguments } from "./release-support.mjs";
 import { verifyReleaseMetadata } from "./verify-release-metadata.mjs";
-import { validateArchiveEntries } from "./verify-portable-runtime.mjs";
+import { parseWindowsPESubsystem, validateArchiveEntries } from "./verify-portable-runtime.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(scriptDirectory, "..");
@@ -30,6 +30,41 @@ test("release target and argument parsing fail closed", () => {
     target: "aarch64-apple-darwin",
   });
   assert.throws(() => parseArguments(["--unknown", "value"], ["target"]), /unsupported/);
+});
+
+test("Windows release sidecars use the GUI subsystem while debug sidecars retain consoles", () => {
+  const base = {
+    targetTriple: "x86_64-pc-windows-msvc",
+    output: "server.exe",
+    packagePath: "./cmd/desktop-core",
+  };
+  assert.deepEqual(sidecarBuildArguments({ ...base, releaseBuild: true }), [
+    "build",
+    "-trimpath",
+    "-ldflags",
+    "-H=windowsgui",
+    "-o",
+    "server.exe",
+    "./cmd/desktop-core",
+  ]);
+  assert.deepEqual(sidecarBuildArguments({ ...base, releaseBuild: false }), [
+    "build",
+    "-trimpath",
+    "-o",
+    "server.exe",
+    "./cmd/desktop-core",
+  ]);
+});
+
+test("portable runtime audit reads the Windows PE subsystem", () => {
+  const executable = Buffer.alloc(256);
+  executable.write("MZ", 0, "ascii");
+  executable.writeUInt32LE(64, 0x3c);
+  executable.write("PE\0\0", 64, "ascii");
+  executable.writeUInt16LE(0xf0, 84);
+  executable.writeUInt16LE(0x20b, 88);
+  executable.writeUInt16LE(2, 156);
+  assert.equal(parseWindowsPESubsystem(executable), 2);
 });
 
 test("Windows x64 binary names come from the validated build configuration", () => {

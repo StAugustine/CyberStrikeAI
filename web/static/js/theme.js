@@ -44,12 +44,42 @@
         return THEMES.includes(value) ? value : 'system';
     }
 
+    function readCookiePreference() {
+        try {
+            const prefix = STORAGE_KEY + '=';
+            const entry = document.cookie
+                .split(';')
+                .map(function (value) { return value.trim(); })
+                .find(function (value) { return value.startsWith(prefix); });
+            if (!entry) {
+                return null;
+            }
+            const value = decodeURIComponent(entry.slice(prefix.length));
+            return THEMES.includes(value) ? value : null;
+        } catch (err) {
+            return null;
+        }
+    }
+
     function readPreference() {
         try {
-            return normalizePreference(localStorage.getItem(STORAGE_KEY));
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (THEMES.includes(stored)) {
+                return stored;
+            }
         } catch (err) {
-            return 'system';
+            // Fall back to the host-scoped cookie below.
         }
+        const cookiePreference = readCookiePreference();
+        if (cookiePreference) {
+            try {
+                localStorage.setItem(STORAGE_KEY, cookiePreference);
+            } catch (err) {
+                // The cookie still keeps the preference across desktop ports.
+            }
+            return cookiePreference;
+        }
+        return 'system';
     }
 
     function resolveTheme(preference) {
@@ -96,6 +126,12 @@
             localStorage.setItem(STORAGE_KEY, normalized);
         } catch (err) {
             // Ignore storage failures; the current page can still apply the theme.
+        }
+        try {
+            document.cookie = STORAGE_KEY + '=' + encodeURIComponent(normalized)
+                + '; Path=/; Max-Age=31536000; SameSite=Strict';
+        } catch (err) {
+            // Ignore cookie failures; localStorage still works on stable origins.
         }
         applyTheme(normalized);
     }

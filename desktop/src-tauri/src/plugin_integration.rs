@@ -12,6 +12,12 @@ use std::{
 };
 use tauri::{AppHandle, Manager, WebviewWindow};
 
+#[cfg(windows)]
+use std::{
+    os::windows::process::CommandExt,
+    process::{Command, Stdio},
+};
+
 use super::{DesktopPaths, SidecarState, StartupPhase};
 
 const SETTING_SCHEMA_VERSION: u32 = 1;
@@ -24,6 +30,8 @@ const NATIVE_HOST_BINARY_BASENAME: &str = env!("CYBERSTRIKE_DESKTOP_NATIVE_HOST_
 const BROWSER_EXTENSION_ID: &str = "okialefpaaimfgjelpednbehgebgkdgo";
 const DISCOVERY_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const DISCOVERY_LIFETIME: Duration = Duration::from_secs(90);
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Default)]
 pub(crate) struct PluginIntegrationState {
@@ -458,13 +466,24 @@ fn windows_registry_keys() -> [&'static str; 2] {
 }
 
 #[cfg(windows)]
+fn hidden_registry_command() -> Command {
+    let mut command = Command::new("reg.exe");
+    command
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
+#[cfg(windows)]
 fn register_browser_manifests(
     _handle: &AppHandle,
     manifest_path: &Path,
     _manifest: &NativeHostManifest,
 ) -> Result<(), String> {
     for key in windows_registry_keys() {
-        let status = std::process::Command::new("reg.exe")
+        let status = hidden_registry_command()
             .args(["ADD", key, "/ve", "/t", "REG_SZ", "/d"])
             .arg(manifest_path)
             .arg("/f")
@@ -480,7 +499,7 @@ fn register_browser_manifests(
 #[cfg(windows)]
 fn unregister_browser_manifests(_handle: &AppHandle) {
     for key in windows_registry_keys() {
-        let _ = std::process::Command::new("reg.exe")
+        let _ = hidden_registry_command()
             .args(["DELETE", key, "/f"])
             .status();
     }

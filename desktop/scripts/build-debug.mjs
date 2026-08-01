@@ -8,7 +8,11 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(scriptDirectory, "..");
 const targetTriple = process.env.CYBERSTRIKE_DESKTOP_TARGET
   || execFileSync("rustc", ["--print", "host-tuple"], { encoding: "utf8" }).trim();
-const environment = { ...process.env, CYBERSTRIKE_DESKTOP_TARGET: targetTriple };
+const environment = {
+  ...process.env,
+  CYBERSTRIKE_DESKTOP_TARGET: targetTriple,
+  CYBERSTRIKE_DESKTOP_RELEASE: "0",
+};
 
 run(process.execPath, [path.join(scriptDirectory, "build-sidecar.mjs")]);
 const tauriConfig = writeTauriBuildConfig(targetTriple);

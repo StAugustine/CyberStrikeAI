@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { binaryNamesForTarget } from './build-config.mjs';
+import { sidecarBuildArguments } from './release-support.mjs';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = resolve(scriptDirectory, '..');
@@ -21,6 +22,7 @@ if (!target) {
   throw new Error(`unsupported desktop target: ${targetTriple}`);
 }
 const binaryNames = binaryNamesForTarget(targetTriple, repositoryDirectory);
+const releaseBuild = process.env.CYBERSTRIKE_DESKTOP_RELEASE === '1';
 
 const binaryDirectory = resolve(desktopDirectory, 'src-tauri', 'binaries');
 const goBinary = process.env.CYBERSTRIKE_DESKTOP_GO || 'go';
@@ -42,7 +44,12 @@ for (const binary of [
   const output = resolve(binaryDirectory, `${binary.name}-${targetTriple}${target.extension}`);
   const result = spawnSync(
     goBinary,
-    ['build', '-trimpath', '-o', output, binary.package],
+    sidecarBuildArguments({
+      targetTriple,
+      releaseBuild,
+      output,
+      packagePath: binary.package,
+    }),
     {
       cwd: repositoryDirectory,
       env: buildEnvironment,

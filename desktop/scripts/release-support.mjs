@@ -28,6 +28,15 @@ export function requireReleaseTarget(value) {
   return target;
 }
 
+export function sidecarBuildArguments({ targetTriple, releaseBuild, output, packagePath }) {
+  const argumentsList = ["build", "-trimpath"];
+  if (releaseBuild && targetTriple === "x86_64-pc-windows-msvc") {
+    argumentsList.push("-ldflags", "-H=windowsgui");
+  }
+  argumentsList.push("-o", output, packagePath);
+  return argumentsList;
+}
+
 export function parseArguments(argv, allowed) {
   const result = {};
   for (let index = 0; index < argv.length; index += 2) {

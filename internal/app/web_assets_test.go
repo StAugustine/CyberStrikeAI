@@ -46,6 +46,7 @@ func TestCuratedEmbeddedWebAssetsServeWithoutWorkingDirectory(t *testing.T) {
 		`id="robot-account-binding-modal"`,
 		`id="dashboard-section-access"`,
 		`window.open('/api-docs'`,
+		`window.location.assign('/api-docs')`,
 		`window.open('https://github.com/Ed1s0nZ/CyberStrikeAI'`,
 	} {
 		if strings.Contains(root.Body.String(), marker) {
@@ -54,9 +55,6 @@ func TestCuratedEmbeddedWebAssetsServeWithoutWorkingDirectory(t *testing.T) {
 	}
 	if !strings.Contains(root.Body.String(), `/static/js/desktop-setup.js`) {
 		t.Fatal("desktop index does not contain desktop setup script")
-	}
-	if !strings.Contains(root.Body.String(), `window.location.assign('/api-docs')`) {
-		t.Fatal("desktop index does not contain the local API documentation entry")
 	}
 	pagePattern := regexp.MustCompile(`id="page-([a-z0-9-]+)"`)
 	desktopPages := make([]string, 0, 20)

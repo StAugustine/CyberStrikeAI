@@ -15,7 +15,11 @@ const releaseTarget = requireReleaseTarget(requestedTriple);
 await verifyReleaseMetadata();
 run(process.execPath, [path.join(scriptDirectory, "generate-resource-manifest.mjs")]);
 await verifyReleaseMetadata();
-run(process.execPath, [path.join(scriptDirectory, "build-sidecar.mjs")]);
+run(
+  process.execPath,
+  [path.join(scriptDirectory, "build-sidecar.mjs")],
+  { CYBERSTRIKE_DESKTOP_RELEASE: "1" },
+);
 const generatedTauriConfig = writeTauriBuildConfig(requestedTriple);
 const tauriArguments = [
   path.join(desktopDirectory, "node_modules", "@tauri-apps", "cli", "tauri.js"),
@@ -34,10 +38,14 @@ if (releaseTarget.tauriBundle) {
 }
 run(process.execPath, tauriArguments);
 
-function run(command, args) {
+function run(command, args, extraEnvironment = {}) {
   const result = spawnSync(command, args, {
     cwd: desktopDirectory,
-    env: { ...process.env, CYBERSTRIKE_DESKTOP_TARGET: requestedTriple },
+    env: {
+      ...process.env,
+      CYBERSTRIKE_DESKTOP_TARGET: requestedTriple,
+      ...extraEnvironment,
+    },
     stdio: "inherit",
   });
   if (result.error) throw result.error;

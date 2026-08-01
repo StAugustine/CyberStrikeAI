@@ -36,6 +36,21 @@ export async function verifyPortableRuntime({
       throw new Error(`${path.basename(binary)} architecture is ${architecture}, expected ${expectedArchitecture}`);
     }
   }
+  let windowsSubsystems;
+  if (releaseTarget.portableKind === "windows-directory") {
+    windowsSubsystems = {};
+    for (const [label, binary] of [
+      ["application", layout.application],
+      ["sidecar", layout.sidecar],
+      ["nativeHost", layout.nativeHost],
+    ]) {
+      const subsystem = await windowsPESubsystem(binary);
+      if (subsystem !== 2) {
+        throw new Error(`${path.basename(binary)} PE subsystem is ${subsystem}, expected Windows GUI (2)`);
+      }
+      windowsSubsystems[label] = "windows-gui";
+    }
+  }
   const upgradeFixture = await createPortableR1Fixture(runtimeDirectory, layout.resources);
   const upgradedLifecycle = runCoreLifecycle(
     layout.sidecar,
@@ -108,6 +123,7 @@ export async function verifyPortableRuntime({
       applicationArchitecture: expectedArchitecture,
       sidecarArchitecture: expectedArchitecture,
       nativeHostArchitecture: expectedArchitecture,
+      ...(windowsSubsystems ? { windowsSubsystems } : {}),
       r1VersionFixture: r1Version,
       r1ToR2Lifecycle: upgradedLifecycle,
       r1ToR2RecoveryPoint: upgradeBackup.id,
@@ -224,6 +240,28 @@ export async function binaryArchitecture(filePath) {
     throw new Error(`unsupported Mach-O CPU 0x${cpuType.toString(16)}: ${filePath}`);
   }
   throw new Error(`unsupported executable format: ${filePath}`);
+}
+
+export async function windowsPESubsystem(filePath) {
+  return parseWindowsPESubsystem(await readFile(filePath), filePath);
+}
+
+export function parseWindowsPESubsystem(data, filePath = "<buffer>") {
+  if (data.length < 64 || data[0] !== 0x4d || data[1] !== 0x5a) {
+    throw new Error(`invalid PE executable: ${filePath}`);
+  }
+  const peOffset = data.readUInt32LE(0x3c);
+  const optionalHeaderOffset = peOffset + 24;
+  const optionalHeaderSize = peOffset + 22 <= data.length ? data.readUInt16LE(peOffset + 20) : 0;
+  if (optionalHeaderSize < 70 || optionalHeaderOffset + 70 > data.length
+    || data.toString("ascii", peOffset, peOffset + 4) !== "PE\0\0") {
+    throw new Error(`invalid PE optional header: ${filePath}`);
+  }
+  const magic = data.readUInt16LE(optionalHeaderOffset);
+  if (magic !== 0x10b && magic !== 0x20b) {
+    throw new Error(`unsupported PE optional header 0x${magic.toString(16)}: ${filePath}`);
+  }
+  return data.readUInt16LE(optionalHeaderOffset + 68);
 }
 
 export function validateArchiveEntries(entries) {
