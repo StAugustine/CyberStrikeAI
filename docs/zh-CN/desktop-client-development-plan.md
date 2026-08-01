@@ -199,7 +199,7 @@ CyberStrikeAI/
 | 工作流 | `workflows` | R1 | D5 | 编辑、校验、dry-run、执行、恢复、包导入导出 |
 | 项目与事实图 | `projects` | R1 | D5 | 项目、事实、关系图、攻击链提升 |
 | 资产与信息收集 | `asset-*`、`info-collect` | R1 | D5 | 导入、筛选、合并、绑定、FOFA 查询 |
-| 漏洞管理 | `vulnerabilities` | R1 | D5 | CRUD、统计、导出、批量操作、提醒 |
+| 漏洞管理 | `vulnerabilities` | R1 | D5 | CRUD、统计、导出、筛选与批量操作；机器人提醒随机器人接入排除 |
 | 批量任务 | `tasks` | R1 | D5 | 队列、暂停、重跑、定时、单任务执行 |
 | 知识库 | `knowledge-*` | R1 | D5 | CRUD、扫描、索引、检索、日志 |
 | Agent 角色/Skills/Agents | 管理及监控页面 | R1 | D5 | 创建、修改、删除、文件包、绑定与统计 |
@@ -389,7 +389,7 @@ CyberStrikeAI/
 
 ### D5：R1 管理与扩展功能兼容
 
-执行状态：进行中。能力边界前置门禁已完成；项目、项目事实图、资产和漏洞已通过创建、更新、关联查询、core 重启持久化与删除的桌面黄金路径；FOFA、ZoomEye、Quake、Shodan 信息收集已覆盖桌面凭据库、真实后端代理请求、结果规范化、未配置提示、上游错误脱敏与 core 重启后复用。工作流已覆盖校验、dry-run、CRUD、角色绑定执行、运行详情与回放，以及包导出、校验、冲突另存、幂等导入、审计和 core 重启持久化；Agent 角色、Skills/包文件和 Markdown Agents 已覆盖受管目录 CRUD、core 重启持久化和清理，知识库已覆盖受管目录 CRUD、本地 embedding 索引、语义检索、Agent 工具调用、检索日志及 core 重启持久化和清理；批量任务已覆盖子任务编辑、并发执行、重启持久化与重跑；文件管理已覆盖受管目录、上传、重命名、编辑、检索和 ZIP 导出；外部 MCP 已通过官方 SDK 的 Streamable HTTP 真实服务覆盖连接失败诊断、配置修复、工具发现与 schema、Agent 调用、启停及 core 重启自动恢复，并修复启停状态位在重启后不一致的问题；审计记录及 JSON/CSV 导出也已验证。desktop 模式已从活动服务、HTTP 路由、Agent 工具、导航、设置、页面、仪表盘轮询和脚本加载中排除 Terminal、WebShell、C2、机器人和平台多用户 RBAC，并在 R1 隐藏 R2 API 文档入口；共享 server 模式保持原行为。
+执行状态：进行中。能力边界前置门禁已完成；项目、项目事实图和资产已通过创建、更新、关联查询、core 重启持久化与删除的桌面黄金路径，漏洞管理另已覆盖筛选、聚合统计、分组导出、筛选批量删除与审计；FOFA、ZoomEye、Quake、Shodan 信息收集已覆盖桌面凭据库、真实后端代理请求、结果规范化、未配置提示、上游错误脱敏与 core 重启后复用。工作流已覆盖校验、dry-run、CRUD、角色绑定执行、运行详情与回放，以及包导出、校验、冲突另存、幂等导入、审计和 core 重启持久化；Agent 角色、Skills/包文件和 Markdown Agents 已覆盖受管目录 CRUD、core 重启持久化和清理，知识库已覆盖受管目录 CRUD、本地 embedding 索引、语义检索、Agent 工具调用、检索日志及 core 重启持久化和清理；批量任务已覆盖子任务编辑、并发执行、重启持久化与重跑；文件管理已覆盖受管目录、上传、重命名、编辑、检索和 ZIP 导出；外部 MCP 已通过官方 SDK 的 Streamable HTTP 真实服务覆盖连接失败诊断、配置修复、工具发现与 schema、Agent 调用、启停及 core 重启自动恢复，并修复启停状态位在重启后不一致的问题；审计记录及 JSON/CSV 导出也已验证。desktop 模式已从活动服务、HTTP 路由、Agent 工具、导航、设置、页面、仪表盘轮询和脚本加载中排除 Terminal、WebShell、C2、机器人（含其漏洞推送订阅）和平台多用户 RBAC，并在 R1 隐藏 R2 API 文档入口；共享 server 模式保持原行为。
 
 范围：项目、事实图、资产、信息收集、漏洞、批量任务、知识库、工作流、Agent 角色、Skills、Agents、外部 MCP、文件管理和审计。
 

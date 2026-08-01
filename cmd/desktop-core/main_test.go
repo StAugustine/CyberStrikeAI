@@ -164,6 +164,7 @@ openai:
 		`/static/js/terminal.js`,
 		`/static/js/webshell.js`,
 		`id="robot-account-binding-modal"`,
+		`id="vulnerability-alert-settings"`,
 		`id="dashboard-section-access"`,
 		`window.open('/api-docs'`,
 		`window.open('https://github.com/Ed1s0nZ/CyberStrikeAI'`,
@@ -227,6 +228,8 @@ openai:
 		{http.MethodGet, "api/rbac/users", token},
 		{http.MethodPost, "api/robot/test", token},
 		{http.MethodPost, "api/robot/lark", ""},
+		{http.MethodGet, "api/vulnerability-alerts/subscription", token},
+		{http.MethodPut, "api/vulnerability-alerts/subscription", token},
 		{http.MethodPost, "api/terminal/run", token},
 		{http.MethodGet, "api/webshell/connections", token},
 		{http.MethodGet, "api/c2/listeners", token},
@@ -1613,14 +1616,21 @@ func desktopCreateManagementFixture(t *testing.T, baseURL, token, conversationID
 	}
 
 	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/vulnerabilities", token, map[string]string{
-		"conversation_id": conversationID,
-		"project_id":      fixture.projectID,
-		"title":           "Desktop Golden Vulnerability",
-		"description":     "Desktop vulnerability persistence check",
-		"severity":        "high",
-		"status":          "open",
-		"type":            "desktop-test",
-		"target":          "desktop.example.test",
+		"conversation_id":    conversationID,
+		"project_id":         fixture.projectID,
+		"conversation_tag":   "desktop-golden-conversation",
+		"task_tag":           "desktop-golden-task",
+		"title":              "Desktop Golden Vulnerability",
+		"description":        "Desktop vulnerability persistence check",
+		"severity":           "high",
+		"status":             "open",
+		"type":               "desktop-test",
+		"target":             "desktop.example.test",
+		"preconditions":      "Desktop target is reachable.",
+		"reproduction_steps": "1. Open the desktop test target.\n2. Verify the golden finding.",
+		"evidence":           "desktop-golden-evidence",
+		"impact":             "Desktop golden impact",
+		"recommendation":     "Apply the desktop golden fix.",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("create desktop vulnerability status = %d, body = %#v", status, body)
@@ -1636,6 +1646,7 @@ func desktopCreateManagementFixture(t *testing.T, baseURL, token, conversationID
 	if status != http.StatusOK || body["status"] != "confirmed" {
 		t.Fatalf("update desktop vulnerability status = %d, body = %#v", status, body)
 	}
+	desktopExerciseVulnerabilityReporting(t, baseURL, token, conversationID, fixture.projectID, fixture.vulnerabilityID)
 
 	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/projects/"+fixture.projectID+"/facts", token, map[string]interface{}{
 		"fact_key":                 "target.primary_domain",
@@ -1683,6 +1694,7 @@ func desktopAssertManagementFixture(t *testing.T, baseURL, token, conversationID
 	if status != http.StatusOK || body["status"] != "confirmed" || body["project_id"] != fixture.projectID {
 		t.Fatalf("persisted desktop vulnerability status = %d, body = %#v", status, body)
 	}
+	desktopAssertVulnerabilityReporting(t, baseURL, token, fixture.projectID, fixture.vulnerabilityID)
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID+"/facts?fact_key=target.primary_domain", token, nil)
 	if status != http.StatusOK || body["id"] != fixture.factID || body["related_vulnerability_id"] != fixture.vulnerabilityID {
 		t.Fatalf("persisted desktop project fact status = %d, body = %#v", status, body)
@@ -1710,6 +1722,93 @@ func desktopDeleteManagementFixture(t *testing.T, baseURL, token, conversationID
 	status, _ := desktopJSONRequest(t, http.MethodGet, baseURL+"api/projects/"+fixture.projectID, token, nil)
 	if status != http.StatusNotFound {
 		t.Fatalf("deleted desktop project status = %d, want 404", status)
+	}
+}
+
+func desktopExerciseVulnerabilityReporting(t *testing.T, baseURL, token, conversationID, projectID, vulnerabilityID string) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/vulnerabilities", token, map[string]string{
+		"conversation_id":  conversationID,
+		"project_id":       projectID,
+		"conversation_tag": "desktop-golden-conversation",
+		"task_tag":         "desktop-batch-delete",
+		"title":            "Desktop Batch Vulnerability",
+		"description":      "Desktop batch deletion check",
+		"severity":         "critical",
+		"status":           "open",
+		"type":             "desktop-batch-test",
+		"target":           "batch.desktop.example.test",
+	})
+	batchID, _ := body["id"].(string)
+	if status != http.StatusOK || batchID == "" {
+		t.Fatalf("create desktop batch vulnerability status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/vulnerabilities/stats?project_id="+url.QueryEscape(projectID), token, nil)
+	bySeverity, _ := body["by_severity"].(map[string]interface{})
+	byStatus, _ := body["by_status"].(map[string]interface{})
+	if status != http.StatusOK || body["total"] != float64(2) || bySeverity["high"] != float64(1) || bySeverity["critical"] != float64(1) || byStatus["confirmed"] != float64(1) || byStatus["open"] != float64(1) {
+		t.Fatalf("desktop vulnerability aggregate stats status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/vulnerabilities/filter-options", token, nil)
+	if status != http.StatusOK ||
+		!desktopJSONArrayValueContains(body["vulnerability_ids"], vulnerabilityID) ||
+		!desktopJSONArrayValueContains(body["vulnerability_ids"], batchID) ||
+		!desktopJSONArrayValueContains(body["conversation_tags"], "desktop-golden-conversation") ||
+		!desktopJSONArrayValueContains(body["task_tags"], "desktop-batch-delete") {
+		t.Fatalf("desktop vulnerability filter options status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/vulnerabilities/export?project_id="+url.QueryEscape(projectID)+"&group_by=task&mode=split", token, nil)
+	files := desktopNestedItems(body, "files")
+	exportData, _ := json.Marshal(files)
+	if status != http.StatusOK || body["total"] != float64(2) || len(files) != 2 || !bytes.Contains(exportData, []byte("Desktop Batch Vulnerability")) {
+		t.Fatalf("desktop vulnerability split export status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodDelete, baseURL+"api/vulnerabilities/batch?task_tag=desktop-batch-delete", token, nil)
+	if status != http.StatusOK || body["deleted"] != float64(1) {
+		t.Fatalf("desktop vulnerability batch delete status = %d, body = %#v", status, body)
+	}
+	status, _ = desktopJSONRequest(t, http.MethodGet, baseURL+"api/vulnerabilities/"+batchID, token, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("deleted desktop batch vulnerability status = %d, want 404", status)
+	}
+	desktopAssertVulnerabilityReporting(t, baseURL, token, projectID, vulnerabilityID)
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs?category=vulnerability&action=delete_batch", token, nil)
+	auditTotal, _ := body["total"].(float64)
+	if status != http.StatusOK || auditTotal < 1 {
+		t.Fatalf("desktop vulnerability batch audit status = %d, body = %#v", status, body)
+	}
+}
+
+func desktopAssertVulnerabilityReporting(t *testing.T, baseURL, token, projectID, vulnerabilityID string) {
+	t.Helper()
+	query := "project_id=" + url.QueryEscape(projectID) + "&id=" + url.QueryEscape(vulnerabilityID)
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/vulnerabilities/stats?"+query, token, nil)
+	bySeverity, _ := body["by_severity"].(map[string]interface{})
+	byStatus, _ := body["by_status"].(map[string]interface{})
+	if status != http.StatusOK || body["total"] != float64(1) || bySeverity["high"] != float64(1) || byStatus["confirmed"] != float64(1) {
+		t.Fatalf("desktop vulnerability filtered stats status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/vulnerabilities?"+query, token, nil)
+	vulnerability := desktopNestedItem(body, "vulnerabilities", "id", vulnerabilityID)
+	if status != http.StatusOK || body["total"] != float64(1) || vulnerability == nil || vulnerability["task_tag"] != "desktop-golden-task" {
+		t.Fatalf("desktop vulnerability filtered list status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/vulnerabilities/export?"+query+"&group_by=conversation&mode=summary", token, nil)
+	files := desktopNestedItems(body, "files")
+	if status != http.StatusOK || body["total"] != float64(1) || len(files) != 1 {
+		t.Fatalf("desktop vulnerability summary export status = %d, body = %#v", status, body)
+	}
+	file, _ := files[0].(map[string]interface{})
+	content, _ := file["content"].(string)
+	if !strings.Contains(content, "Desktop Golden Vulnerability") ||
+		!strings.Contains(content, vulnerabilityID) ||
+		!strings.Contains(content, "desktop-golden-evidence") ||
+		!strings.Contains(content, "Desktop retest pending") ||
+		strings.Contains(content, "stream-secret") ||
+		strings.Contains(content, "desktop-embedding-secret") {
+		t.Fatalf("desktop vulnerability summary export file = %#v", file)
 	}
 }
 

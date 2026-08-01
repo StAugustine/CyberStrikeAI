@@ -1212,8 +1212,10 @@ func setupRoutes(
 		protected.DELETE("/vulnerabilities/batch", vulnerabilityHandler.BatchDeleteVulnerabilities)
 		protected.GET("/vulnerabilities/filter-options", vulnerabilityHandler.GetVulnerabilityFilterOptions)
 		protected.GET("/vulnerabilities/stats", vulnerabilityHandler.GetVulnerabilityStats)
-		protected.GET("/vulnerability-alerts/subscription", vulnerabilityHandler.GetMyAlertSubscription)
-		protected.PUT("/vulnerability-alerts/subscription", vulnerabilityHandler.UpdateMyAlertSubscription)
+		if !desktopMode {
+			protected.GET("/vulnerability-alerts/subscription", vulnerabilityHandler.GetMyAlertSubscription)
+			protected.PUT("/vulnerability-alerts/subscription", vulnerabilityHandler.UpdateMyAlertSubscription)
+		}
 		protected.GET("/vulnerabilities/:id", vulnerabilityHandler.GetVulnerability)
 		protected.POST("/vulnerabilities", vulnerabilityHandler.CreateVulnerability)
 		protected.PUT("/vulnerabilities/:id", vulnerabilityHandler.UpdateVulnerability)
