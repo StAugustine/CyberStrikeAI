@@ -891,6 +891,7 @@ audit:
 		externalMCP.URL+"/mcp",
 		externalMCPCalls,
 		cancelRequestStarted,
+		filepath.Join(options.Roots.TempDir, "desktop-stdio-mcp-exited"),
 	)
 
 	status, body = desktopJSONRequest(t, http.MethodPost, ready.URL+"api/auth/logout", token, nil)
@@ -926,6 +927,10 @@ audit:
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("desktop core did not shut down")
+	}
+	desktopWaitForStdioMCPExit(t, operationsFixture.stdioMCPExitPath)
+	if err := os.Remove(operationsFixture.stdioMCPExitPath); err != nil {
+		t.Fatalf("reset desktop stdio MCP exit marker: %v", err)
 	}
 	if _, err := io.Copy(&stdoutTranscript, stdoutReader); err != nil {
 		t.Fatalf("drain desktop stdout: %v", err)
@@ -1035,6 +1040,42 @@ audit:
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("restarted desktop core did not shut down")
+	}
+}
+
+func TestDesktopExternalMCPStdioHelper(t *testing.T) {
+	if os.Getenv("CYBERSTRIKE_DESKTOP_STDIO_HELPER") != "1" {
+		t.Skip("stdio MCP helper process only")
+	}
+	exitPath := os.Getenv("CYBERSTRIKE_DESKTOP_STDIO_EXIT_FILE")
+	defer func() {
+		if err := os.WriteFile(exitPath, []byte("closed:"+os.Getenv("CYBERSTRIKE_DESKTOP_STDIO_VALUE")), 0600); err != nil {
+			t.Errorf("write stdio MCP exit marker: %v", err)
+		}
+	}()
+
+	server := sdkmcp.NewServer(&sdkmcp.Implementation{
+		Name:    "desktop-stdio-mcp",
+		Version: "1.0.0",
+	}, nil)
+	type echoArgs struct {
+		Text string `json:"text"`
+	}
+	sdkmcp.AddTool(server, &sdkmcp.Tool{
+		Name:        "desktop_stdio_echo",
+		Description: "Echo text and the controlled desktop stdio environment.",
+	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, args echoArgs) (*sdkmcp.CallToolResult, any, error) {
+		return &sdkmcp.CallToolResult{
+			Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: fmt.Sprintf(
+				"desktop-stdio:%s;env=%s;path=%s",
+				args.Text,
+				os.Getenv("CYBERSTRIKE_DESKTOP_STDIO_VALUE"),
+				os.Getenv("PATH"),
+			)}},
+		}, nil, nil
+	})
+	if err := server.Run(context.Background(), &sdkmcp.StdioTransport{}); err != nil {
+		t.Fatalf("run desktop stdio MCP helper: %v", err)
 	}
 }
 
@@ -1166,6 +1207,17 @@ func newDesktopFakeAI(t *testing.T, cancelRequestStarted chan<- struct{}, liveRe
 		if bytes.Contains(requestData, []byte("构建攻击链图")) {
 			desktopWriteChatCompletionResponse(response, `{"nodes":[{"id":"node_1","type":"target","label":"desktop.example.test","risk_score":40,"metadata":{"target":"desktop.example.test"}},{"id":"node_2","type":"action","label":"Query desktop assets","risk_score":0,"metadata":{"tool_name":"query_assets","findings":["desktop.example.test"]}}],"edges":[{"source":"node_1","target":"node_2","type":"leads_to","weight":3}]}`)
 			return
+		}
+		if bytes.Contains(requestData, []byte("desktop-stdio-mcp-call")) &&
+			desktopPayloadHasTool(payload, "desktop-stdio-mcp__desktop_stdio_echo") &&
+			!desktopPayloadHasRole(payload, "tool") {
+			desktopWriteToolCallResponse(response, payload, "call-desktop-stdio-mcp", "desktop-stdio-mcp__desktop_stdio_echo", `{"text":"stdio"}`)
+			return
+		}
+		if bytes.Contains(requestData, []byte("desktop-stdio-mcp-call")) &&
+			desktopPayloadHasRole(payload, "tool") &&
+			!bytes.Contains(requestData, []byte("desktop-stdio:stdio;env=controlled;path=desktop-controlled-path")) {
+			t.Error("desktop stdio MCP did not receive its controlled environment")
 		}
 		if bytes.Contains(requestData, []byte("desktop-external-mcp-call")) &&
 			desktopPayloadHasTool(payload, "desktop-golden-mcp__desktop_echo") &&
@@ -2684,6 +2736,9 @@ type desktopOperationsFixture struct {
 	externalMCPName  string
 	externalMCPURL   string
 	externalMCPCalls <-chan string
+	stdioMCPName     string
+	stdioMCPCommand  string
+	stdioMCPExitPath string
 	fileDirectory    string
 	fileRelativePath string
 	fileAbsolutePath string
@@ -2695,12 +2750,16 @@ func desktopCreateOperationsFixture(
 	baseURL, token, managedUploadsRoot, externalMCPURL string,
 	externalMCPCalls <-chan string,
 	cancelRequestStarted <-chan struct{},
+	stdioMCPExitPath string,
 ) desktopOperationsFixture {
 	t.Helper()
 	fixture := desktopOperationsFixture{
 		externalMCPName:  "desktop-golden-mcp",
 		externalMCPURL:   externalMCPURL,
 		externalMCPCalls: externalMCPCalls,
+		stdioMCPName:     "desktop-stdio-mcp",
+		stdioMCPCommand:  os.Args[0],
+		stdioMCPExitPath: stdioMCPExitPath,
 		fileDirectory:    "desktop-golden-files",
 	}
 	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/batch-tasks", token, map[string]interface{}{
@@ -2862,8 +2921,35 @@ func desktopCreateOperationsFixture(
 		t.Fatalf("start recovered desktop external MCP status = %d, body = %#v", status, body)
 	}
 	desktopWaitForExternalMCP(t, baseURL, token, fixture.externalMCPName, "connected", 1, false)
-	desktopAssertExternalMCPTool(t, baseURL, token, fixture.externalMCPName)
+	desktopAssertExternalMCPTool(t, baseURL, token, fixture.externalMCPName, "desktop_echo")
 	desktopInvokeExternalMCP(t, baseURL, token, fixture.externalMCPName, fixture.externalMCPCalls)
+
+	status, body = desktopJSONRequest(t, http.MethodPut, baseURL+"api/external-mcp/"+fixture.stdioMCPName, token, map[string]interface{}{
+		"config": map[string]interface{}{
+			"command":     fixture.stdioMCPCommand,
+			"args":        []string{"-test.run=^TestDesktopExternalMCPStdioHelper$"},
+			"description": "Desktop Persistent stdio MCP",
+			"timeout":     5,
+			"env": map[string]string{
+				"CYBERSTRIKE_DESKTOP_STDIO_HELPER":    "1",
+				"CYBERSTRIKE_DESKTOP_STDIO_VALUE":     "controlled",
+				"CYBERSTRIKE_DESKTOP_STDIO_EXIT_FILE": fixture.stdioMCPExitPath,
+				"PATH":                                "desktop-controlled-path",
+			},
+			"terminate_duration": 1,
+			"disabled":           true,
+		},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("create desktop stdio MCP status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/external-mcp/"+fixture.stdioMCPName+"/start", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("start desktop stdio MCP status = %d, body = %#v", status, body)
+	}
+	desktopWaitForExternalMCP(t, baseURL, token, fixture.stdioMCPName, "connected", 1, false)
+	desktopAssertExternalMCPTool(t, baseURL, token, fixture.stdioMCPName, "desktop_stdio_echo")
+	desktopInvokeStdioExternalMCP(t, baseURL, token, fixture.stdioMCPName)
 
 	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/chat-uploads/mkdir", token, map[string]string{
 		"parent": "",
@@ -2949,7 +3035,7 @@ func desktopAssertOperationsFixture(t *testing.T, baseURL, token string, fixture
 		externalConfig["external_mcp_enable"] != true {
 		t.Fatalf("persisted enabled desktop external MCP body = %#v", body)
 	}
-	desktopAssertExternalMCPTool(t, baseURL, token, fixture.externalMCPName)
+	desktopAssertExternalMCPTool(t, baseURL, token, fixture.externalMCPName, "desktop_echo")
 	desktopInvokeExternalMCP(t, baseURL, token, fixture.externalMCPName, fixture.externalMCPCalls)
 	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/external-mcp/"+fixture.externalMCPName+"/stop", token, nil)
 	if status != http.StatusOK {
@@ -2961,6 +3047,18 @@ func desktopAssertOperationsFixture(t *testing.T, baseURL, token string, fixture
 		t.Fatalf("restart persisted desktop external MCP status = %d, body = %#v", status, body)
 	}
 	desktopWaitForExternalMCP(t, baseURL, token, fixture.externalMCPName, "connected", 1, false)
+	stdioBody := desktopWaitForExternalMCP(t, baseURL, token, fixture.stdioMCPName, "connected", 1, false)
+	stdioConfig, _ := stdioBody["config"].(map[string]interface{})
+	stdioEnv, _ := stdioConfig["env"].(map[string]interface{})
+	if stdioConfig["command"] != fixture.stdioMCPCommand ||
+		stdioConfig["description"] != "Desktop Persistent stdio MCP" ||
+		stdioConfig["external_mcp_enable"] != true ||
+		stdioEnv["CYBERSTRIKE_DESKTOP_STDIO_VALUE"] != "controlled" ||
+		stdioEnv["PATH"] != "desktop-controlled-path" {
+		t.Fatalf("persisted enabled desktop stdio MCP body = %#v", stdioBody)
+	}
+	desktopAssertExternalMCPTool(t, baseURL, token, fixture.stdioMCPName, "desktop_stdio_echo")
+	desktopInvokeStdioExternalMCP(t, baseURL, token, fixture.stdioMCPName)
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/chat-uploads/content?path="+url.QueryEscape(fixture.fileRelativePath), token, nil)
 	if status != http.StatusOK || body["content"] != "Persisted desktop managed file." {
 		t.Fatalf("persisted desktop managed file status = %d, body = %#v", status, body)
@@ -2979,6 +3077,7 @@ func desktopDeleteOperationsFixture(t *testing.T, baseURL, token string, fixture
 		{method: http.MethodDelete, target: baseURL + "api/batch-tasks/" + fixture.singleQueueID},
 		{method: http.MethodDelete, target: baseURL + "api/batch-tasks/" + fixture.pausedQueueID},
 		{method: http.MethodDelete, target: baseURL + "api/external-mcp/" + fixture.externalMCPName},
+		{method: http.MethodDelete, target: baseURL + "api/external-mcp/" + fixture.stdioMCPName},
 		{method: http.MethodDelete, target: baseURL + "api/chat-uploads", body: map[string]string{"path": fixture.fileDirectory}},
 	} {
 		status, body := desktopJSONRequest(t, request.method, request.target, token, request.body)
@@ -2986,11 +3085,13 @@ func desktopDeleteOperationsFixture(t *testing.T, baseURL, token string, fixture
 			t.Fatalf("delete desktop operations fixture %s status = %d, body = %#v", request.target, status, body)
 		}
 	}
+	desktopWaitForStdioMCPExit(t, fixture.stdioMCPExitPath)
 	for _, target := range []string{
 		baseURL + "api/batch-tasks/" + fixture.queueID,
 		baseURL + "api/batch-tasks/" + fixture.singleQueueID,
 		baseURL + "api/batch-tasks/" + fixture.pausedQueueID,
 		baseURL + "api/external-mcp/" + fixture.externalMCPName,
+		baseURL + "api/external-mcp/" + fixture.stdioMCPName,
 		baseURL + "api/chat-uploads/content?path=" + url.QueryEscape(fixture.fileRelativePath),
 	} {
 		status, _ := desktopJSONRequest(t, http.MethodGet, target, token, nil)
@@ -3037,16 +3138,16 @@ func desktopWaitForExternalMCP(
 	return nil
 }
 
-func desktopAssertExternalMCPTool(t *testing.T, baseURL, token, name string) {
+func desktopAssertExternalMCPTool(t *testing.T, baseURL, token, name, toolName string) {
 	t.Helper()
 	status, body := desktopJSONRequest(
 		t,
 		http.MethodGet,
-		baseURL+"api/config/tools?page=1&page_size=100&search=desktop_echo",
+		baseURL+"api/config/tools?page=1&page_size=100&search="+url.QueryEscape(toolName),
 		token,
 		nil,
 	)
-	tool := desktopNestedItem(body, "tools", "name", "desktop_echo")
+	tool := desktopNestedItem(body, "tools", "name", toolName)
 	if status != http.StatusOK ||
 		tool == nil ||
 		tool["external_mcp"] != name ||
@@ -3057,13 +3158,54 @@ func desktopAssertExternalMCPTool(t *testing.T, baseURL, token, name string) {
 	status, body = desktopJSONRequest(
 		t,
 		http.MethodGet,
-		baseURL+"api/config/tools/desktop_echo/schema?external_mcp="+url.QueryEscape(name),
+		baseURL+"api/config/tools/"+url.PathEscape(toolName)+"/schema?external_mcp="+url.QueryEscape(name),
 		token,
 		nil,
 	)
 	if schema, _ := body["input_schema"].(map[string]interface{}); status != http.StatusOK || schema == nil {
 		t.Fatalf("desktop external MCP tool schema status = %d, body = %#v", status, body)
 	}
+}
+
+func desktopInvokeStdioExternalMCP(t *testing.T, baseURL, token, name string) {
+	t.Helper()
+	events := desktopSSERequest(t, baseURL+"api/eino-agent/stream", token, map[string]interface{}{
+		"message": "desktop-stdio-mcp-call",
+		"finalization": map[string]interface{}{
+			"requireExecutionEvidence": false,
+		},
+	})
+	if !desktopSSEHasEvent(events, "response") || !desktopSSEHasEvent(events, "done") {
+		t.Fatalf("desktop stdio MCP Agent events = %#v", events)
+	}
+	status, body := desktopJSONRequest(
+		t,
+		http.MethodGet,
+		baseURL+"api/monitor?tool="+url.QueryEscape(name+"__desktop_stdio_echo"),
+		token,
+		nil,
+	)
+	execution := desktopNestedItem(body, "executions", "toolName", name+"::desktop_stdio_echo")
+	if status != http.StatusOK || execution == nil || execution["status"] != "completed" {
+		t.Fatalf("desktop stdio MCP execution monitor status = %d, body = %#v", status, body)
+	}
+}
+
+func desktopWaitForStdioMCPExit(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil && string(data) == "closed:controlled" {
+			return
+		}
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("read desktop stdio MCP exit marker: %v", err)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	data, err := os.ReadFile(path)
+	t.Fatalf("desktop stdio MCP did not exit: path = %q, data = %q, error = %v", path, data, err)
 }
 
 func desktopInvokeExternalMCP(t *testing.T, baseURL, token, name string, calls <-chan string) {
