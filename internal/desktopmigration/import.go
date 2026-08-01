@@ -100,6 +100,20 @@ func LoadPendingImportSession(paths desktopruntime.Paths) (*ImportSession, bool,
 	return &ImportSession{paths: paths, state: state}, true, nil
 }
 
+func CancelPendingImport(paths desktopruntime.Paths) (bool, error) {
+	if err := validateImportPaths(paths); err != nil {
+		return false, err
+	}
+	state, exists, err := LoadImportState(paths.ImportStateFile)
+	if err != nil || !exists {
+		return false, err
+	}
+	if err := (&ImportSession{paths: paths, state: state}).Cancel(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // CommitOffline creates a recovery point for the current desktop data, then
 // applies the prepared import through the recoverable restore transaction.
 // The desktop core must be stopped so no live database handles remain open.

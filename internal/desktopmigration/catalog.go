@@ -1,6 +1,7 @@
 package desktopmigration
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -102,4 +103,45 @@ func ListBackups(paths desktopruntime.Paths) ([]BackupSummary, error) {
 		validIndex++
 	}
 	return summaries, nil
+}
+
+// DeleteBackup removes one verified recovery point only when the current
+// catalog marks it outside both the retention floor and pending operations.
+func DeleteBackup(paths desktopruntime.Paths, backupID string) error {
+	backupID = strings.TrimSpace(backupID)
+	if backupID == "" || filepath.Base(backupID) != backupID || strings.ContainsAny(backupID, `/\\`) {
+		return errors.New("desktop backup id is invalid")
+	}
+	summaries, err := ListBackups(paths)
+	if err != nil {
+		return err
+	}
+	var selected *BackupSummary
+	for index := range summaries {
+		if summaries[index].ID == backupID {
+			selected = &summaries[index]
+			break
+		}
+	}
+	if selected == nil {
+		return errors.New("desktop backup does not exist")
+	}
+	if !selected.Valid {
+		return errors.New("invalid desktop backup requires manual recovery")
+	}
+	if !selected.Deletable || selected.Protected || selected.Retained {
+		return errors.New("desktop backup is protected by the retention policy")
+	}
+	directory := filepath.Join(paths.BackupsDir, backupID)
+	manifest, err := VerifyBackup(directory)
+	if err != nil {
+		return err
+	}
+	if manifest.ID != backupID {
+		return errors.New("desktop backup directory does not match manifest id")
+	}
+	if err := os.RemoveAll(directory); err != nil {
+		return fmt.Errorf("delete desktop backup: %w", err)
+	}
+	return nil
 }

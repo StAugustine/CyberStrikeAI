@@ -183,6 +183,19 @@ func TestListBackupsRetainsNewestTwoAndProtectsPendingUpgrade(t *testing.T) {
 	if summaries[2].Retained || !summaries[2].Deletable {
 		t.Fatalf("old unprotected backup retention = %#v", summaries[2])
 	}
+	if err := DeleteBackup(paths, summaries[0].ID); err == nil || !strings.Contains(err.Error(), "retention policy") {
+		t.Fatalf("DeleteBackup newest error = %v", err)
+	}
+	if err := DeleteBackup(paths, summaries[3].ID); err == nil || !strings.Contains(err.Error(), "retention policy") {
+		t.Fatalf("DeleteBackup pending error = %v", err)
+	}
+	deletedID := summaries[2].ID
+	if err := DeleteBackup(paths, deletedID); err != nil {
+		t.Fatalf("DeleteBackup old recovery point: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(paths.BackupsDir, deletedID)); !os.IsNotExist(err) {
+		t.Fatalf("deleted recovery point remains: %v", err)
+	}
 }
 
 func prepareRestoreRollbackFixture(t *testing.T) (desktopruntime.Paths, BackupResult) {

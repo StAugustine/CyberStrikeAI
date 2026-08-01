@@ -11,7 +11,7 @@
     "windows": [],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; script-src 'self'; style-src 'self'",
-      "capabilities": ["bootstrap", "credential-migration", "startup-error", "desktop-paths"]
+      "capabilities": ["bootstrap", "credential-migration", "startup-error", "desktop-paths", "data-maintenance"]
     }
   },
   "bundle": {

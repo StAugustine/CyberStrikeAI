@@ -1,7 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop-paths",
-  "description": "The main desktop window may open the application's own data or log directory.",
+  "description": "The main desktop window may open the application's own data or log directory and enter the local maintenance window.",
   "windows": ["main"],
-  "permissions": ["allow-open-desktop-directory"]
+  "permissions": [
+    "allow-open-desktop-directory",
+    "allow-open-data-maintenance"
+  ]
 }

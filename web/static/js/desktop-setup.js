@@ -56,6 +56,18 @@ async function openDesktopDirectory(directory) {
     }
 }
 
+async function openDesktopDataMaintenance() {
+    if (!window.__TAURI__?.core?.invoke) return;
+    try {
+        await window.__TAURI__.core.invoke('open_data_maintenance');
+        if (typeof setUserMenuOpen === 'function') setUserMenuOpen(false);
+    } catch (error) {
+        if (typeof showNotification === 'function') {
+            showNotification(typeof error === 'string' ? error : '无法打开数据维护窗口', 'error');
+        }
+    }
+}
+
 function initializeDesktopDirectoryActions() {
     const actions = document.getElementById('desktop-directory-actions');
     if (actions && window.__TAURI__?.core?.invoke) actions.hidden = false;
@@ -190,4 +202,5 @@ document.getElementById('desktop-ai-setup-form')?.addEventListener('submit', sav
 document.getElementById('desktop-ai-later')?.addEventListener('click', closeDesktopAISetup);
 window.maybeShowDesktopAISetup = maybeShowDesktopAISetup;
 window.openDesktopDirectory = openDesktopDirectory;
+window.openDesktopDataMaintenance = openDesktopDataMaintenance;
 initializeDesktopDirectoryActions();

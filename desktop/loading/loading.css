@@ -23,7 +23,8 @@ body {
 .loading-card,
 .bootstrap-card,
 .credential-migration-card,
-.startup-error-card {
+.startup-error-card,
+.data-maintenance-card {
   width: min(88vw, 420px);
   padding: 36px;
   border: 1px solid rgb(149 178 219 / 18%);
@@ -31,6 +32,158 @@ body {
   background: rgb(12 24 44 / 88%);
   box-shadow: 0 24px 70px rgb(0 0 0 / 34%);
 }
+
+.maintenance-body {
+  display: block;
+  padding: 28px;
+}
+
+.data-maintenance-card {
+  width: min(100%, 1040px);
+  margin: 0 auto;
+  padding: 30px;
+}
+
+.maintenance-header,
+.section-heading,
+.backup-heading,
+.inline-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.maintenance-header > div,
+.section-heading > div,
+.backup-heading > div:first-child {
+  min-width: 0;
+}
+
+.maintenance-message {
+  min-height: 24px;
+  margin: 20px 0 0;
+  padding: 10px 13px;
+  border: 1px solid #263b58;
+  border-radius: 9px;
+  background: rgb(7 18 33 / 68%);
+  font-size: 13px;
+}
+
+.maintenance-message[data-state="success"] { color: #7ce8ca; }
+.maintenance-message[data-state="error"] { color: #ff9b9b; }
+.maintenance-message[data-state="pending"] { color: #8fc6ff; }
+
+.maintenance-section {
+  margin-top: 22px;
+  padding: 22px;
+  border: 1px solid #263b58;
+  border-radius: 13px;
+  background: rgb(7 18 33 / 66%);
+}
+
+.maintenance-section h2,
+.backup-card h3,
+.report-grid h3 {
+  margin: 0;
+}
+
+.maintenance-section h2 { font-size: 18px; }
+.maintenance-section .section-heading p { margin-top: 5px; font-size: 13px; }
+
+.empty-state {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px dashed #30435f;
+  border-radius: 10px;
+  color: #879ab4;
+  text-align: center;
+}
+
+.pending-import { margin-top: 18px; }
+
+.pending-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.pending-summary > div {
+  padding: 12px;
+  border-radius: 9px;
+  background: #101f35;
+}
+
+.pending-summary span,
+.pending-summary strong {
+  display: block;
+}
+
+.pending-summary span { color: #879ab4; font-size: 11px; }
+.pending-summary strong { margin-top: 5px; overflow-wrap: anywhere; font-size: 14px; }
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.report-grid > div {
+  padding: 14px;
+  border: 1px solid #263b58;
+  border-radius: 9px;
+}
+
+.report-grid h3 { color: #c8d5e7; font-size: 13px; }
+.report-grid ul { margin: 9px 0 0; padding-left: 18px; color: #9fb0c8; font-size: 12px; line-height: 1.65; }
+
+.inline-actions { justify-content: flex-start; margin-top: 16px; }
+.inline-actions button { min-width: 180px; }
+
+.backup-list { display: grid; gap: 12px; margin-top: 18px; }
+
+.backup-card {
+  padding: 15px;
+  border: 1px solid #263b58;
+  border-radius: 10px;
+  background: #0b192c;
+}
+
+.backup-heading h3 {
+  display: inline;
+  overflow-wrap: anywhere;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.status-badge {
+  display: inline-block;
+  margin-left: 9px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.status-badge.valid { background: rgb(45 212 191 / 14%); color: #7ce8ca; }
+.status-badge.invalid { background: rgb(255 92 111 / 14%); color: #ff9b9b; }
+
+.backup-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+
+.backup-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+  margin-top: 12px;
+  color: #9fb0c8;
+  font-size: 12px;
+}
+
+.backup-meta strong { color: #c8d5e7; }
+.backup-warning { color: #ffb1b1; font-size: 12px; }
+
+button.compact { min-height: 36px; padding: 7px 13px; }
+button.danger { border: 1px solid rgb(255 92 111 / 45%); background: transparent; color: #ff9b9b; }
 
 .credential-migration-card {
   width: min(90vw, 460px);
@@ -232,4 +385,17 @@ button.text-button {
     animation: none;
     transform: translateX(60%);
   }
+}
+
+@media (max-width: 720px) {
+  .maintenance-body { padding: 14px; }
+  .data-maintenance-card { padding: 20px; }
+  .maintenance-header,
+  .section-heading,
+  .backup-heading { align-items: stretch; flex-direction: column; }
+  .pending-summary,
+  .report-grid,
+  .backup-meta { grid-template-columns: 1fr; }
+  .inline-actions { align-items: stretch; flex-direction: column; }
+  .inline-actions button { width: 100%; }
 }

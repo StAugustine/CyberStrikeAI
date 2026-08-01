@@ -37,6 +37,21 @@ test('桌面主窗口只暴露固定的数据和日志目录入口', () => {
     assert.match(script, /window\.__TAURI__\?\.core\?\.invoke/);
 });
 
+test('桌面数据维护入口仅打开受限的本地维护窗口', () => {
+    const html = fs.readFileSync('web/templates/index.html', 'utf8');
+    const script = fs.readFileSync('web/static/js/desktop-setup.js', 'utf8');
+    const capability = JSON.parse(fs.readFileSync('desktop/src-tauri/capabilities/data-maintenance.json', 'utf8'));
+    const maintenance = fs.readFileSync('desktop/loading/data-maintenance.js', 'utf8');
+    assert.match(html, /openDesktopDataMaintenance\(\)[\s\S]*?数据导入与恢复/);
+    assert.match(script, /invoke\('open_data_maintenance'\)/);
+    assert.deepEqual(capability.windows, ['data-maintenance']);
+    assert.doesNotMatch(capability.permissions.join(' '), /shell|execute|spawn/);
+    assert.match(maintenance, /invoke\('choose_and_prepare_legacy_import'\)/);
+    assert.match(maintenance, /runOfflineOperation\('confirm_legacy_import'/);
+    assert.match(maintenance, /runOfflineOperation\('restore_desktop_backup', \{ backupId \}/);
+    assert.doesNotMatch(maintenance, /innerHTML|localStorage|sessionStorage|sourceDir/);
+});
+
 test('桌面启动错误页提供安全诊断、重试和退出路径', () => {
     const html = fs.readFileSync('desktop/loading/startup-error.html', 'utf8');
     const script = fs.readFileSync('desktop/loading/startup-error.js', 'utf8');

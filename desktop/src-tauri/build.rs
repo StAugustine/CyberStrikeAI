@@ -9,6 +9,14 @@ fn main() {
             "retry_startup",
             "exit_after_startup_failure",
             "open_desktop_directory",
+            "open_data_maintenance",
+            "get_data_maintenance_state",
+            "choose_and_prepare_legacy_import",
+            "confirm_legacy_import",
+            "cancel_legacy_import",
+            "restore_desktop_backup",
+            "delete_desktop_backup",
+            "close_data_maintenance",
         ]),
     ))
     .expect("failed to build CyberStrikeAI desktop metadata")

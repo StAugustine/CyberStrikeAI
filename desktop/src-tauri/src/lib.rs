@@ -6,7 +6,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicI32, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
         Mutex,
     },
     thread,
@@ -17,6 +17,8 @@ use tauri::{
     AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
+
+mod maintenance;
 
 const SIDECAR_NAME: &str = "cyberstrike-core";
 const DESKTOP_PROTOCOL_VERSION: u32 = 1;
@@ -33,6 +35,8 @@ enum StartupPhase {
     BootstrapRequired,
     Bootstrapping,
     Ready,
+    MaintenanceStopping,
+    Maintenance,
     ShuttingDown,
     Failed,
 }
@@ -47,6 +51,9 @@ struct SidecarState {
     window_placement: Mutex<Option<WindowPlacement>>,
     generation: AtomicU64,
     phase: Mutex<StartupPhase>,
+    maintenance_waiter: Mutex<Option<std::sync::mpsc::Sender<Result<(), String>>>>,
+    maintenance_holds_main: Mutex<bool>,
+    maintenance_active: AtomicBool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,6 +129,7 @@ pub fn run() {
             focus_active_window(app);
         }))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(SidecarState::default())
         .invoke_handler(tauri::generate_handler![
             get_credential_migration_paths,
@@ -131,7 +139,15 @@ pub fn run() {
             get_startup_failure,
             retry_startup,
             exit_after_startup_failure,
-            open_desktop_directory
+            open_desktop_directory,
+            maintenance::open_data_maintenance,
+            maintenance::get_data_maintenance_state,
+            maintenance::choose_and_prepare_legacy_import,
+            maintenance::confirm_legacy_import,
+            maintenance::cancel_legacy_import,
+            maintenance::restore_desktop_backup,
+            maintenance::delete_desktop_backup,
+            maintenance::close_data_maintenance
         ])
         .setup(|app| {
             let navigation_handle = app.handle().clone();
@@ -185,13 +201,20 @@ pub fn run() {
             if let Err(error) = save_window_placement(handle) {
                 eprintln!("failed to save desktop window placement: {error}");
             }
-            let terminal = handle
-                .state::<SidecarState>()
+            let state = handle.state::<SidecarState>();
+            let phase = state
                 .phase
                 .lock()
-                .map(|phase| matches!(*phase, StartupPhase::ShuttingDown | StartupPhase::Failed))
-                .unwrap_or(true);
-            if !terminal {
+                .map(|phase| *phase)
+                .unwrap_or(StartupPhase::Failed);
+            if state.maintenance_active.load(Ordering::SeqCst)
+                || matches!(
+                    phase,
+                    StartupPhase::MaintenanceStopping | StartupPhase::Maintenance
+                )
+            {
+                api.prevent_exit();
+            } else if !matches!(phase, StartupPhase::ShuttingDown | StartupPhase::Failed) {
                 api.prevent_exit();
                 request_shutdown(handle);
             }
@@ -467,6 +490,24 @@ fn start_sidecar(
                     }
                 }
                 CommandEvent::Error(error) => {
+                    let maintenance_stopping = task_handle
+                        .state::<SidecarState>()
+                        .phase
+                        .lock()
+                        .map(|phase| *phase == StartupPhase::MaintenanceStopping)
+                        .unwrap_or(false);
+                    if maintenance_stopping {
+                        if let Ok(mut child) = task_handle.state::<SidecarState>().child.lock() {
+                            if let Some(child) = child.take() {
+                                let _ = child.kill();
+                            }
+                        }
+                        maintenance::finish_core_stop(
+                            &task_handle,
+                            Err("the local core stopped unexpectedly".to_string()),
+                        );
+                        return;
+                    }
                     fail_sidecar(&task_handle, &format!("sidecar process error: {error}"));
                     return;
                 }
@@ -480,7 +521,14 @@ fn start_sidecar(
                         .lock()
                         .map(|phase| *phase)
                         .unwrap_or(StartupPhase::Failed);
-                    if payload.code == Some(0) && phase == StartupPhase::ShuttingDown {
+                    if phase == StartupPhase::MaintenanceStopping {
+                        let result = if payload.code == Some(0) {
+                            Ok(())
+                        } else {
+                            Err("the local core did not stop cleanly".to_string())
+                        };
+                        maintenance::finish_core_stop(&task_handle, result);
+                    } else if payload.code == Some(0) && phase == StartupPhase::ShuttingDown {
                         task_handle.exit(0);
                     } else {
                         eprintln!("desktop core terminated unexpectedly: {:?}", payload.code);
@@ -680,6 +728,9 @@ fn clear_string(value: &mut String) {
 }
 
 fn show_bootstrap_window(handle: &AppHandle) -> Result<(), String> {
+    if let Ok(mut hold) = handle.state::<SidecarState>().maintenance_holds_main.lock() {
+        *hold = false;
+    }
     if let Some(main) = handle.get_webview_window("main") {
         main.hide()
             .map_err(|error| format!("hide main window: {error}"))?;
@@ -693,6 +744,11 @@ fn show_bootstrap_window(handle: &AppHandle) -> Result<(), String> {
         startup_error
             .destroy()
             .map_err(|error| format!("destroy startup error window: {error}"))?;
+    }
+    if let Some(maintenance) = handle.get_webview_window("data-maintenance") {
+        maintenance
+            .destroy()
+            .map_err(|error| format!("destroy data maintenance window: {error}"))?;
     }
     if let Some(window) = handle.get_webview_window("bootstrap") {
         window
@@ -724,6 +780,9 @@ fn show_bootstrap_window(handle: &AppHandle) -> Result<(), String> {
 }
 
 fn show_credential_migration_window(handle: &AppHandle, paths: Vec<String>) -> Result<(), String> {
+    if let Ok(mut hold) = handle.state::<SidecarState>().maintenance_holds_main.lock() {
+        *hold = false;
+    }
     if let Some(main) = handle.get_webview_window("main") {
         main.hide()
             .map_err(|error| format!("hide main window: {error}"))?;
@@ -732,6 +791,11 @@ fn show_credential_migration_window(handle: &AppHandle, paths: Vec<String>) -> R
         startup_error
             .destroy()
             .map_err(|error| format!("destroy startup error window: {error}"))?;
+    }
+    if let Some(maintenance) = handle.get_webview_window("data-maintenance") {
+        maintenance
+            .destroy()
+            .map_err(|error| format!("destroy data maintenance window: {error}"))?;
     }
     *handle
         .state::<SidecarState>()
@@ -768,7 +832,12 @@ fn show_credential_migration_window(handle: &AppHandle, paths: Vec<String>) -> R
 }
 
 fn show_startup_error_window(handle: &AppHandle) -> Result<(), String> {
-    for label in ["main", "bootstrap", "credential-migration"] {
+    for label in [
+        "main",
+        "bootstrap",
+        "credential-migration",
+        "data-maintenance",
+    ] {
         if let Some(window) = handle.get_webview_window(label) {
             window
                 .hide()
@@ -832,6 +901,28 @@ fn show_main_window(handle: &AppHandle, url: tauri::Url) -> Result<(), String> {
             .destroy()
             .map_err(|error| format!("destroy startup error window: {error}"))?;
     }
+    if maintenance::maintenance_holds_main(handle) {
+        if let Some(maintenance) = handle.get_webview_window("data-maintenance") {
+            window
+                .hide()
+                .map_err(|error| format!("hide main window: {error}"))?;
+            maintenance
+                .show()
+                .map_err(|error| format!("show data maintenance window: {error}"))?;
+            maintenance
+                .set_focus()
+                .map_err(|error| format!("focus data maintenance window: {error}"))?;
+            return Ok(());
+        }
+        if let Ok(mut hold) = handle.state::<SidecarState>().maintenance_holds_main.lock() {
+            *hold = false;
+        }
+    }
+    if let Some(maintenance) = handle.get_webview_window("data-maintenance") {
+        maintenance
+            .destroy()
+            .map_err(|error| format!("destroy data maintenance window: {error}"))?;
+    }
     window
         .show()
         .map_err(|error| format!("show main window: {error}"))?;
@@ -850,6 +941,13 @@ fn focus_active_window(handle: &AppHandle) {
         .unwrap_or(StartupPhase::Failed);
     let label = if phase == StartupPhase::Failed {
         "startup-error"
+    } else if maintenance::maintenance_holds_main(handle)
+        || matches!(
+            phase,
+            StartupPhase::MaintenanceStopping | StartupPhase::Maintenance
+        )
+    {
+        "data-maintenance"
     } else if matches!(
         phase,
         StartupPhase::CredentialMigrationRequired | StartupPhase::MigratingCredentials
@@ -1069,7 +1167,14 @@ fn request_shutdown(handle: &AppHandle) {
         handle.exit(2);
         return;
     };
-    if matches!(*phase, StartupPhase::ShuttingDown | StartupPhase::Failed) {
+    if matches!(
+        *phase,
+        StartupPhase::MaintenanceStopping
+            | StartupPhase::Maintenance
+            | StartupPhase::ShuttingDown
+            | StartupPhase::Failed
+    ) || state.maintenance_active.load(Ordering::SeqCst)
+    {
         return;
     }
     *phase = StartupPhase::ShuttingDown;

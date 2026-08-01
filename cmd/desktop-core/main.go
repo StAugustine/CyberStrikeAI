@@ -47,6 +47,9 @@ type commandEvent struct {
 
 func main() {
 	var options runOptions
+	var maintenanceMode string
+	var maintenanceSource string
+	var maintenanceBackupID string
 	flag.StringVar(&options.Roots.DataDir, "data-dir", "", "absolute desktop application data directory")
 	flag.StringVar(&options.Roots.ConfigDir, "config-dir", "", "absolute desktop configuration directory")
 	flag.StringVar(&options.Roots.CacheDir, "cache-dir", "", "absolute desktop cache directory")
@@ -54,12 +57,21 @@ func main() {
 	flag.StringVar(&options.Roots.TempDir, "temp-dir", "", "absolute desktop temporary directory")
 	flag.StringVar(&options.ResourceDir, "resource-dir", "", "absolute bundled defaults directory")
 	flag.StringVar(&options.AppVersion, "app-version", "", "desktop application version")
+	flag.StringVar(&maintenanceMode, "maintenance", "", "run one desktop maintenance operation")
+	flag.StringVar(&maintenanceSource, "source-dir", "", "absolute legacy instance directory for import preparation")
+	flag.StringVar(&maintenanceBackupID, "backup-id", "", "desktop recovery point identifier")
 	flag.Parse()
 
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
-	if err := runDesktopCore(ctx, os.Stdin, os.Stdout, options); err != nil {
-		fmt.Fprintf(os.Stderr, "desktop core failed: %v\n", err)
+	var err error
+	if strings.TrimSpace(maintenanceMode) != "" {
+		err = runDesktopMaintenance(ctx, os.Stdout, options, maintenanceMode, maintenanceSource, maintenanceBackupID, time.Now())
+	} else {
+		err = runDesktopCore(ctx, os.Stdin, os.Stdout, options)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "desktop process failed: %v\n", err)
 		os.Exit(1)
 	}
 }

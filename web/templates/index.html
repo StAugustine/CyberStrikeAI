@@ -197,6 +197,9 @@
                                     <div class="user-menu-item" role="menuitem" tabindex="0" onclick="openDesktopDirectory('data')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDesktopDirectory('data');}">
                                         <span>打开数据目录</span>
                                     </div>
+                                    <div class="user-menu-item" role="menuitem" tabindex="0" onclick="openDesktopDataMaintenance()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDesktopDataMaintenance();}">
+                                        <span>数据导入与恢复</span>
+                                    </div>
                                     <div class="user-menu-divider" role="separator"></div>
                                 </div>
                                 {{if not .DesktopMode}}
