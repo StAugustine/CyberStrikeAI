@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -286,13 +287,31 @@ type GetConfigResponse struct {
 
 // ToolConfigInfo 工具配置信息
 type ToolConfigInfo struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Enabled     bool                   `json:"enabled"`
-	IsExternal  bool                   `json:"is_external,omitempty"`  // 是否为外部MCP工具
-	ExternalMCP string                 `json:"external_mcp,omitempty"` // 外部MCP名称（如果是外部工具）
-	RoleEnabled *bool                  `json:"role_enabled,omitempty"` // 该工具在当前角色中是否启用（nil表示未指定角色或使用所有工具）
-	InputSchema map[string]interface{} `json:"input_schema,omitempty"` // 工具参数 JSON Schema（用于前端展示详情）
+	Name                string                 `json:"name"`
+	Description         string                 `json:"description"`
+	Enabled             bool                   `json:"enabled"`
+	DefinitionInstalled bool                   `json:"definition_installed"`
+	RuntimeKind         string                 `json:"runtime_kind"`
+	ExecutableCommand   string                 `json:"executable_command,omitempty"`
+	ExecutableAvailable *bool                  `json:"executable_available,omitempty"`
+	ExecutablePath      string                 `json:"executable_path,omitempty"`
+	IsExternal          bool                   `json:"is_external,omitempty"`  // 是否为外部MCP工具
+	ExternalMCP         string                 `json:"external_mcp,omitempty"` // 外部MCP名称（如果是外部工具）
+	RoleEnabled         *bool                  `json:"role_enabled,omitempty"` // 该工具在当前角色中是否启用（nil表示未指定角色或使用所有工具）
+	InputSchema         map[string]interface{} `json:"input_schema,omitempty"` // 工具参数 JSON Schema（用于前端展示详情）
+}
+
+func configuredToolRuntime(command string) (kind, executableCommand, executablePath string, executableAvailable *bool) {
+	command = strings.TrimSpace(command)
+	if command == "" || strings.HasPrefix(command, "internal:") {
+		return "builtin", "", "", nil
+	}
+	available := false
+	path, err := exec.LookPath(command)
+	if err == nil {
+		available = true
+	}
+	return "system_command", command, path, &available
 }
 
 // GetConfig 获取当前配置
@@ -324,11 +343,17 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 
 	for _, tool := range h.config.Security.Tools {
 		configToolMap[tool.Name] = true
+		runtimeKind, executableCommand, executablePath, executableAvailable := configuredToolRuntime(tool.Command)
 		info := ToolConfigInfo{
-			Name:        tool.Name,
-			Description: h.pickToolDescription(tool.ShortDescription, tool.Description),
-			Enabled:     tool.Enabled,
-			IsExternal:  false,
+			Name:                tool.Name,
+			Description:         h.pickToolDescription(tool.ShortDescription, tool.Description),
+			Enabled:             tool.Enabled,
+			DefinitionInstalled: true,
+			RuntimeKind:         runtimeKind,
+			ExecutableCommand:   executableCommand,
+			ExecutableAvailable: executableAvailable,
+			ExecutablePath:      executablePath,
+			IsExternal:          false,
 		}
 		tools = append(tools, info)
 	}
@@ -342,10 +367,12 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 			}
 			description := h.pickToolDescription(mcpTool.ShortDescription, mcpTool.Description)
 			tools = append(tools, ToolConfigInfo{
-				Name:        mcpTool.Name,
-				Description: description,
-				Enabled:     true,
-				IsExternal:  false,
+				Name:                mcpTool.Name,
+				Description:         description,
+				Enabled:             true,
+				DefinitionInstalled: true,
+				RuntimeKind:         "builtin",
+				IsExternal:          false,
 			})
 		}
 	}
@@ -513,11 +540,17 @@ func (h *ConfigHandler) GetTools(c *gin.Context) {
 	allTools := make([]ToolConfigInfo, 0, len(securityTools))
 	for _, tool := range securityTools {
 		configToolMap[tool.Name] = true
+		runtimeKind, executableCommand, executablePath, executableAvailable := configuredToolRuntime(tool.Command)
 		toolInfo := ToolConfigInfo{
-			Name:        tool.Name,
-			Description: pickDesc(tool.ShortDescription, tool.Description),
-			Enabled:     tool.Enabled,
-			IsExternal:  false,
+			Name:                tool.Name,
+			Description:         pickDesc(tool.ShortDescription, tool.Description),
+			Enabled:             tool.Enabled,
+			DefinitionInstalled: true,
+			RuntimeKind:         runtimeKind,
+			ExecutableCommand:   executableCommand,
+			ExecutableAvailable: executableAvailable,
+			ExecutablePath:      executablePath,
+			IsExternal:          false,
 		}
 
 		// 根据角色配置标注工具状态
@@ -574,10 +607,12 @@ func (h *ConfigHandler) GetTools(c *gin.Context) {
 			description := pickDesc(mcpTool.ShortDescription, mcpTool.Description)
 
 			toolInfo := ToolConfigInfo{
-				Name:        mcpTool.Name,
-				Description: description,
-				Enabled:     true,
-				IsExternal:  false,
+				Name:                mcpTool.Name,
+				Description:         description,
+				Enabled:             true,
+				DefinitionInstalled: true,
+				RuntimeKind:         "builtin",
+				IsExternal:          false,
 			}
 
 			// 根据角色配置标注工具状态
@@ -2639,11 +2674,13 @@ func (h *ConfigHandler) getExternalMCPToolsWithManager(
 		enabled := h.calculateExternalToolEnabledWithManager(mcpName, actualToolName, externalMCPConfigs, mgr)
 
 		result = append(result, ToolConfigInfo{
-			Name:        actualToolName,
-			Description: pickDesc(externalTool.ShortDescription, externalTool.Description),
-			Enabled:     enabled,
-			IsExternal:  true,
-			ExternalMCP: mcpName,
+			Name:                actualToolName,
+			Description:         pickDesc(externalTool.ShortDescription, externalTool.Description),
+			Enabled:             enabled,
+			DefinitionInstalled: true,
+			RuntimeKind:         "external_mcp",
+			IsExternal:          true,
+			ExternalMCP:         mcpName,
 		})
 	}
 

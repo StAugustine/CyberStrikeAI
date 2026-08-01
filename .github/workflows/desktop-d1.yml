@@ -62,7 +62,7 @@ jobs:
       - name: Test Go desktop core
         run: go test ./cmd/desktop-poc-sidecar ./cmd/desktop-core ./internal/app ./internal/config ./internal/desktopcredentials ./internal/desktopprotocol ./internal/desktopruntime ./internal/handler ./internal/security ./web
       - name: Test desktop web setup
-        run: node --test web/static/js/workflow-package-client.test.cjs web/static/js/workflow-package-ui.test.cjs web/static/js/desktop-setup-ui.test.cjs web/static/js/desktop-auth-ui.test.cjs web/static/js/desktop-dashboard-ui.test.cjs
+        run: node --test web/static/js/workflow-package-client.test.cjs web/static/js/workflow-package-ui.test.cjs web/static/js/desktop-setup-ui.test.cjs web/static/js/desktop-auth-ui.test.cjs web/static/js/desktop-dashboard-ui.test.cjs web/static/js/desktop-tools-ui.test.cjs
       - name: Verify desktop resource manifest
         working-directory: desktop
         shell: bash

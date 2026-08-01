@@ -11119,6 +11119,35 @@ html[data-theme="dark"] .robot-binding-service-hint-icon {
     white-space: nowrap;
 }
 
+.tool-runtime-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.tool-runtime-badge.definition,
+.tool-runtime-badge.builtin {
+    color: var(--accent-color);
+    background: rgba(33, 150, 243, 0.1);
+}
+
+.tool-runtime-badge.available {
+    color: var(--success-color, #22c55e);
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.35);
+}
+
+.tool-runtime-badge.missing {
+    color: var(--danger-color, #ef4444);
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
 .tool-item-desc {
     font-size: 0.8125rem;
     color: var(--text-secondary);

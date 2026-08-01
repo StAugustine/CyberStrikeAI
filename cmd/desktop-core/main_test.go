@@ -31,6 +31,11 @@ import (
 
 func TestDesktopCoreLocalAdminGoldenPath(t *testing.T) {
 	root := t.TempDir()
+	testExecutable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve desktop test executable: %v", err)
+	}
+	t.Setenv("PATH", filepath.Dir(testExecutable))
 	cancelRequestStarted := make(chan struct{}, 1)
 	liveResponseStarted := make(chan struct{}, 1)
 	releaseLiveResponse := make(chan struct{})
@@ -82,6 +87,17 @@ audit:
   retention_days: 15
   max_detail_bytes: 4096
 `)
+	appendTestResourceConfig(t, resourceDir, "test-version", fmt.Sprintf(`security:
+  tools:
+    - name: desktop-command-available
+      command: %q
+      description: Desktop command available on the controlled PATH.
+      enabled: true
+    - name: desktop-command-missing
+      command: cyberstrike-desktop-command-that-does-not-exist
+      description: Desktop command intentionally missing from PATH.
+      enabled: true
+`, filepath.Base(testExecutable)))
 	options := runOptions{
 		Roots: desktopruntime.Roots{
 			DataDir:   filepath.Join(root, "data"),
@@ -225,6 +241,26 @@ audit:
 		if status != http.StatusOK {
 			t.Fatalf("authenticated GET /%s status = %d, body = %#v", path, status, body)
 		}
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, ready.URL+"api/config/tools?page=1&page_size=100&search=desktop-command-", token, nil)
+	availableTool := desktopNestedItem(body, "tools", "name", "desktop-command-available")
+	missingTool := desktopNestedItem(body, "tools", "name", "desktop-command-missing")
+	if status != http.StatusOK ||
+		availableTool == nil ||
+		availableTool["definition_installed"] != true ||
+		availableTool["runtime_kind"] != "system_command" ||
+		availableTool["executable_command"] != filepath.Base(testExecutable) ||
+		availableTool["executable_available"] != true ||
+		availableTool["executable_path"] == "" {
+		t.Fatalf("available desktop command diagnostic status = %d, body = %#v", status, body)
+	}
+	if missingTool == nil ||
+		missingTool["definition_installed"] != true ||
+		missingTool["runtime_kind"] != "system_command" ||
+		missingTool["executable_command"] != "cyberstrike-desktop-command-that-does-not-exist" ||
+		missingTool["executable_available"] != false ||
+		missingTool["executable_path"] != nil {
+		t.Fatalf("missing desktop command diagnostic status = %d, body = %#v", status, body)
 	}
 	for _, request := range []struct {
 		method string
