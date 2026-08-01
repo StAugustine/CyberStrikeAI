@@ -20,8 +20,7 @@ const SETTING_FILE_NAME: &str = "plugin-integration.json";
 const DISCOVERY_FILE_NAME: &str = "plugin-discovery.json";
 const NATIVE_HOST_MANIFEST_FILE_NAME: &str = "plugin-native-host.json";
 const NATIVE_HOST_NAME: &str = "com.cyberstrikeai.desktop";
-const NATIVE_HOST_BINARY_BASENAME: &str =
-    env!("CYBERSTRIKE_DESKTOP_NATIVE_HOST_BINARY_BASENAME");
+const NATIVE_HOST_BINARY_BASENAME: &str = env!("CYBERSTRIKE_DESKTOP_NATIVE_HOST_BINARY_BASENAME");
 const BROWSER_EXTENSION_ID: &str = "okialefpaaimfgjelpednbehgebgkdgo";
 const DISCOVERY_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const DISCOVERY_LIFETIME: Duration = Duration::from_secs(90);

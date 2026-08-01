@@ -3,9 +3,7 @@ use std::{env, fs, path::PathBuf};
 
 fn main() {
     let (core_binary_basename, native_host_binary_basename) = desktop_binary_names();
-    println!(
-        "cargo:rustc-env=CYBERSTRIKE_DESKTOP_CORE_BINARY_BASENAME={core_binary_basename}"
-    );
+    println!("cargo:rustc-env=CYBERSTRIKE_DESKTOP_CORE_BINARY_BASENAME={core_binary_basename}");
     println!(
         "cargo:rustc-env=CYBERSTRIKE_DESKTOP_NATIVE_HOST_BINARY_BASENAME={native_host_binary_basename}"
     );
