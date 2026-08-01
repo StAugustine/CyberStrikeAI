@@ -51,6 +51,9 @@ func TestResolveAndPreparePathsAreIndependentFromCWD(t *testing.T) {
 	if paths.UpgradeStateFile != filepath.Join(roots.DataDir, "upgrade-state.json") {
 		t.Fatalf("desktop upgrade state file = %q", paths.UpgradeStateFile)
 	}
+	if paths.RestoreStateFile != filepath.Join(roots.DataDir, "restore-state.json") {
+		t.Fatalf("desktop restore state file = %q", paths.RestoreStateFile)
+	}
 	t.Chdir(t.TempDir())
 	if err := paths.Prepare(); err != nil {
 		t.Fatalf("Prepare: %v", err)

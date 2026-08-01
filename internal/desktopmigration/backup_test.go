@@ -205,6 +205,39 @@ func TestVerifyBackupRejectsWindowsPathTraversal(t *testing.T) {
 	}
 }
 
+func TestVerifyBackupRejectsReservedRestorePaths(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "config/other.yaml", want: "unsupported config path"},
+		{path: "data/backups/replace.txt", want: "reserved path"},
+		{path: "data/upgrade-state.json", want: "reserved path"},
+		{path: "data/restore-state.json", want: "reserved path"},
+	}
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			paths := prepareBackupTestPaths(t)
+			writeBackupTestFile(t, paths.ConfigFile, "desktop: true\n", 0o600)
+			result, err := CreateUpgradeBackup(context.Background(), paths, "1.0.0", "1.1.0", time.Now())
+			if err != nil {
+				t.Fatalf("CreateUpgradeBackup: %v", err)
+			}
+			result.Manifest.Files[0].Path = test.path
+			manifestData, err := json.Marshal(result.Manifest)
+			if err != nil {
+				t.Fatalf("encode reserved backup manifest: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(result.Directory, "manifest.json"), manifestData, 0o600); err != nil {
+				t.Fatalf("write reserved backup manifest: %v", err)
+			}
+			if _, err := VerifyBackup(result.Directory); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("VerifyBackup error = %v, want %q rejection", err, test.want)
+			}
+		})
+	}
+}
+
 func TestVerifyBackupRejectsPayloadDirectorySymlink(t *testing.T) {
 	paths := prepareBackupTestPaths(t)
 	writeBackupTestFile(t, paths.ConfigFile, "desktop: true\n", 0o600)

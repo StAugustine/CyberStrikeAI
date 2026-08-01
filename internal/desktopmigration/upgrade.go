@@ -111,7 +111,7 @@ func PrepareUpgrade(
 		return nil, fmt.Errorf("encode desktop upgrade state: %w", err)
 	}
 	stateData = append(stateData, '\n')
-	if err := writeUpgradeStateAtomically(paths.UpgradeStateFile, stateData); err != nil {
+	if err := writePrivateStateAtomically(paths.UpgradeStateFile, stateData); err != nil {
 		return nil, fmt.Errorf("write desktop upgrade state: %w", err)
 	}
 	return &UpgradeSession{paths: paths, state: state}, nil
@@ -220,12 +220,12 @@ func verifyUpgradeStateBackup(paths desktopruntime.Paths, state UpgradeState) er
 	return nil
 }
 
-func writeUpgradeStateAtomically(path string, content []byte) error {
+func writePrivateStateAtomically(path string, content []byte) error {
 	parent := filepath.Dir(path)
 	if err := os.MkdirAll(parent, backupDirectoryMode); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(parent, ".desktop-upgrade-state-*")
+	temporary, err := os.CreateTemp(parent, ".desktop-state-*")
 	if err != nil {
 		return err
 	}
@@ -252,7 +252,7 @@ func writeUpgradeStateAtomically(path string, content []byte) error {
 		return err
 	}
 	if _, err := os.Lstat(path); err == nil {
-		return errors.New("desktop upgrade state already exists")
+		return errors.New("desktop private state already exists")
 	} else if !os.IsNotExist(err) {
 		return err
 	}

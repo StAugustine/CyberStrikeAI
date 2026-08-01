@@ -88,6 +88,9 @@ func runDesktopCore(parent context.Context, stdin io.Reader, stdout io.Writer, o
 	if err != nil {
 		return err
 	}
+	if _, err := desktopmigration.RecoverInterruptedRestore(paths); err != nil {
+		return fmt.Errorf("recover interrupted desktop restore: %w", err)
+	}
 	if err := paths.Prepare(); err != nil {
 		return err
 	}

@@ -31,6 +31,7 @@ type Paths struct {
 	ResourcesDir          string
 	ResourceStateFile     string
 	UpgradeStateFile      string
+	RestoreStateFile      string
 	UploadsDir            string
 	WorkspaceDir          string
 	AgentCheckpointDir    string
@@ -75,6 +76,7 @@ func ResolvePaths(roots Roots) (Paths, error) {
 		ResourcesDir:          resourcesDir,
 		ResourceStateFile:     filepath.Join(resolved.DataDir, "resource-state.json"),
 		UpgradeStateFile:      filepath.Join(resolved.DataDir, "upgrade-state.json"),
+		RestoreStateFile:      filepath.Join(resolved.DataDir, "restore-state.json"),
 		UploadsDir:            filepath.Join(resolved.DataDir, "chat_uploads"),
 		WorkspaceDir:          filepath.Join(resolved.DataDir, "workspaces"),
 		AgentCheckpointDir:    filepath.Join(resolved.DataDir, "checkpoints", "agents"),

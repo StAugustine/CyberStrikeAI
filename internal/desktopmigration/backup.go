@@ -360,6 +360,12 @@ func validateBackupManifest(manifest BackupManifest) error {
 		if !fs.ValidPath(file.Path) || strings.Contains(file.Path, `\`) || (!strings.HasPrefix(file.Path, "config/") && !strings.HasPrefix(file.Path, "data/")) {
 			return fmt.Errorf("desktop backup manifest contains invalid path %q", file.Path)
 		}
+		if strings.HasPrefix(file.Path, "config/") && file.Path != "config/config.yaml" {
+			return fmt.Errorf("desktop backup manifest contains unsupported config path %q", file.Path)
+		}
+		if reservedBackupPayloadPath(file.Path) {
+			return fmt.Errorf("desktop backup manifest contains reserved path %q", file.Path)
+		}
 		if previousPath != "" && file.Path <= previousPath {
 			return errors.New("desktop backup manifest files are not uniquely sorted")
 		}
@@ -378,6 +384,11 @@ func validateBackupManifest(manifest BackupManifest) error {
 		}
 	}
 	return nil
+}
+
+func reservedBackupPayloadPath(path string) bool {
+	return path == "data/backups" || strings.HasPrefix(path, "data/backups/") ||
+		path == "data/upgrade-state.json" || path == "data/restore-state.json"
 }
 
 func reserveBackupDirectory(backupsDir string, createdAt time.Time) (id, stagingDir, finalDir string, err error) {
