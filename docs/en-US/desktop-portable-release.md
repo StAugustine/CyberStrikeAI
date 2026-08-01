@@ -31,6 +31,8 @@ Local Terminal, WebShell, C2, robot connectors, platform multi-user RBAC, and re
 
 Every CI candidate verifies safe archive paths; application/core/native-host architecture; the resource manifest; excluded and sensitive content; a CycloneDX SBOM; SHA-256 checksums; backup/restore; an R1 0.1.0 state upgrade; program-directory replacement; and data/configuration retention.
 
+The verified R2 artifacts were produced by [portable and plugin run 30689534423](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30689534423) from commit `8b8ec953e9c168be865084f72fa75ff8fd0b554a`. Windows x64, macOS arm64, macOS x64, and the browser/Burp integration artifact all passed. The same commit also passed the complete [three-platform desktop lifecycle run 30689534440](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30689534440). The artifacts are retained through August 8, 2026.
+
 These ZIPs are unsigned development candidates:
 
 - Windows antivirus may scan the Go sidecars on first launch, and missing WebView2 prevents the UI from opening.

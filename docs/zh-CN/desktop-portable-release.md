@@ -42,13 +42,13 @@ Windows 便携包不安装 WebView2。目标电脑必须已有 Microsoft Edge We
 
 R2 的 `/api-docs` 使用当前本地实例，受认证 OpenAPI 规范只列出 desktop 实际注册的接口。Terminal、WebShell、C2、机器人、平台多用户 RBAC 和远程服务模式不属于桌面版；对应页面、路由、后台服务和专用资源不会随便携包恢复。
 
-当前已验证的候选由 [GitHub Actions 运行 30684180216](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30684180216) 生成，三个 artifact 均已通过上述全部步骤：
+当前已验证的 R2 候选由 [GitHub Actions 运行 30689534423](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30689534423) 生成，三个桌面 artifact 均已通过上述全部步骤：
 
 - `desktop-x86_64-pc-windows-msvc-portable-unsigned`
 - `desktop-aarch64-apple-darwin-portable-unsigned`
 - `desktop-x86_64-apple-darwin-portable-unsigned`
 
-同一提交的[基础桌面三平台流水线](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30684180212)也全部通过。artifact 是 GitHub 下载容器，解压后再使用其中带版本和平台名的产品 ZIP、SBOM、审计报告、运行时报告、发布清单与 `SHA256SUMS`。
+同一运行还生成已通过发现协议、内容审计与校验和门禁的 `desktop-plugin-integrations-unsigned`。同一提交的[基础桌面三平台流水线 30689534440](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30689534440)也全部通过。artifact 保留至 2026-08-08；它是 GitHub 下载容器，解压后再使用其中带版本和平台名的产品 ZIP、SBOM、审计报告、运行时报告、发布清单与 `SHA256SUMS`。
 
 ## 本地命令
 

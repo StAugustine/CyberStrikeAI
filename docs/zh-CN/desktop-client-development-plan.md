@@ -1,6 +1,6 @@
 # CyberStrikeAI 桌面客户端二次开发计划
 
-> 状态：**执行中；D0-D8 已完成，D9 本机门禁已通过，等待最终三平台 CI**
+> 状态：**已完成；D0-D9 在当前未签名免安装开发候选范围内全部通过**
 > 计划版本：1.4
 > 规划日期：2026-07-31
 > 开发分支：`codex/desktop-client`
@@ -448,7 +448,7 @@ CyberStrikeAI/
 
 ### D9：R2 全量验收与免安装候选发布
 
-执行状态：实现与本机门禁已完成，等待最终 Windows x64、macOS arm64 和 macOS x64 干净 runner 复核。Desktop 版本统一为 0.2.0，浏览器扩展为 0.4.0，Burp 插件为 1.1.0；发布脚本会用打包后的 R2 sidecar 对 R1 0.1.0 状态执行升级、恢复点、配置/数据保留、程序目录删除、重新解压和无需重新初始化的 READY 验收。20 个纳入页面和 8 个排除页面已转为精确清单门禁，桌面 OpenAPI 同步过滤未注册模块，完整 Go/Rust/Node/Java/Maven 回归和 macOS arm64 真实免安装发布链已通过。按项目所有者决定，安全差异审查技能本轮搁置，不属于本候选完成门禁；详见 [R2 验收报告](desktop-client-r2-acceptance.md)。
+执行状态：已完成。Desktop 版本统一为 0.2.0，浏览器扩展为 0.4.0，Burp 插件为 1.1.0；发布脚本使用打包后的 R2 sidecar 对 R1 0.1.0 状态完成升级、恢复点、配置/数据保留、程序目录删除、重新解压和无需重新初始化的 READY 验收。20 个纳入页面和 8 个排除页面已转为精确清单门禁，桌面 OpenAPI 同步过滤未注册模块，完整 Go/Rust/Node/Java/Maven 回归、浏览器/Burp 集成产物和三个一级平台的真实免安装发布链均已通过。[基础桌面三平台流水线 30689534440](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30689534440)与[免安装及插件流水线 30689534423](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30689534423)均验证同一提交 `8b8ec953e9c168be865084f72fa75ff8fd0b554a`。项目所有者的持续执行授权作为本轮未签名开发候选的发布批准。按项目所有者决定，安全差异审查技能本轮搁置，不属于本候选完成门禁；详见 [R2 验收报告](desktop-client-r2-acceptance.md)。
 
 工作项：
 

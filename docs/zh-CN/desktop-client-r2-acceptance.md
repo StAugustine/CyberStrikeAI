@@ -3,7 +3,7 @@
 > 验证日期：2026-07-31
 > 分支：`codex/desktop-client`
 > 交付类别：Windows/macOS 未签名免安装开发候选
-> 状态：本机门禁已通过，等待最终三平台 CI 复核
+> 状态：R2 当前未签名免安装开发候选门禁已通过
 
 ## 1. 版本与发布边界
 
@@ -48,7 +48,7 @@ R1 黄金路径已全量重跑，并新增以下 R2 断言：
 
 当前交付是未签名开发候选。真实设备的多小时睡眠/唤醒、Windows 签名后首次启动杀毒扫描、macOS Developer ID/Gatekeeper 和公证行为仍属于公开稳定分发前的设备验收，不通过关闭系统保护规避，也不阻止本轮免安装开发候选。
 
-## 5. 本机回归证据
+## 5. 回归与发布证据
 
 当前改动已通过：
 
@@ -58,4 +58,10 @@ R1 黄金路径已全量重跑，并新增以下 R2 断言：
 - Java 11 Burp 发现协议测试、Maven 1.1.0 JAR 构建；
 - macOS arm64 真实 0.2.0 `.app`/ZIP 构建、内容审计、R1→R2 替换、恢复、SBOM 与校验和。
 
-最终发布判定将在同一提交的 Windows x64、macOS arm64 和 macOS x64 基础桌面/免安装流水线全部通过后写入本报告。
+提交 `8b8ec953e9c168be865084f72fa75ff8fd0b554a` 的最终远程门禁全部通过：
+
+- [基础桌面三平台流水线 30689534440](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30689534440)：Windows x64、macOS arm64、macOS x64 的 Go/Web/Java/Rust、原生构建、生命周期、单实例和失败路径全部通过；
+- [免安装与插件流水线 30689534423](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30689534423)：三个原生免安装 ZIP 均通过构建、内容审计、SBOM、解压运行、R1→R2 替换、恢复、数据保留、校验和与产物上传；浏览器/Burp 集成 artifact 同时通过；
+- 产物为 `desktop-x86_64-pc-windows-msvc-portable-unsigned`、`desktop-aarch64-apple-darwin-portable-unsigned`、`desktop-x86_64-apple-darwin-portable-unsigned` 和 `desktop-plugin-integrations-unsigned`，保留至 2026-08-08。
+
+项目所有者已接受免安装交付形式并授权按计划持续执行至完成，该授权作为本轮未签名开发候选的发布批准。安全差异审查技能仍按项目所有者决定搁置，本报告不作相关审查结论；代码签名、公证与真实设备长时间睡眠/唤醒继续属于未来公开稳定分发门禁。
