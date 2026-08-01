@@ -35,6 +35,14 @@ Windows 便携包不安装 WebView2。目标电脑必须已有 Microsoft Edge We
 
 每个平台的 CI artifact 保留 7 天且明确标记 `portable-unsigned`。普通 PR 不读取任何发布私钥。
 
+当前已验证的候选由 [GitHub Actions 运行 30682567196](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30682567196) 生成，三个 artifact 均已通过上述全部步骤：
+
+- `desktop-x86_64-pc-windows-msvc-portable-unsigned`
+- `desktop-aarch64-apple-darwin-portable-unsigned`
+- `desktop-x86_64-apple-darwin-portable-unsigned`
+
+同一提交的[基础桌面三平台流水线](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30682567221)也全部通过。artifact 是 GitHub 下载容器，解压后再使用其中带版本和平台名的产品 ZIP、SBOM、审计报告、运行时报告、发布清单与 `SHA256SUMS`。
+
 ## 本地命令
 
 先设置 `CYBERSTRIKE_DESKTOP_TARGET` 和仓库内临时 `CARGO_TARGET_DIR`，再在 `desktop/` 执行：

@@ -417,7 +417,7 @@ CyberStrikeAI/
 
 ### D7：R1 构建、签名、发布与验收
 
-执行状态：进行中。按项目所有者当前决定，D7 先交付 Windows x64、macOS arm64 和 macOS x64 三个免安装 ZIP，安装器暂缓。Windows ZIP 由原生 release 可执行文件、同架构 Go sidecar、版本化默认资源、许可证和使用说明组成；macOS ZIP 包含同样完整的 `.app`、许可证和说明。候选构建显式禁用签名和更新安装产物，已实现产品版本/许可证/Bundle 配置一致性校验、桌面图标集、CycloneDX 1.6 SBOM、SHA-256 清单、资源清单哈希复核、敏感文件/私钥扫描和排除前端资源审计。macOS arm64 已在本机实际生成约 35 MB 的 ZIP，并通过安全解压路径、主程序与 sidecar 架构、打包后 sidecar 维护命令、删除程序目录不删除外置用户数据、重新解压后复用同一数据目录的验收；三架构干净 runner 结果尚待 CI 验证。
+执行状态：进行中；当前免安装交付的自动化门禁已完成。按项目所有者当前决定，D7 先交付 Windows x64、macOS arm64 和 macOS x64 三个免安装 ZIP，安装器暂缓。Windows ZIP 由原生 release 可执行文件、同架构 Go sidecar、版本化默认资源、许可证和使用说明组成；macOS ZIP 包含同样完整的 `.app`、许可证和说明。候选构建显式禁用签名和更新安装产物，已实现产品版本/许可证/Bundle 配置一致性校验、桌面图标集、CycloneDX 1.6 SBOM、SHA-256 清单、资源清单哈希复核、敏感文件/私钥扫描和排除前端资源审计。macOS arm64 已在本机实际生成约 35 MB 的 ZIP；Windows x64、macOS arm64 和 macOS x64 又在三个干净原生 runner 上全部通过安全解压路径、主程序与 sidecar 架构、打包后 sidecar 维护命令、删除程序目录不删除外置用户数据、重新解压后复用同一数据目录、内容审计、SBOM 和校验和验收。证据见 [免安装发布流水线](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30682567196)和[基础桌面三平台流水线](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30682567221)。整个 D7 仍需完成 R1 功能人工验收及公开分发前的签名、公证和发布批准。
 
 当前便携交付门禁：三个一级架构均从干净 runner 生成可解压运行的 ZIP；压缩包内没有真实配置、数据库、凭据、日志、私钥或排除模块专用资源；主程序和 sidecar 架构匹配；删除或替换解压目录不删除操作系统用户数据目录；每个平台随包生成审计报告、SBOM 和 SHA-256。Windows 便携包不安装 WebView2，运行前必须存在 WebView2 Evergreen Runtime。
 
