@@ -62,6 +62,7 @@ func TestResolveAndPreparePathsAreIndependentFromCWD(t *testing.T) {
 		paths.AgentCheckpointDir,
 		paths.WorkflowCheckpointDir,
 		paths.ReductionDir,
+		paths.BackupsDir,
 		paths.LogDir,
 		paths.TempDir,
 	} {

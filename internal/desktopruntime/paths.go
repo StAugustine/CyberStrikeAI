@@ -35,6 +35,7 @@ type Paths struct {
 	AgentCheckpointDir    string
 	WorkflowCheckpointDir string
 	ReductionDir          string
+	BackupsDir            string
 	LogFile               string
 }
 
@@ -77,6 +78,7 @@ func ResolvePaths(roots Roots) (Paths, error) {
 		AgentCheckpointDir:    filepath.Join(resolved.DataDir, "checkpoints", "agents"),
 		WorkflowCheckpointDir: filepath.Join(resolved.DataDir, "checkpoints", "workflows"),
 		ReductionDir:          filepath.Join(resolved.CacheDir, "reduction"),
+		BackupsDir:            filepath.Join(resolved.DataDir, "backups"),
 		LogFile:               filepath.Join(resolved.LogDir, "cyberstrike-ai.log"),
 	}, nil
 }
@@ -100,6 +102,7 @@ func (p Paths) Prepare() error {
 		{name: "agent checkpoints", path: p.AgentCheckpointDir},
 		{name: "workflow checkpoints", path: p.WorkflowCheckpointDir},
 		{name: "reduction cache", path: p.ReductionDir},
+		{name: "backups", path: p.BackupsDir},
 	}
 	for _, directory := range directories {
 		if err := prepareWritableDirectory(directory.path); err != nil {
