@@ -306,6 +306,7 @@ audit:
 		`id="vulnerability-alert-settings"`,
 		`id="dashboard-section-access"`,
 		`window.open('/api-docs'`,
+		`window.location.assign('/api-docs')`,
 		`window.open('https://github.com/Ed1s0nZ/CyberStrikeAI'`,
 	} {
 		if bytes.Contains(desktopPageBody, []byte(marker)) {
@@ -314,9 +315,6 @@ audit:
 	}
 	if !bytes.Contains(desktopPageBody, []byte(`/static/js/desktop-setup.js`)) {
 		t.Fatal("desktop page does not contain desktop setup script")
-	}
-	if !bytes.Contains(desktopPageBody, []byte(`window.location.assign('/api-docs')`)) {
-		t.Fatal("desktop page does not contain the local API documentation entry")
 	}
 	apiDocsPage, err := http.Get(ready.URL + "api-docs")
 	if err != nil {
