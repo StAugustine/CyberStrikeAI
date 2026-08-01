@@ -75,6 +75,10 @@ openai:
       name: Desktop Specialist
       description: Verifies the desktop multi-Agent runtime.
       instruction: Return a concise desktop confirmation.
+audit:
+  enabled: true
+  retention_days: 15
+  max_detail_bytes: 4096
 `)
 	options := runOptions{
 		Roots: desktopruntime.Roots{
@@ -2617,6 +2621,7 @@ type desktopOperationsFixture struct {
 	fileDirectory    string
 	fileRelativePath string
 	fileAbsolutePath string
+	auditLogID       string
 }
 
 func desktopCreateOperationsFixture(
@@ -2834,7 +2839,7 @@ func desktopCreateOperationsFixture(
 		t.Fatalf("export desktop managed file status = %d, headers = %#v, body = %q", archiveStatus, archiveHeaders, archiveData)
 	}
 	desktopAssertChatFilesArchive(t, archiveData, "Persisted desktop managed file.")
-	desktopAssertAuditExport(t, baseURL, token, fixture.externalMCPName)
+	fixture.auditLogID = desktopAssertAuditLifecycle(t, baseURL, token, fixture.queueID)
 	return fixture
 }
 
@@ -2894,11 +2899,7 @@ func desktopAssertOperationsFixture(t *testing.T, baseURL, token string, fixture
 	if status != http.StatusOK || body["content"] != "Persisted desktop managed file." {
 		t.Fatalf("persisted desktop managed file status = %d, body = %#v", status, body)
 	}
-	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs?category=external_mcp&resource_id="+url.QueryEscape(fixture.externalMCPName), token, nil)
-	auditTotal, _ := body["total"].(float64)
-	if status != http.StatusOK || auditTotal < 2 {
-		t.Fatalf("persisted desktop operation audit status = %d, body = %#v", status, body)
-	}
+	desktopAssertPersistedAudit(t, baseURL, token, fixture.queueID, fixture.auditLogID)
 }
 
 func desktopDeleteOperationsFixture(t *testing.T, baseURL, token string, fixture desktopOperationsFixture) {
@@ -3091,8 +3092,38 @@ func desktopAssertChatFilesArchive(t *testing.T, data []byte, wantContent string
 	}
 }
 
-func desktopAssertAuditExport(t *testing.T, baseURL, token, resourceID string) {
+func desktopAssertAuditLifecycle(t *testing.T, baseURL, token, resourceID string) string {
 	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/meta", token, nil)
+	if status != http.StatusOK || body["enabled"] != true || body["retention_days"] != float64(15) || body["max_export"] != float64(5000) {
+		t.Fatalf("desktop audit metadata status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/summary?category=task&resource_id="+url.QueryEscape(resourceID), token, nil)
+	auditTotal, _ := body["total"].(float64)
+	if status != http.StatusOK || auditTotal < 1 || body["has_filters"] != true {
+		t.Fatalf("desktop audit summary status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs?category=task&resource_id="+url.QueryEscape(resourceID), token, nil)
+	logItem := desktopNestedItem(body, "logs", "resourceId", resourceID)
+	logID, _ := logItem["id"].(string)
+	logsTotal, _ := body["total"].(float64)
+	if status != http.StatusOK || logsTotal < 1 || logID == "" {
+		t.Fatalf("desktop audit filtered logs status = %d, body = %#v", status, body)
+	}
+	status, detail := desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs/"+url.PathEscape(logID), token, nil)
+	logDetail, _ := detail["log"].(map[string]interface{})
+	if status != http.StatusOK || logDetail["id"] != logID || logDetail["resourceId"] != resourceID || logDetail["resourceAvailable"] != true {
+		t.Fatalf("desktop audit detail status = %d, body = %#v", status, detail)
+	}
+	detailData, _ := json.Marshal(detail)
+	if bytes.Contains(detailData, []byte("stream-secret")) || bytes.Contains(detailData, []byte("desktop-embedding-secret")) {
+		t.Fatalf("desktop audit detail exposed credentials: %s", detailData)
+	}
+	status, missing := desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs/audit_missing_desktop", token, nil)
+	if status != http.StatusNotFound || missing["error"] == "" {
+		t.Fatalf("missing desktop audit detail status = %d, body = %#v", status, missing)
+	}
+
 	status, headers, data := desktopBodyRequest(t, http.MethodGet, baseURL+"api/audit/logs/export?resource_id="+url.QueryEscape(resourceID), token, nil, "")
 	if status != http.StatusOK || !strings.HasPrefix(headers.Get("Content-Type"), "application/json") || !bytes.Contains(data, []byte(resourceID)) || bytes.Contains(data, []byte("stream-secret")) || bytes.Contains(data, []byte("desktop-embedding-secret")) {
 		t.Fatalf("desktop JSON audit export status = %d, headers = %#v, body = %q", status, headers, data)
@@ -3100,6 +3131,20 @@ func desktopAssertAuditExport(t *testing.T, baseURL, token, resourceID string) {
 	status, headers, data = desktopBodyRequest(t, http.MethodGet, baseURL+"api/audit/logs/export?format=csv&resource_id="+url.QueryEscape(resourceID), token, nil, "")
 	if status != http.StatusOK || !strings.HasPrefix(headers.Get("Content-Type"), "text/csv") || !bytes.Contains(data, []byte("id,created_at,level,category,action,result,actor")) || !bytes.Contains(data, []byte(resourceID)) {
 		t.Fatalf("desktop CSV audit export status = %d, headers = %#v, body = %q", status, headers, data)
+	}
+	return logID
+}
+
+func desktopAssertPersistedAudit(t *testing.T, baseURL, token, resourceID, logID string) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/meta", token, nil)
+	if status != http.StatusOK || body["enabled"] != true || body["retention_days"] != float64(15) {
+		t.Fatalf("persisted desktop audit metadata status = %d, body = %#v", status, body)
+	}
+	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs/"+url.PathEscape(logID), token, nil)
+	logDetail, _ := body["log"].(map[string]interface{})
+	if status != http.StatusOK || logDetail["id"] != logID || logDetail["resourceId"] != resourceID || logDetail["resourceAvailable"] != true {
+		t.Fatalf("persisted desktop audit detail status = %d, body = %#v", status, body)
 	}
 }
 
