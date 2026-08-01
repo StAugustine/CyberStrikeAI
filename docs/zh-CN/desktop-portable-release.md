@@ -29,19 +29,19 @@ Windows 便携包不安装 WebView2。目标电脑必须已有 Microsoft Edge We
 2. 生成同架构 Go sidecar，并构建 Windows release 主程序或 macOS `.app`。
 3. 创建免安装 ZIP，复核版本、许可证、资源白名单和排除模块资源。
 4. 扫描真实配置、数据库、日志、临时文件、私钥和访问密钥模式。
-5. 安全解压 ZIP，校验主程序与 sidecar 架构，执行打包后 sidecar 维护命令。
+5. 安全解压 ZIP，校验主程序与 sidecar 架构；使用打包后的 sidecar 恢复已校验数据，并复核自动生成的恢复前恢复点。
 6. 删除程序目录，确认外置测试数据仍在；重新解压并再次运行同一维护命令。
 7. 生成 CycloneDX 1.6 SBOM、`audit-report.json`、`portable-runtime-report.json`、`release-manifest.json` 和 `SHA256SUMS`。
 
 每个平台的 CI artifact 保留 7 天且明确标记 `portable-unsigned`。普通 PR 不读取任何发布私钥。
 
-当前已验证的候选由 [GitHub Actions 运行 30682567196](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30682567196) 生成，三个 artifact 均已通过上述全部步骤：
+当前已验证的候选由 [GitHub Actions 运行 30684180216](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30684180216) 生成，三个 artifact 均已通过上述全部步骤：
 
 - `desktop-x86_64-pc-windows-msvc-portable-unsigned`
 - `desktop-aarch64-apple-darwin-portable-unsigned`
 - `desktop-x86_64-apple-darwin-portable-unsigned`
 
-同一提交的[基础桌面三平台流水线](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30682567221)也全部通过。artifact 是 GitHub 下载容器，解压后再使用其中带版本和平台名的产品 ZIP、SBOM、审计报告、运行时报告、发布清单与 `SHA256SUMS`。
+同一提交的[基础桌面三平台流水线](https://github.com/StAugustine/CyberStrikeAI/actions/runs/30684180212)也全部通过。artifact 是 GitHub 下载容器，解压后再使用其中带版本和平台名的产品 ZIP、SBOM、审计报告、运行时报告、发布清单与 `SHA256SUMS`。
 
 ## 本地命令
 
