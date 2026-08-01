@@ -2278,6 +2278,7 @@ func desktopCreateExtensionFixture(t *testing.T, baseURL, token, managedResource
 	}
 	desktopAssertManagedPath(t, managedResourcesRoot, fixture.knowledgeItemPath)
 	desktopWaitForKnowledgeIndex(t, baseURL, token, fixture.knowledgeItemID)
+	desktopExerciseKnowledgeMaintenance(t, baseURL, token, fixture.knowledgeItemID)
 	fixture.knowledgeLogID = desktopExerciseKnowledgeRetrieval(t, baseURL, token, fixture.knowledgeItemID)
 
 	status, body = desktopJSONRequest(t, http.MethodGet, baseURL+"api/audit/logs?category=workflow&resource_id="+url.QueryEscape(fixture.workflowID), token, nil)
@@ -2574,6 +2575,28 @@ func desktopWaitForKnowledgeIndex(t *testing.T, baseURL, token, itemID string) {
 	}
 	status, body := desktopJSONRequest(t, http.MethodGet, baseURL+"api/knowledge/index-status", token, nil)
 	t.Fatalf("desktop knowledge item %s was not indexed: status = %d, body = %#v", itemID, status, body)
+}
+
+func desktopExerciseKnowledgeMaintenance(t *testing.T, baseURL, token, itemID string) {
+	t.Helper()
+	status, body := desktopJSONRequest(t, http.MethodPost, baseURL+"api/knowledge/scan", token, nil)
+	message, _ := body["message"].(string)
+	if status != http.StatusOK || !strings.Contains(message, "没有需要索引") {
+		t.Fatalf("scan unchanged desktop knowledge base status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/knowledge/index?mode=invalid", token, nil)
+	indexError, _ := body["error"].(string)
+	if status != http.StatusBadRequest || !strings.Contains(indexError, "无效的 mode") {
+		t.Fatalf("reject invalid desktop knowledge index mode status = %d, body = %#v", status, body)
+	}
+
+	status, body = desktopJSONRequest(t, http.MethodPost, baseURL+"api/knowledge/index?mode=full", token, nil)
+	if status != http.StatusOK || body["mode"] != "full" {
+		t.Fatalf("rebuild desktop knowledge index status = %d, body = %#v", status, body)
+	}
+	desktopWaitForKnowledgeIndex(t, baseURL, token, itemID)
+	desktopAssertKnowledgeSearch(t, baseURL, token, itemID)
 }
 
 func desktopExerciseKnowledgeRetrieval(t *testing.T, baseURL, token, itemID string) string {
