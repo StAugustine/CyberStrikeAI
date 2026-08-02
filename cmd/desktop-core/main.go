@@ -24,6 +24,7 @@ import (
 	"cyberstrike-ai/internal/desktopprotocol"
 	"cyberstrike-ai/internal/desktopruntime"
 	"cyberstrike-ai/internal/logger"
+	"cyberstrike-ai/internal/pythonruntime"
 	webassets "cyberstrike-ai/web"
 	"github.com/gin-gonic/gin"
 )
@@ -34,10 +35,12 @@ const (
 )
 
 type runOptions struct {
-	Roots           desktopruntime.Roots
-	ResourceDir     string
-	AppVersion      string
-	CredentialStore desktopcredentials.Store
+	Roots            desktopruntime.Roots
+	ResourceDir      string
+	AppVersion       string
+	PythonRuntimeDir string
+	PythonExecutable string
+	CredentialStore  desktopcredentials.Store
 }
 
 type commandEvent struct {
@@ -57,10 +60,16 @@ func main() {
 	flag.StringVar(&options.Roots.TempDir, "temp-dir", "", "absolute desktop temporary directory")
 	flag.StringVar(&options.ResourceDir, "resource-dir", "", "absolute bundled defaults directory")
 	flag.StringVar(&options.AppVersion, "app-version", "", "desktop application version")
+	flag.StringVar(&options.PythonRuntimeDir, "python-runtime-dir", "", "absolute bundled Python runtime directory")
+	flag.StringVar(&options.PythonExecutable, "python-executable", "", "absolute bundled Python executable")
 	flag.StringVar(&maintenanceMode, "maintenance", "", "run one desktop maintenance operation")
 	flag.StringVar(&maintenanceSource, "source-dir", "", "absolute legacy instance directory for import preparation")
 	flag.StringVar(&maintenanceBackupID, "backup-id", "", "desktop recovery point identifier")
 	flag.Parse()
+	if err := pythonruntime.Configure(options.PythonRuntimeDir, options.PythonExecutable); err != nil {
+		fmt.Fprintf(os.Stderr, "desktop process failed: configure bundled Python runtime: %v\n", err)
+		os.Exit(1)
+	}
 
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()

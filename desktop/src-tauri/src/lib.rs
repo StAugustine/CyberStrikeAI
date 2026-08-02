@@ -100,6 +100,7 @@ struct DesktopPaths {
     log_dir: PathBuf,
     temp_dir: PathBuf,
     resource_dir: PathBuf,
+    python_runtime_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -1019,7 +1020,14 @@ fn resolve_desktop_paths(handle: &AppHandle) -> Result<DesktopPaths, Box<dyn std
     if let Ok(root_value) = std::env::var("CYBERSTRIKE_DESKTOP_TEST_ROOT") {
         let root = PathBuf::from(root_value);
         let resource_dir = PathBuf::from(std::env::var("CYBERSTRIKE_DESKTOP_RESOURCE_DIR")?);
-        if !root.is_absolute() || !resource_dir.is_absolute() {
+        let python_runtime_dir = std::env::var_os("CYBERSTRIKE_DESKTOP_PYTHON_RUNTIME_DIR")
+            .map(PathBuf::from);
+        if !root.is_absolute()
+            || !resource_dir.is_absolute()
+            || python_runtime_dir
+                .as_ref()
+                .is_some_and(|path| !path.is_absolute())
+        {
             return Err("desktop test paths must be absolute".into());
         }
         return Ok(DesktopPaths {
@@ -1029,18 +1037,22 @@ fn resolve_desktop_paths(handle: &AppHandle) -> Result<DesktopPaths, Box<dyn std
             log_dir: root.join("logs"),
             temp_dir: root.join("temp"),
             resource_dir,
+            python_runtime_dir,
         });
     }
 
     let resolver = handle.path();
     let cache_dir = resolver.app_cache_dir()?;
+    let resource_root = resolver.resource_dir()?;
     let paths = DesktopPaths {
         data_dir: resolver.app_data_dir()?,
         config_dir: resolver.app_config_dir()?,
         cache_dir,
         log_dir: resolver.app_log_dir()?,
         temp_dir: resolver.temp_dir()?.join("cyberstrikeai-desktop"),
-        resource_dir: resolver.resource_dir()?.join("defaults"),
+        resource_dir: resource_root.join("defaults"),
+        python_runtime_dir: cfg!(target_os = "windows")
+            .then(|| resource_root.join("runtime").join("python")),
     };
     for path in [
         &paths.data_dir,
@@ -1053,6 +1065,13 @@ fn resolve_desktop_paths(handle: &AppHandle) -> Result<DesktopPaths, Box<dyn std
         if !path.is_absolute() {
             return Err(format!("desktop path is not absolute: {}", path.display()).into());
         }
+    }
+    if paths
+        .python_runtime_dir
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+        return Err("desktop Python runtime path is not absolute".into());
     }
     Ok(paths)
 }
@@ -1154,13 +1173,21 @@ fn save_window_placement(handle: &AppHandle) -> Result<(), String> {
 }
 
 fn sidecar_arguments(paths: &DesktopPaths, app_version: &str) -> Vec<OsString> {
-    let mut arguments = Vec::with_capacity(14);
+    let mut arguments = Vec::with_capacity(18);
     push_path_argument(&mut arguments, "--data-dir", &paths.data_dir);
     push_path_argument(&mut arguments, "--config-dir", &paths.config_dir);
     push_path_argument(&mut arguments, "--cache-dir", &paths.cache_dir);
     push_path_argument(&mut arguments, "--log-dir", &paths.log_dir);
     push_path_argument(&mut arguments, "--temp-dir", &paths.temp_dir);
     push_path_argument(&mut arguments, "--resource-dir", &paths.resource_dir);
+    if let Some(runtime_dir) = paths.python_runtime_dir.as_ref() {
+        push_path_argument(&mut arguments, "--python-runtime-dir", runtime_dir);
+        push_path_argument(
+            &mut arguments,
+            "--python-executable",
+            &runtime_dir.join("python.exe"),
+        );
+    }
     arguments.push(OsString::from("--app-version"));
     arguments.push(OsString::from(app_version));
     arguments
@@ -1257,6 +1284,13 @@ fn fail_sidecar(handle: &AppHandle, message: &str) {
 
 fn classify_startup_failure(message: &str) -> StartupFailure {
     let normalized = message.to_ascii_lowercase();
+    if normalized.contains("python") {
+        return StartupFailure {
+            code: "python_runtime",
+            title: "The bundled Python runtime is unavailable",
+            message: "The application package is incomplete or damaged. Extract or reinstall the complete Win64 package, then retry.",
+        };
+    }
     if normalized.contains("credential") || normalized.contains("keyring") {
         return StartupFailure {
             code: "credential_store",
@@ -1511,6 +1545,7 @@ mod tests {
             log_dir: root.join("logs"),
             temp_dir: root.join("temp"),
             resource_dir: root.join("resources"),
+            python_runtime_dir: Some(root.join("runtime").join("python")),
         };
         let arguments = sidecar_arguments(&paths, "0.1.0");
         let rendered = arguments
@@ -1520,6 +1555,8 @@ mod tests {
             .join(" ");
         assert!(rendered.contains("--data-dir"));
         assert!(rendered.contains("--resource-dir"));
+        assert!(rendered.contains("--python-runtime-dir"));
+        assert!(rendered.contains("--python-executable"));
         assert!(rendered.contains("--app-version 0.1.0"));
         assert!(!rendered.to_lowercase().contains("password"));
     }
@@ -1533,6 +1570,10 @@ mod tests {
         assert_eq!(
             classify_startup_failure("unsupported desktop protocol version").code,
             "version_mismatch"
+        );
+        assert_eq!(
+            classify_startup_failure("desktop Python dependency lock checksum mismatch").code,
+            "python_runtime"
         );
         assert_eq!(
             classify_startup_failure("parse config file").code,

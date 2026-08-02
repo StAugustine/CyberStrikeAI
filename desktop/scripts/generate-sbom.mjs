@@ -9,17 +9,27 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(scriptDirectory, "..");
 const repositoryDirectory = path.resolve(desktopDirectory, "..");
 
-export async function createSBOM(root = repositoryDirectory) {
+export async function createSBOM(
+  root = repositoryDirectory,
+  targetTriple = process.env.CYBERSTRIKE_DESKTOP_TARGET || "",
+) {
   const desktop = path.join(root, "desktop");
   const packageJSON = JSON.parse(await readFile(path.join(desktop, "package.json"), "utf8"));
   const packageLock = JSON.parse(await readFile(path.join(desktop, "package-lock.json"), "utf8"));
   const cargoLock = await readFile(path.join(desktop, "src-tauri", "Cargo.lock"), "utf8");
   const goMod = await readFile(path.join(root, "go.mod"), "utf8");
+  const pythonLock = await readFile(path.join(root, "requirements-win-x64.lock"), "utf8");
+  const pythonRuntime = JSON.parse(
+    await readFile(path.join(desktop, "python-runtime.json"), "utf8"),
+  );
 
   const components = [
     ...parseGoComponents(goMod),
     ...parseCargoComponents(cargoLock, packageJSON),
     ...parseNPMComponents(packageLock),
+    ...(targetTriple === "x86_64-pc-windows-msvc" || targetTriple === ""
+      ? [...parsePythonComponents(pythonLock), pythonRuntimeComponent(pythonRuntime)]
+      : []),
   ];
   const unique = new Map();
   for (const component of components) unique.set(component["bom-ref"], component);
@@ -119,6 +129,32 @@ export function parseNPMComponents(packageLock) {
     components.push(component);
   }
   return components;
+}
+
+export function parsePythonComponents(requirementsLock) {
+  const components = [];
+  for (const match of requirementsLock.matchAll(/^([A-Za-z0-9_.-]+)==([^\s\\]+)(?:\s*\\)?$/gm)) {
+    const name = match[1].toLowerCase().replace(/[_.]+/g, "-");
+    const version = match[2];
+    const purl = `pkg:pypi/${encodeURIComponent(name)}@${encodeURIComponent(version)}`;
+    components.push(library(name, version, purl, [
+      property("cyberstrikeai:ecosystem", "python"),
+      property("cyberstrikeai:dependency-scope", "bundled-win-x64"),
+    ]));
+  }
+  return components;
+}
+
+function pythonRuntimeComponent(config) {
+  const purl = `pkg:generic/cpython@${encodeURIComponent(config.python_version)}?arch=x86_64&os=windows`;
+  const component = library("CPython", config.python_version, purl, [
+    property("cyberstrikeai:ecosystem", "python-runtime"),
+    property("cyberstrikeai:target", config.target),
+    property("cyberstrikeai:source", config.archive_url),
+  ]);
+  component.hashes = [{ alg: "SHA-256", content: config.archive_sha256 }];
+  component.licenses = [{ license: { id: "Python-2.0" } }];
+  return component;
 }
 
 function library(name, version, purl, properties) {

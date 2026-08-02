@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { parseCargoPackage } from "./release-support.mjs";
 import { loadBuildConfig } from "./build-config.mjs";
+import { validatePythonRuntimeConfig } from "./prepare-python-runtime.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(scriptDirectory, "..");
@@ -28,6 +29,10 @@ export async function verifyReleaseMetadata(root = repositoryDirectory) {
   const packageLock = await readJSON(path.join(desktop, "package-lock.json"));
   const tauriConfig = await readJSON(path.join(desktop, "src-tauri", "tauri.conf.json"));
   const resourceManifest = await readJSON(path.join(desktop, "resources", "manifest.json"));
+  const pythonRuntime = validatePythonRuntimeConfig(
+    await readJSON(path.join(desktop, "python-runtime.json")),
+  );
+  const pythonLock = await readFile(path.join(root, "requirements-win-x64.lock"), "utf8");
   const cargoPackage = parseCargoPackage(
     await readFile(path.join(desktop, "src-tauri", "Cargo.toml"), "utf8"),
   );
@@ -93,6 +98,13 @@ export async function verifyReleaseMetadata(root = repositoryDirectory) {
     "base Tauri bundle must contain only the default macOS core and native messaging host",
   );
   assert(await exists(path.join(root, "LICENSE")), "repository LICENSE is missing");
+  assert(pythonRuntime.python_version === "3.12.10", "Windows Python runtime must remain pinned");
+  for (const dependency of ["arjun", "bloodhound", "httpx", "impacket", "mcp", "requests", "uro"]) {
+    assert(
+      new RegExp(`^${dependency}==[^\\s\\\\]+`, "m").test(pythonLock),
+      `Windows Python lock is missing ${dependency}`,
+    );
+  }
   for (const icon of tauriConfig.bundle.icon) {
     assert(await exists(path.join(desktop, "src-tauri", icon)), `desktop icon is missing: ${icon}`);
   }

@@ -12,8 +12,16 @@ import {
   validateBuildConfig,
 } from "./build-config.mjs";
 import { createReleaseChecksums } from "./create-release-checksums.mjs";
-import { createSBOM, parseCargoComponents, parseGoComponents, parseNPMComponents, stableSBOMDigest } from "./generate-sbom.mjs";
+import {
+  createSBOM,
+  parseCargoComponents,
+  parseGoComponents,
+  parseNPMComponents,
+  parsePythonComponents,
+  stableSBOMDigest,
+} from "./generate-sbom.mjs";
 import { packagePortable } from "./package-portable.mjs";
+import { validatePythonRuntimeConfig } from "./prepare-python-runtime.mjs";
 import { parseArguments, requireReleaseTarget, sidecarBuildArguments } from "./release-support.mjs";
 import { verifyReleaseMetadata } from "./verify-release-metadata.mjs";
 import { parseWindowsPESubsystem, validateArchiveEntries } from "./verify-portable-runtime.mjs";
@@ -121,11 +129,34 @@ test("lock file parsers create ecosystem components", () => {
   assert.equal(cargo[0].hashes[0].alg, "SHA-256");
   const npm = parseNPMComponents({ packages: { "node_modules/example": { version: "1.0.0", dev: true } } });
   assert.equal(npm[0].purl, "pkg:npm/example@1.0.0");
+  const python = parsePythonComponents("requests==2.32.3 \\\n    --hash=sha256:abc\n");
+  assert.equal(python[0].purl, "pkg:pypi/requests@2.32.3");
+});
+
+test("Windows Python runtime configuration is pinned and fail-closed", () => {
+  const valid = {
+    schema_version: 1,
+    target: "x86_64-pc-windows-msvc",
+    python_version: "3.12.10",
+    archive_url: "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+    archive_sha256: "a".repeat(64),
+    lock_file: "../requirements-win-x64.lock",
+    required_imports: ["requests"],
+  };
+  assert.equal(validatePythonRuntimeConfig(valid).python_version, "3.12.10");
+  assert.throws(
+    () => validatePythonRuntimeConfig({ ...valid, archive_url: "https://example.invalid/python.zip" }),
+    /python\.org/,
+  );
+  assert.throws(
+    () => validatePythonRuntimeConfig({ ...valid, required_imports: ["requests", "requests"] }),
+    /unique/,
+  );
 });
 
 test("CycloneDX SBOM is deterministic and has unique references", async () => {
-  const first = await createSBOM(repositoryDirectory);
-  const second = await createSBOM(repositoryDirectory);
+  const first = await createSBOM(repositoryDirectory, "x86_64-pc-windows-msvc");
+  const second = await createSBOM(repositoryDirectory, "x86_64-pc-windows-msvc");
   assert.equal(stableSBOMDigest(first), stableSBOMDigest(second));
   assert.equal(first.bomFormat, "CycloneDX");
   assert.equal(new Set(first.components.map((item) => item["bom-ref"])).size, first.components.length);
@@ -152,16 +183,29 @@ test("Windows portable packaging stages the configured executable names", async 
   const buildRoot = path.join(temporaryRoot, "windows-build");
   const stageDirectory = path.join(temporaryRoot, "windows-stage");
   const outputDirectory = path.join(temporaryRoot, "windows-output");
+  const pythonRuntimeDirectory = path.join(temporaryRoot, "windows-python");
   const targetTriple = "x86_64-pc-windows-msvc";
   await rm(temporaryRoot, { recursive: true, force: true });
   await mkdir(path.join(fixtureRoot, "desktop", "src-tauri", "binaries"), { recursive: true });
   await mkdir(buildRoot, { recursive: true });
+  await mkdir(pythonRuntimeDirectory, { recursive: true });
   await writeFile(path.join(fixtureRoot, "LICENSE"), "fixture", "utf8");
   await writeFile(
     path.join(fixtureRoot, "desktop", "package.json"),
     JSON.stringify({ version: "0.2.0" }),
     "utf8",
   );
+  for (const file of [
+    "python.exe",
+    "python312.dll",
+    "python312.zip",
+    "LICENSE.txt",
+    "DEPENDENCIES.lock",
+    "THIRD-PARTY-LICENSES.json",
+    "runtime-manifest.json",
+  ]) {
+    await writeFile(path.join(pythonRuntimeDirectory, file), file, "utf8");
+  }
   await writeFile(
     path.join(fixtureRoot, "desktop", "build-config.json"),
     JSON.stringify({
@@ -195,10 +239,15 @@ test("Windows portable packaging stages the configured executable names", async 
       buildRoot,
       stageDirectory,
       outputDirectory,
+      pythonRuntimeDirectory,
       archiveRunner: async ({ archivePath }) => writeFile(archivePath, "zip fixture", "utf8"),
     });
     assert.equal(await readFile(path.join(result.portableRoot, "server.exe"), "utf8"), "core");
     assert.equal(await readFile(path.join(result.portableRoot, "sihost.exe"), "utf8"), "native-host");
+    assert.equal(
+      await readFile(path.join(result.portableRoot, "runtime", "python", "python.exe"), "utf8"),
+      "python.exe",
+    );
     await assert.rejects(readFile(path.join(result.portableRoot, "cyberstrike-core.exe")), /ENOENT/);
     await assert.rejects(
       readFile(path.join(result.portableRoot, "cyberstrike-native-host.exe")),
@@ -240,7 +289,7 @@ test("portable archive audit and checksums cover all evidence", async () => {
       outputDirectory,
     });
     assert.equal(report.result, "passed");
-    const sbom = await createSBOM(repositoryDirectory);
+    const sbom = await createSBOM(repositoryDirectory, "aarch64-apple-darwin");
     await writeFile(path.join(outputDirectory, "sbom.cdx.json"), `${JSON.stringify(sbom, null, 2)}\n`, "utf8");
     await writeFile(path.join(outputDirectory, "portable-runtime-report.json"), "{}\n", "utf8");
     const manifest = await createReleaseChecksums({

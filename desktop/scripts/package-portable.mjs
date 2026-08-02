@@ -16,6 +16,7 @@ export async function packagePortable({
   buildRoot,
   stageDirectory,
   outputDirectory,
+  pythonRuntimeDirectory,
   archiveRunner = runArchive,
 }) {
   const releaseTarget = requireReleaseTarget(targetTriple);
@@ -40,7 +41,14 @@ export async function packagePortable({
       verbatimSymlinks: true,
     });
   } else {
-    await stageWindowsPortable({ root, targetTriple, buildRoot, portableRoot, tauriConfig });
+    await stageWindowsPortable({
+      root,
+      targetTriple,
+      buildRoot,
+      portableRoot,
+      tauriConfig,
+      pythonRuntimeDirectory,
+    });
   }
 
   const archivePath = path.join(outputDirectory, `${rootName}-portable.zip`);
@@ -50,7 +58,14 @@ export async function packagePortable({
   return { archivePath, portableRoot };
 }
 
-async function stageWindowsPortable({ root, targetTriple, buildRoot, portableRoot, tauriConfig }) {
+async function stageWindowsPortable({
+  root,
+  targetTriple,
+  buildRoot,
+  portableRoot,
+  tauriConfig,
+  pythonRuntimeDirectory,
+}) {
   const binaryNames = binaryNamesForTarget(targetTriple, root);
   const executable = path.join(buildRoot, "cyberstrike-desktop.exe");
   await requireFile(executable, "Windows desktop executable");
@@ -75,6 +90,27 @@ async function stageWindowsPortable({ root, targetTriple, buildRoot, portableRoo
       verbatimSymlinks: true,
     });
   }
+  const pythonRuntime = path.resolve(
+    pythonRuntimeDirectory || process.env.CYBERSTRIKE_PYTHON_RUNTIME || "",
+  );
+  if (!pythonRuntimeDirectory && !process.env.CYBERSTRIKE_PYTHON_RUNTIME) {
+    throw new Error("Windows Python runtime directory is required");
+  }
+  for (const required of [
+    "python.exe",
+    "python312.dll",
+    "python312.zip",
+    "LICENSE.txt",
+    "DEPENDENCIES.lock",
+    "THIRD-PARTY-LICENSES.json",
+    "runtime-manifest.json",
+  ]) {
+    await requireFile(path.join(pythonRuntime, required), `Windows Python runtime ${required}`);
+  }
+  await cp(pythonRuntime, path.join(portableRoot, "runtime", "python"), {
+    recursive: true,
+    preserveTimestamps: true,
+  });
 }
 
 async function findMacApplication(buildRoot) {
@@ -109,6 +145,9 @@ function portableReadme(kind) {
     "",
     launch,
     "Keep all files in this folder together.",
+    ...(kind === "windows-directory"
+      ? ["The bundled Python runtime is reserved for built-in CyberStrikeAI tools."]
+      : []),
     "Application data is stored in the operating system user-data directories, not in this folder.",
     "Deleting this folder removes the program but preserves user data for a later portable version.",
     "This unsigned candidate is for development validation only.",
@@ -156,6 +195,7 @@ if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
     "build-root",
     "stage-directory",
     "output-directory",
+    "python-runtime",
   ]);
   const targetTriple = args.target || process.env.CYBERSTRIKE_DESKTOP_TARGET;
   const buildRoot = path.resolve(args["build-root"] || process.env.CYBERSTRIKE_RELEASE_BUILD_ROOT || "");
@@ -165,11 +205,19 @@ if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
   const outputDirectory = path.resolve(
     args["output-directory"] || process.env.CYBERSTRIKE_RELEASE_OUTPUT || "",
   );
+  const pythonRuntimeDirectory = args["python-runtime"]
+    || process.env.CYBERSTRIKE_PYTHON_RUNTIME;
   if (!targetTriple || (!args["build-root"] && !process.env.CYBERSTRIKE_RELEASE_BUILD_ROOT)
     || (!args["stage-directory"] && !process.env.CYBERSTRIKE_PORTABLE_STAGE)
     || (!args["output-directory"] && !process.env.CYBERSTRIKE_RELEASE_OUTPUT)) {
     throw new Error("target, build root, stage directory and output directory are required");
   }
-  const result = await packagePortable({ targetTriple, buildRoot, stageDirectory, outputDirectory });
+  const result = await packagePortable({
+    targetTriple,
+    buildRoot,
+    stageDirectory,
+    outputDirectory,
+    pythonRuntimeDirectory,
+  });
   console.log(`created portable archive: ${result.archivePath}`);
 }

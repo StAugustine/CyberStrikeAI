@@ -10,6 +10,7 @@
     "desktop:build": "node scripts/build-debug.mjs",
     "desktop:test:rust": "node scripts/test-rust.mjs",
     "desktop:bundle:candidate": "node scripts/build-release-candidate.mjs",
+    "desktop:python:runtime": "node scripts/prepare-python-runtime.mjs",
     "desktop:package:portable": "node scripts/package-portable.mjs",
     "desktop:smoke": "node scripts/smoke-runtime.mjs",
     "desktop:smoke:single-instance": "node scripts/smoke-single-instance.mjs",

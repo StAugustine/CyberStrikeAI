@@ -37,6 +37,7 @@ export async function verifyPortableRuntime({
     }
   }
   let windowsSubsystems;
+  let bundledPython;
   if (releaseTarget.portableKind === "windows-directory") {
     windowsSubsystems = {};
     for (const [label, binary] of [
@@ -50,17 +51,29 @@ export async function verifyPortableRuntime({
       }
       windowsSubsystems[label] = "windows-gui";
     }
+    const pythonArchitecture = await binaryArchitecture(layout.pythonExecutable);
+    if (pythonArchitecture !== expectedArchitecture) {
+      throw new Error(`python.exe architecture is ${pythonArchitecture}, expected ${expectedArchitecture}`);
+    }
+    bundledPython = await verifyBundledPython(layout.pythonRuntime, layout.pythonExecutable);
   }
   const upgradeFixture = await createPortableR1Fixture(runtimeDirectory, layout.resources);
   const upgradedLifecycle = runCoreLifecycle(
     layout.sidecar,
     layout.resources,
+    layout.pythonRuntime,
     runtimeDirectory,
     packageJSON.version,
     true,
   );
   await verifyPortableR1Fixture(upgradeFixture, packageJSON.version);
-  const first = runMaintenance(layout.sidecar, layout.resources, runtimeDirectory, packageJSON.version);
+  const first = runMaintenance(
+    layout.sidecar,
+    layout.resources,
+    layout.pythonRuntime,
+    runtimeDirectory,
+    packageJSON.version,
+  );
   const upgradeBackup = first.backups?.find((backup) => backup.valid
     && backup.kind === "upgrade"
     && backup.from_version === r1Version
@@ -80,11 +93,18 @@ export async function verifyPortableRuntime({
   const replacedLifecycle = runCoreLifecycle(
     layout.sidecar,
     layout.resources,
+    layout.pythonRuntime,
     runtimeDirectory,
     packageJSON.version,
     false,
   );
-  const second = runMaintenance(layout.sidecar, layout.resources, runtimeDirectory, packageJSON.version);
+  const second = runMaintenance(
+    layout.sidecar,
+    layout.resources,
+    layout.pythonRuntime,
+    runtimeDirectory,
+    packageJSON.version,
+  );
   if ((await readFile(markerPath, "utf8")).trim() !== "portable data survives program replacement") {
     throw new Error("portable user data marker changed after program replacement");
   }
@@ -93,6 +113,7 @@ export async function verifyPortableRuntime({
   const restored = runMaintenance(
     layout.sidecar,
     layout.resources,
+    layout.pythonRuntime,
     runtimeDirectory,
     packageJSON.version,
     "restore-backup",
@@ -105,7 +126,13 @@ export async function verifyPortableRuntime({
   if ((await readFile(restoreFixture.liveMarker, "utf8")) !== restoreFixture.expectedContent) {
     throw new Error("packaged sidecar did not restore the verified portable fixture");
   }
-  const restoredCatalog = runMaintenance(layout.sidecar, layout.resources, runtimeDirectory, packageJSON.version);
+  const restoredCatalog = runMaintenance(
+    layout.sidecar,
+    layout.resources,
+    layout.pythonRuntime,
+    runtimeDirectory,
+    packageJSON.version,
+  );
   const rollback = restoredCatalog.backups?.find((backup) => backup.id === restored.restore.rollback_backup_id);
   if (!rollback?.valid) {
     throw new Error("packaged sidecar did not retain a verified pre-restore recovery point");
@@ -124,6 +151,7 @@ export async function verifyPortableRuntime({
       sidecarArchitecture: expectedArchitecture,
       nativeHostArchitecture: expectedArchitecture,
       ...(windowsSubsystems ? { windowsSubsystems } : {}),
+      ...(bundledPython ? { bundledPython } : {}),
       r1VersionFixture: r1Version,
       r1ToR2Lifecycle: upgradedLifecycle,
       r1ToR2RecoveryPoint: upgradeBackup.id,
@@ -145,7 +173,14 @@ export async function verifyPortableRuntime({
   return report;
 }
 
-function runCoreLifecycle(sidecar, resources, runtimeDirectory, version, bootstrapRequired) {
+function runCoreLifecycle(
+  sidecar,
+  resources,
+  pythonRuntime,
+  runtimeDirectory,
+  version,
+  bootstrapRequired,
+) {
   const commands = [];
   if (bootstrapRequired) {
     commands.push({
@@ -155,13 +190,17 @@ function runCoreLifecycle(sidecar, resources, runtimeDirectory, version, bootstr
     });
   }
   commands.push({ type: "SHUTDOWN", protocol_version: 1 });
-  const result = spawnSync(sidecar, sidecarArguments(resources, runtimeDirectory, version), {
-    cwd: path.dirname(sidecar),
-    encoding: "utf8",
-    input: `${commands.map((command) => JSON.stringify(command)).join("\n")}\n`,
-    timeout: 60_000,
-    maxBuffer: 16 * 1024 * 1024,
-  });
+  const result = spawnSync(
+    sidecar,
+    sidecarArguments(resources, pythonRuntime, runtimeDirectory, version),
+    {
+      cwd: path.dirname(sidecar),
+      encoding: "utf8",
+      input: `${commands.map((command) => JSON.stringify(command)).join("\n")}\n`,
+      timeout: 60_000,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
   ensureCommand(result, "run packaged sidecar lifecycle");
   const messages = result.stdout.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
   const types = messages.map((message) => message.type);
@@ -177,8 +216,8 @@ function runCoreLifecycle(sidecar, resources, runtimeDirectory, version, bootstr
   return bootstrapRequired ? "BOOTSTRAP_REQUIRED to READY" : "READY without reinitialization";
 }
 
-function sidecarArguments(resources, runtimeDirectory, version) {
-  return [
+function sidecarArguments(resources, pythonRuntime, runtimeDirectory, version) {
+  const argumentsList = [
     "--data-dir", path.join(runtimeDirectory, "data"),
     "--config-dir", path.join(runtimeDirectory, "config"),
     "--cache-dir", path.join(runtimeDirectory, "cache"),
@@ -187,6 +226,13 @@ function sidecarArguments(resources, runtimeDirectory, version) {
     "--resource-dir", resources,
     "--app-version", version,
   ];
+  if (pythonRuntime) {
+    argumentsList.push(
+      "--python-runtime-dir", pythonRuntime,
+      "--python-executable", path.join(pythonRuntime, "python.exe"),
+    );
+  }
+  return argumentsList;
 }
 
 async function createPortableR1Fixture(runtimeDirectory, resources) {
@@ -327,6 +373,8 @@ async function resolveRuntimeLayout(extractionDirectory, kind, binaryNames) {
       sidecar: path.join(portableRoot, `${binaryNames.core}.exe`),
       nativeHost: path.join(portableRoot, `${binaryNames.nativeHost}.exe`),
       resources: path.join(portableRoot, "defaults"),
+      pythonRuntime: path.join(portableRoot, "runtime", "python"),
+      pythonExecutable: path.join(portableRoot, "runtime", "python", "python.exe"),
     };
   }
   const appBundle = await onlyDirectory(portableRoot, (name) => name.endsWith(".app"));
@@ -336,18 +384,58 @@ async function resolveRuntimeLayout(extractionDirectory, kind, binaryNames) {
     sidecar: path.join(appBundle, "Contents", "MacOS", binaryNames.core),
     nativeHost: path.join(appBundle, "Contents", "MacOS", binaryNames.nativeHost),
     resources: path.join(appBundle, "Contents", "Resources", "defaults"),
+    pythonRuntime: undefined,
+    pythonExecutable: undefined,
+  };
+}
+
+async function verifyBundledPython(runtimeDirectory, executable) {
+  const manifest = JSON.parse(
+    await readFile(path.join(runtimeDirectory, "runtime-manifest.json"), "utf8"),
+  );
+  const script = [
+    "import importlib",
+    "import json",
+    "import platform",
+    `required = ${JSON.stringify(manifest.required_imports)}`,
+    "[importlib.import_module(name) for name in required]",
+    "print(json.dumps({'version': platform.python_version(), 'imports': required}))",
+  ].join("; ");
+  const result = spawnSync(executable, ["-I", "-c", script], {
+    cwd: runtimeDirectory,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PYTHONDONTWRITEBYTECODE: "1",
+      PYTHONNOUSERSITE: "1",
+      PYTHONUTF8: "1",
+    },
+    timeout: 60_000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  ensureCommand(result, "run bundled Python import smoke");
+  const report = JSON.parse(result.stdout.trim());
+  if (report.version !== manifest.python_version
+    || JSON.stringify(report.imports) !== JSON.stringify(manifest.required_imports)) {
+    throw new Error("bundled Python import smoke returned unexpected metadata");
+  }
+  return {
+    version: report.version,
+    architecture: "x86_64",
+    requiredImports: report.imports,
   };
 }
 
 function runMaintenance(
   sidecar,
   resources,
+  pythonRuntime,
   runtimeDirectory,
   version,
   operation = "list-backups",
   backupID = "",
 ) {
-  const argumentsList = sidecarArguments(resources, runtimeDirectory, version);
+  const argumentsList = sidecarArguments(resources, pythonRuntime, runtimeDirectory, version);
   argumentsList.push("--maintenance", operation);
   if (backupID) argumentsList.push("--backup-id", backupID);
   const result = spawnSync(sidecar, argumentsList, {

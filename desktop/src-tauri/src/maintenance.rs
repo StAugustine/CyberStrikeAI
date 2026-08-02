@@ -538,6 +538,7 @@ mod tests {
             log_dir: root.join("logs"),
             temp_dir: root.join("temp"),
             resource_dir: root.join("resources"),
+            python_runtime_dir: None,
         }
     }
 

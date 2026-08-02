@@ -39,6 +39,9 @@ export async function auditRelease({ root = repositoryDirectory, targetTriple, s
 
   const resourceAudit = await auditResources(root);
   const embedAudit = await auditDesktopEmbedAllowlist(root);
+  const pythonAudit = releaseTarget.portableKind === "windows-directory"
+    ? await auditPythonRuntime(root, portableRoot, inventory)
+    : undefined;
   const packageJSON = JSON.parse(await readFile(path.join(root, "desktop", "package.json"), "utf8"));
   const archiveInfo = await lstat(archivePath);
   const report = {
@@ -54,6 +57,7 @@ export async function auditRelease({ root = repositoryDirectory, targetTriple, s
       approvedDefaultResources: resourceAudit.count,
       defaultResourceManifestSHA256: resourceAudit.manifestSHA256,
       excludedWebAssets: embedAudit,
+      ...(pythonAudit ? { bundledPythonRuntime: pythonAudit } : {}),
       sensitiveFilenamePatterns: "passed",
       privateKeyAndAccessKeyPatterns: "passed",
     },
@@ -81,6 +85,13 @@ function validatePortableLayout(kind, inventory, binaryNames) {
       `${binaryNames.nativeHost}.exe`,
       "defaults/manifest.json",
       "defaults/config.example.yaml",
+      "runtime/python/python.exe",
+      "runtime/python/python312.dll",
+      "runtime/python/python312.zip",
+      "runtime/python/LICENSE.txt",
+      "runtime/python/DEPENDENCIES.lock",
+      "runtime/python/THIRD-PARTY-LICENSES.json",
+      "runtime/python/runtime-manifest.json",
     ]) {
       if (!filePaths.has(required)) throw new Error(`Windows portable package is missing ${required}`);
     }
@@ -114,9 +125,60 @@ export function validateReleasePath(resourcePath) {
   if (!approvedExample && (/^\.env(?:\.|$)/i.test(basename) || /^config\.ya?ml$/i.test(basename))) {
     throw new Error(`sensitive configuration filename is not allowed: ${resourcePath}`);
   }
-  if (/\.(?:db|sqlite3?|pem|key|p12|pfx|log|tmp)$/i.test(basename) || basename === ".DS_Store" || basename.endsWith("~")) {
+  const bundledCertificate = normalized.toLowerCase()
+    === "runtime/python/lib/site-packages/certifi/cacert.pem";
+  if ((!bundledCertificate && /\.(?:db|sqlite3?|pem|key|p12|pfx|log|tmp)$/i.test(basename))
+    || basename === ".DS_Store" || basename.endsWith("~")) {
     throw new Error(`sensitive or temporary filename is not allowed: ${resourcePath}`);
   }
+}
+
+async function auditPythonRuntime(root, portableRoot, inventory) {
+  const config = JSON.parse(await readFile(path.join(root, "desktop", "python-runtime.json"), "utf8"));
+  const runtimeRoot = path.join(portableRoot, "runtime", "python");
+  const manifest = JSON.parse(await readFile(path.join(runtimeRoot, "runtime-manifest.json"), "utf8"));
+  if (manifest.schema_version !== config.schema_version
+    || manifest.target !== config.target
+    || manifest.python_version !== config.python_version
+    || manifest.python_executable !== "python.exe"
+    || manifest.third_party_licenses !== "THIRD-PARTY-LICENSES.json"
+    || manifest.source?.url !== config.archive_url
+    || manifest.source?.sha256 !== config.archive_sha256
+    || JSON.stringify(manifest.required_imports) !== JSON.stringify(config.required_imports)) {
+    throw new Error("bundled Python runtime manifest does not match the approved configuration");
+  }
+  const sourceLock = path.resolve(root, "desktop", config.lock_file);
+  const packagedLock = path.join(runtimeRoot, manifest.dependency_lock?.file || "");
+  const lockHash = await sha256File(sourceLock);
+  if (manifest.dependency_lock?.file !== "DEPENDENCIES.lock"
+    || manifest.dependency_lock?.sha256 !== lockHash
+    || await sha256File(packagedLock) !== lockHash) {
+    throw new Error("bundled Python dependency lock does not match the committed lock file");
+  }
+  const pythonFiles = inventory.filter((item) => item.type === "file"
+    && item.path.startsWith("runtime/python/"));
+  const sitePackages = pythonFiles.filter((item) => item.path.startsWith("runtime/python/Lib/site-packages/"));
+  if (sitePackages.length === 0) throw new Error("bundled Python site-packages is empty");
+  if (sitePackages.some((item) => /\/pip(?:-|\/)/i.test(item.path))) {
+    throw new Error("bundled Python runtime must not expose pip");
+  }
+  const licenses = JSON.parse(
+    await readFile(path.join(runtimeRoot, manifest.third_party_licenses), "utf8"),
+  );
+  if (licenses.schema_version !== 1 || !Array.isArray(licenses.packages)
+    || licenses.packages.length === 0) {
+    throw new Error("bundled Python third-party license inventory is invalid");
+  }
+  return {
+    version: config.python_version,
+    target: config.target,
+    sourceSHA256: config.archive_sha256,
+    dependencyLockSHA256: lockHash,
+    files: pythonFiles.length,
+    sitePackageFiles: sitePackages.length,
+    pipExcluded: true,
+    licensedPackages: licenses.packages.length,
+  };
 }
 
 export function validateSensitiveContent(content, resourcePath) {

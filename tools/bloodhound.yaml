@@ -1,5 +1,8 @@
 name: "bloodhound"
-command: "bloodhound-python"
+command: "python3"
+args:
+  - "-m"
+  - "bloodhound"
 enabled: true
 short_description: "Active Directory 攻击路径分析和可视化工具"
 description: |

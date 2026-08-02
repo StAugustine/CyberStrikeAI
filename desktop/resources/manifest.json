@@ -316,7 +316,7 @@
     },
     {
       "path": "tools/arjun.yaml",
-      "sha256": "a0492585eee99f09dd1f1d6445ee54eebc915f1f383a107cb828d331935f2c53"
+      "sha256": "71572c082180f2a47edc2f1a38876cb3c6575ac6da37ce93224839225c6f2c5d"
     },
     {
       "path": "tools/arp-scan.yaml",
@@ -328,7 +328,7 @@
     },
     {
       "path": "tools/bloodhound.yaml",
-      "sha256": "5e1b6faa708e395e4bb6c01e7fc0e3d65dbe17ec4096150225f28671e365c832"
+      "sha256": "135bd0e93ad3a5a9824e7d753aa50ceafa2cd67d36a9a9bdf91f86bc91266092"
     },
     {
       "path": "tools/checkov.yaml",
