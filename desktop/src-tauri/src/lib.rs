@@ -1020,8 +1020,8 @@ fn resolve_desktop_paths(handle: &AppHandle) -> Result<DesktopPaths, Box<dyn std
     if let Ok(root_value) = std::env::var("CYBERSTRIKE_DESKTOP_TEST_ROOT") {
         let root = PathBuf::from(root_value);
         let resource_dir = PathBuf::from(std::env::var("CYBERSTRIKE_DESKTOP_RESOURCE_DIR")?);
-        let python_runtime_dir = std::env::var_os("CYBERSTRIKE_DESKTOP_PYTHON_RUNTIME_DIR")
-            .map(PathBuf::from);
+        let python_runtime_dir =
+            std::env::var_os("CYBERSTRIKE_DESKTOP_PYTHON_RUNTIME_DIR").map(PathBuf::from);
         if !root.is_absolute()
             || !resource_dir.is_absolute()
             || python_runtime_dir
