@@ -16,6 +16,47 @@ func TestNormalizeBatchQueueConcurrency(t *testing.T) {
 	}
 }
 
+func TestBatchQueueReadMethodsReturnSnapshots(t *testing.T) {
+	t.Parallel()
+	m := NewBatchTaskManager(zap.NewNop())
+	created, err := m.CreateBatchQueue("original", "", "eino_single", "manual", "", "", nil, 1, []string{"original task"})
+	if err != nil {
+		t.Fatalf("CreateBatchQueue: %v", err)
+	}
+
+	queue, ok := m.GetBatchQueue(created.ID)
+	if !ok || len(queue.Tasks) != 1 {
+		t.Fatalf("GetBatchQueue: ok=%v queue=%#v", ok, queue)
+	}
+	queue.Title = "mutated"
+	queue.Tasks[0].Message = "mutated task"
+
+	loaded := m.GetLoadedQueues()
+	all := m.GetAllQueues()
+	listed, total, err := m.ListQueues(10, 0, "all", "")
+	if err != nil {
+		t.Fatalf("ListQueues: %v", err)
+	}
+	for name, snapshots := range map[string][]*BatchTaskQueue{
+		"loaded": loaded,
+		"all":    all,
+		"listed": listed,
+	} {
+		if len(snapshots) != 1 || snapshots[0].Title != "original" || snapshots[0].Tasks[0].Message != "original task" {
+			t.Fatalf("%s snapshot = %#v", name, snapshots)
+		}
+		snapshots[0].Tasks[0].Message = "mutated " + name
+	}
+	if total != 1 {
+		t.Fatalf("ListQueues total = %d, want 1", total)
+	}
+
+	queue, ok = m.GetBatchQueue(created.ID)
+	if !ok || queue.Title != "original" || queue.Tasks[0].Message != "original task" {
+		t.Fatalf("stored queue changed through a snapshot: %#v", queue)
+	}
+}
+
 func TestClaimNextPendingTaskParallel(t *testing.T) {
 	m := NewBatchTaskManager(zap.NewNop())
 	queue, err := m.CreateBatchQueue("test", "", "eino_single", "manual", "", "", nil, 3, []string{"a", "b", "c"})

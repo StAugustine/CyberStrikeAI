@@ -1,0 +1,28 @@
+{
+  "name": "cyberstrikeai-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "resources:manifest": "node scripts/generate-resource-manifest.mjs",
+    "desktop:sidecar": "node scripts/build-sidecar.mjs",
+    "desktop:dev": "node scripts/run-dev.mjs",
+    "desktop:build": "node scripts/build-debug.mjs",
+    "desktop:test:rust": "node scripts/test-rust.mjs",
+    "desktop:bundle:candidate": "node scripts/build-release-candidate.mjs",
+    "desktop:python:runtime": "node scripts/prepare-python-runtime.mjs",
+    "desktop:package:portable": "node scripts/package-portable.mjs",
+    "desktop:smoke": "node scripts/smoke-runtime.mjs",
+    "desktop:smoke:single-instance": "node scripts/smoke-single-instance.mjs",
+    "desktop:smoke:failures": "node scripts/smoke-failures.mjs",
+    "release:verify": "node scripts/verify-release-metadata.mjs",
+    "release:sbom": "node scripts/generate-sbom.mjs",
+    "release:audit": "node scripts/audit-release.mjs",
+    "release:runtime": "node scripts/verify-portable-runtime.mjs",
+    "release:checksums": "node scripts/create-release-checksums.mjs",
+    "release:test": "node --test scripts/release-tools.test.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
+}

@@ -8,15 +8,26 @@ import (
 	"syscall"
 )
 
+const createNoWindow uint32 = 0x08000000
+
+func hideWindowsProcess(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= createNoWindow
+	cmd.SysProcAttr.HideWindow = true
+}
+
 func prepareShellCmdSession(cmd *exec.Cmd) error {
 	if cmd == nil {
 		return nil
 	}
-	// 独立进程组，便于 taskkill /T 终止整棵子进程树。
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
-	}
-	cmd.SysProcAttr.CreationFlags = syscall.CREATE_NEW_PROCESS_GROUP
+	// 隐藏 GUI 父进程启动的控制台窗口，并保留独立进程组以便 taskkill /T 终止整棵子进程树。
+	hideWindowsProcess(cmd)
+	cmd.SysProcAttr.CreationFlags |= syscall.CREATE_NEW_PROCESS_GROUP
 	return nil
 }
 
@@ -30,6 +41,7 @@ func terminateProcessGroup(rootPID int, cmd *exec.Cmd) {
 		return
 	}
 	tk := exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(pid))
+	hideWindowsProcess(tk)
 	if err := tk.Run(); err != nil {
 		if cmd != nil && cmd.Process != nil {
 			_ = cmd.Process.Kill()

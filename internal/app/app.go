@@ -3,10 +3,8 @@ package app
 import (
 	"context"
 	"crypto/subtle"
-	"crypto/tls"
 	"database/sql"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -37,7 +35,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"golang.org/x/net/http2"
 )
 
 // App 应用
@@ -72,10 +69,28 @@ type App struct {
 	c2WatchdogCancel   context.CancelFunc        // 看门狗取消函数
 	c2Handler          *handler.C2Handler        // C2 REST（与 Manager 生命周期同步）
 	auditSvc           *audit.Service
+	webAssets          *appWebAssets
+	lifecycleContext   context.Context
+	lifecycleCancel    context.CancelFunc
+	backgroundMu       sync.Mutex
+	backgroundDone     []<-chan struct{}
+	backgroundClosed   bool
+	serveState         appServeState
+	shutdownOnce       sync.Once
 }
 
+const desktopBrowserExtensionOrigin = "chrome-extension://okialefpaaimfgjelpednbehgebgkdgo"
+
 // New 创建新应用
-func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error) {
+func New(cfg *config.Config, log *logger.Logger, configPath string, options ...Option) (*App, error) {
+	resolvedOptions, err := resolveOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	webAssets, err := prepareWebAssets(resolvedOptions.webFS)
+	if err != nil {
+		return nil, err
+	}
 	if err := multiagent.InitADK(); err != nil {
 		return nil, fmt.Errorf("初始化 Eino ADK: %w", err)
 	}
@@ -84,7 +99,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	router := gin.Default()
 
 	// CORS中间件
-	router.Use(corsMiddleware(cfg.Server.CORSAllowedOrigins))
+	corsOrigins := append([]string(nil), cfg.Server.CORSAllowedOrigins...)
+	if resolvedOptions.desktopMode {
+		corsOrigins = append(corsOrigins, desktopBrowserExtensionOrigin)
+	}
+	router.Use(corsMiddleware(corsOrigins, !resolvedOptions.desktopMode))
 
 	// 初始化数据库
 	dbPath := cfg.Database.Path
@@ -101,48 +120,68 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if err != nil {
 		return nil, fmt.Errorf("初始化数据库失败: %w", err)
 	}
+	lifecycleContext, lifecycleCancel := context.WithCancel(context.Background())
+	backgroundDone := make([]<-chan struct{}, 0, 4)
+	initialized := false
+	defer func() {
+		if initialized {
+			return
+		}
+		lifecycleCancel()
+		cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), time.Second)
+		defer cleanupCancel()
+		_ = waitForBackgroundTasks(cleanupContext, backgroundDone)
+		_ = db.Close()
+	}()
 
 	// 认证管理器（数据库初始化后挂载 RBAC）
 	authManager := security.NewAuthManager(cfg.Auth.SessionDurationHours)
-	if generatedPassword, err := authManager.AttachRBACStore(db); err != nil {
+	if generatedPassword, err := authManager.AttachRBACStoreWithPasswordProvider(db, resolvedOptions.initialAdminPasswordProvider); err != nil {
 		return nil, fmt.Errorf("初始化RBAC失败: %w", err)
 	} else if generatedPassword != "" {
 		config.PrintBootstrapAdminPassword(generatedPassword)
 	}
-	for platform, userID := range cfg.Robots.ServiceAccountUserIDs() {
-		user, userErr := db.GetRBACUserByID(userID)
-		if userErr != nil || !user.Enabled {
-			return nil, fmt.Errorf("robots.%s.auth.service_user_id 必须指向已启用的 RBAC 用户", platform)
+	if !resolvedOptions.desktopMode {
+		for platform, userID := range cfg.Robots.ServiceAccountUserIDs() {
+			user, userErr := db.GetRBACUserByID(userID)
+			if userErr != nil || !user.Enabled {
+				return nil, fmt.Errorf("robots.%s.auth.service_user_id 必须指向已启用的 RBAC 用户", platform)
+			}
 		}
 	}
 
 	auditSvc := audit.NewService(db, cfg, log.Logger)
 	audit.RegisterConversationCreateHook(auditSvc)
 	auditSvc.PurgeExpired()
-	audit.StartRetentionLoop(auditSvc, log.Logger)
+	backgroundDone = append(backgroundDone, audit.StartRetentionLoop(lifecycleContext, auditSvc, log.Logger))
 	if err := db.PurgeWorkflowPackageLifecycle(time.Now().UTC()); err != nil {
 		log.Logger.Warn("清理过期工作流包记录失败", zap.Error(err))
 	}
-	go func() {
+	backgroundDone = append(backgroundDone, startBackgroundTask(lifecycleContext, func(ctx context.Context) {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
-		for range ticker.C {
-			if err := db.PurgeWorkflowPackageLifecycle(time.Now().UTC()); err != nil {
-				log.Logger.Warn("清理过期工作流包记录失败", zap.Error(err))
+		for {
+			select {
+			case <-ticker.C:
+				if err := db.PurgeWorkflowPackageLifecycle(time.Now().UTC()); err != nil {
+					log.Logger.Warn("清理过期工作流包记录失败", zap.Error(err))
+				}
+			case <-ctx.Done():
+				return
 			}
 		}
-	}()
+	}))
 
 	monitorRetention := monitor.NewService(db, cfg, log.Logger)
 	monitorRetention.PurgeExpired()
-	monitor.StartRetentionLoop(monitorRetention, log.Logger)
+	backgroundDone = append(backgroundDone, monitor.StartRetentionLoop(lifecycleContext, monitorRetention, log.Logger))
 
 	if err := handler.NewHITLManager(db, log.Logger).EnsureSchema(); err != nil {
 		log.Logger.Warn("初始化 HITL 表失败", zap.Error(err))
 	}
 	hitlRetention := hitl.NewService(db, cfg, log.Logger)
 	hitlRetention.PurgeExpired()
-	hitl.StartRetentionLoop(hitlRetention, log.Logger)
+	backgroundDone = append(backgroundDone, hitl.StartRetentionLoop(lifecycleContext, hitlRetention, log.Logger))
 
 	// 创建MCP服务器（带数据库持久化）
 	mcpServer := mcp.NewServerWithStorage(log.Logger, db)
@@ -169,6 +208,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 
 	// 创建外部MCP管理器（使用与内部MCP服务器相同的存储）
 	externalMCPMgr := mcp.NewExternalMCPManagerWithStorage(log.Logger, db)
+	defer func() {
+		if !initialized {
+			externalMCPMgr.StopAll()
+		}
+	}()
 	externalMCPMgr.SetToolAuthorizer(externalMCPToolAuthorizer())
 	externalMCPMgr.ConfigureToolWaitTimeoutSeconds(cfg.Agent.ToolWaitTimeoutSeconds)
 	externalMCPMgr.ConfigureToolResultMaxBytes(cfg.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
@@ -188,7 +232,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 
 	execReconciler := monitor.NewExecutionReconciler(db, mcpServer, externalMCPMgr, log.Logger)
 	execReconciler.ReconcileOnStartup()
-	monitor.StartStaleRunningReconcileLoop(execReconciler, log.Logger)
+	backgroundDone = append(backgroundDone, monitor.StartStaleRunningReconcileLoop(lifecycleContext, execReconciler, log.Logger))
 
 	// 创建Agent
 	maxIterations := cfg.Agent.MaxIterations
@@ -205,6 +249,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	var knowledgeHandler *handler.KnowledgeHandler
 
 	var knowledgeDBConn *database.DB
+	defer func() {
+		if !initialized && knowledgeDBConn != nil {
+			_ = knowledgeDBConn.Close()
+		}
+	}()
 	log.Logger.Debug("检查知识库配置", zap.Bool("enabled", cfg.Knowledge.Enabled))
 	if cfg.Knowledge.Enabled {
 		// 确定知识库数据库路径
@@ -270,7 +319,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		log.Logger.Info("知识库模块初始化完成", zap.Bool("handler_created", knowledgeHandler != nil))
 
 		// 扫描知识库并建立索引（异步）
-		go func() {
+		backgroundDone = append(backgroundDone, startBackgroundTask(lifecycleContext, func(ctx context.Context) {
 			itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
 			if err != nil {
 				log.Logger.Warn("扫描知识库失败", zap.Error(err))
@@ -288,7 +337,6 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 				// 如果已有索引，只索引新添加或更新的项
 				if len(itemsToIndex) > 0 {
 					log.Logger.Info("检测到已有知识库索引，开始增量索引", zap.Int("count", len(itemsToIndex)))
-					ctx := context.Background()
 					consecutiveFailures := 0
 					var firstFailureItemID string
 					var firstFailureError error
@@ -334,11 +382,10 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 
 			// 冷启动：仅为尚无向量的知识项构建索引（与 IndexMissing 语义一致）
 			log.Logger.Info("未检测到知识库索引，开始自动构建索引")
-			ctx := context.Background()
 			if err := knowledgeIndexer.IndexMissing(ctx); err != nil {
 				log.Logger.Warn("自动构建知识库索引失败", zap.Error(err))
 			}
-		}()
+		}))
 	}
 
 	// 配置文件路径必须由入口传入（与 flag -config 一致）。勿再用 os.Args[1]，否则 ./cyberstrike-ai --https 会把 --https 当成路径。
@@ -380,6 +427,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	agentHandler := handler.NewAgentHandler(agent, db, cfg, log.Logger)
 	agentHandler.SetAudit(auditSvc)
 	agentHandler.SetAgentsMarkdownDir(agentsDir)
+	if resolvedOptions.desktopUploadsRoot != "" {
+		agentHandler.SetChatUploadsRoot(resolvedOptions.desktopUploadsRoot)
+	}
 	// 如果知识库已启用，设置知识库管理器到AgentHandler以便记录检索日志
 	if knowledgeManager != nil {
 		agentHandler.SetKnowledgeManager(knowledgeManager)
@@ -408,10 +458,16 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	webshellHandler := handler.NewWebShellHandler(log.Logger, db)
 	webshellHandler.SetAudit(auditSvc)
 	chatUploadsHandler := handler.NewChatUploadsHandler(log.Logger, db)
+	if resolvedOptions.desktopUploadsRoot != "" {
+		chatUploadsHandler.SetRootDir(resolvedOptions.desktopUploadsRoot)
+	}
 	chatUploadsHandler.SetAudit(auditSvc)
-	registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
-	registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
+	if !resolvedOptions.desktopMode {
+		registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
+		registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
+	}
 	configHandler := handler.NewConfigHandler(configPath, cfg, mcpServer, executor, agent, attackChainHandler, externalMCPMgr, log.Logger)
+	configHandler.SetDesktopCredentialManager(resolvedOptions.desktopCredentialManager)
 	configHandler.SetDB(db)
 	configHandler.SetAudit(auditSvc)
 	agentHandler.SetHitlToolWhitelistSaver(configHandler)
@@ -432,7 +488,12 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	// ============================================================================
 	// 初始化 C2 模块（可按配置关闭，节省本机部署资源）
 	// ============================================================================
-	c2Manager, c2Watchdog, watchdogCancel := setupC2Runtime(cfg, db, agentHandler, log.Logger)
+	var c2Manager *c2.Manager
+	var c2Watchdog *c2.SessionWatchdog
+	var watchdogCancel context.CancelFunc
+	if !resolvedOptions.desktopMode {
+		c2Manager, c2Watchdog, watchdogCancel = setupC2Runtime(cfg, db, agentHandler, log.Logger)
+	}
 	if c2Manager != nil {
 		registerC2Tools(mcpServer, c2Manager, log.Logger, cfg.Server.Port)
 	}
@@ -446,8 +507,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	auditHandler := handler.NewAuditHandler(db, auditSvc, log.Logger)
 	robotHandler := handler.NewRobotHandler(cfg, db, agentHandler, log.Logger)
 	robotHandler.SetAudit(auditSvc)
-	db.SetVulnerabilityCreatedHook(robotHandler.NotifyNewVulnerability)
+	if !resolvedOptions.desktopMode {
+		db.SetVulnerabilityCreatedHook(robotHandler.NotifyNewVulnerability)
+	}
 	openAPIHandler := handler.NewOpenAPIHandler(db, log.Logger, conversationHandler, agentHandler)
+	openAPIHandler.SetDesktopMode(resolvedOptions.desktopMode)
 
 	// 创建 App 实例（部分字段稍后填充）
 	app := &App{
@@ -472,12 +536,18 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		c2WatchdogCancel:   watchdogCancel,
 		c2Handler:          c2Handler,
 		auditSvc:           auditSvc,
+		webAssets:          webAssets,
+		lifecycleContext:   lifecycleContext,
+		lifecycleCancel:    lifecycleCancel,
+		backgroundDone:     backgroundDone,
 	}
 	// 飞书/钉钉长连接（无需公网），启用时在后台启动；后续前端应用配置时会通过 RestartRobotConnections 重启
-	app.startRobotConnections()
-	alertCtx, alertCancel := context.WithCancel(context.Background())
-	app.alertCancel = alertCancel
-	go robotHandler.RunVulnerabilityAlertWorker(alertCtx)
+	if !resolvedOptions.desktopMode {
+		app.startRobotConnections()
+		alertCtx, alertCancel := context.WithCancel(context.Background())
+		app.alertCancel = alertCancel
+		go robotHandler.RunVulnerabilityAlertWorker(alertCtx)
+	}
 
 	// 设置漏洞工具注册器（内置工具，必须设置）
 	vulnerabilityRegistrar := func() error {
@@ -490,12 +560,14 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	configHandler.SetVulnerabilityToolRegistrar(vulnerabilityRegistrar)
 
 	// 设置 WebShell 工具注册器（ApplyConfig 时重新注册）
-	webshellRegistrar := func() error {
-		registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
-		registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
-		return nil
+	if !resolvedOptions.desktopMode {
+		webshellRegistrar := func() error {
+			registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
+			registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
+			return nil
+		}
+		configHandler.SetWebshellToolRegistrar(webshellRegistrar)
 	}
-	configHandler.SetWebshellToolRegistrar(webshellRegistrar)
 
 	// Skills 由 Eino ADK skill 中间件提供（多代理）；此处不注册 MCP 形态的技能工具
 	configHandler.SetSkillsToolRegistrar(func() error { return nil })
@@ -544,17 +616,21 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	}
 
 	// 设置机器人连接重启器，前端应用配置后无需重启服务即可使钉钉/飞书/微信新配置生效
-	configHandler.SetRobotRestarter(app)
+	if !resolvedOptions.desktopMode {
+		configHandler.SetRobotRestarter(app)
+	}
 
 	wechatRobotHandler := handler.NewWechatRobotHandler(cfg, configHandler, log.Logger)
 
-	configHandler.SetC2Runtime(app)
-	configHandler.SetC2ToolRegistrar(func() error {
-		if app.config.C2.EnabledEffective() && app.c2Manager != nil {
-			registerC2Tools(mcpServer, app.c2Manager, log.Logger, app.config.Server.Port)
-		}
-		return nil
-	})
+	if !resolvedOptions.desktopMode {
+		configHandler.SetC2Runtime(app)
+		configHandler.SetC2ToolRegistrar(func() error {
+			if app.config.C2.EnabledEffective() && app.c2Manager != nil {
+				registerC2Tools(mcpServer, app.c2Manager, log.Logger, app.config.Server.Port)
+			}
+			return nil
+		})
+	}
 
 	// 设置路由（使用 App 实例以便动态获取 handler）
 	setupRoutes(
@@ -589,8 +665,10 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		mcpServer,
 		authManager,
 		openAPIHandler,
+		resolvedOptions.desktopMode,
 	)
 
+	initialized = true
 	return app, nil
 
 }
@@ -625,159 +703,51 @@ func (a *App) mcpHandlerWithAuth(w http.ResponseWriter, r *http.Request) {
 	a.mcpServer.HandleHTTP(w, r)
 }
 
-// Run 启动应用（向后兼容，不支持优雅关闭）
-func (a *App) Run() error {
-	return a.RunWithContext(context.Background())
-}
-
-// RunWithContext 启动应用，支持通过 context 取消来优雅关闭
-func (a *App) RunWithContext(ctx context.Context) error {
-	// 启动MCP服务器（如果启用）
-	var mcpServer *http.Server
-	if a.config.MCP.Enabled {
-		mcpAddr := fmt.Sprintf("%s:%d", a.config.MCP.Host, a.config.MCP.Port)
-		a.logger.Info("启动MCP服务器", zap.String("address", mcpAddr))
-
-		mux := http.NewServeMux()
-		mux.HandleFunc("/mcp", a.mcpHandlerWithAuth)
-
-		mcpServer = &http.Server{Addr: mcpAddr, Handler: mux}
-		go func() {
-			if err := mcpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				a.logger.Error("MCP服务器启动失败", zap.Error(err))
-			}
-		}()
-	}
-
-	// 启动主服务器（可选 HTTPS + HTTP/2，见 config server.tls_*）
-	addr := fmt.Sprintf("%s:%d", a.config.Server.Host, a.config.Server.Port)
-	tlsMode, tlsConf, certFile, keyFile, tlsErr := prepareMainServerTLS(&a.config.Server)
-	if tlsErr != nil {
-		return tlsErr
-	}
-
-	srv := &http.Server{Addr: addr, Handler: a.router}
-	var mainMux *mainServerMux
-	httpRedirect := config.ServerHTTPRedirectEnabled(&a.config.Server)
-	if tlsMode != mainTLSOff {
-		srv.TLSConfig = tlsConf
-		if err := http2.ConfigureServer(srv, &http2.Server{}); err != nil {
-			return fmt.Errorf("主服务 HTTP/2 配置失败: %w", err)
-		}
-		switch tlsMode {
-		case mainTLSFromFiles:
-			a.logger.Debug("启动 HTTPS 主服务（已启用 HTTP/2 协商）",
-				zap.String("address", addr),
-				zap.String("cert", certFile),
-			)
-		case mainTLSInMemorySelfSigned:
-			a.logger.Debug("启动 HTTPS 主服务（内存自签证书，仅测试；已启用 HTTP/2 协商）",
-				zap.String("address", addr),
-			)
-		}
-		if httpRedirect {
-			a.logger.Debug("已启用 HTTP→HTTPS 自动跳转（同端口嗅探分流）", zap.String("address", addr))
-		}
-	} else {
-		a.logger.Debug("启动 HTTP 主服务", zap.String("address", addr))
-	}
-
-	// 监听 context 取消，优雅关闭 HTTP 服务器
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if mainMux != nil {
-			if err := mainMux.Shutdown(shutdownCtx); err != nil {
-				a.logger.Error("HTTP/HTTPS 分流服务器关闭失败", zap.Error(err))
-			}
-		} else if err := srv.Shutdown(shutdownCtx); err != nil {
-			a.logger.Error("HTTP服务器关闭失败", zap.Error(err))
-		}
-		if mcpServer != nil {
-			if err := mcpServer.Shutdown(shutdownCtx); err != nil {
-				a.logger.Error("MCP服务器关闭失败", zap.Error(err))
-			}
-		}
-	}()
-
-	var err error
-	switch {
-	case tlsMode != mainTLSOff && httpRedirect:
-		var tlsConfReady *tls.Config
-		tlsConfReady, err = ensureMainTLSConfigCerts(tlsMode, tlsConf, certFile, keyFile)
-		if err != nil {
-			return fmt.Errorf("加载 TLS 证书: %w", err)
-		}
-		srv.TLSConfig = tlsConfReady
-		var ln net.Listener
-		ln, err = net.Listen("tcp", addr)
-		if err != nil {
-			return err
-		}
-		mainMux = newMainServerMux(ln, srv, portFromListenAddr(addr), a.logger.Logger)
-		err = mainMux.Serve()
-	case tlsMode == mainTLSOff:
-		err = srv.ListenAndServe()
-	case tlsMode == mainTLSFromFiles:
-		err = srv.ListenAndServeTLS(certFile, keyFile)
-	case tlsMode == mainTLSInMemorySelfSigned:
-		var ln net.Listener
-		ln, err = tls.Listen("tcp", addr, srv.TLSConfig)
-		if err == nil {
-			err = srv.Serve(ln)
-		}
-	default:
-		err = srv.ListenAndServe()
-	}
-	if err != nil && err != http.ErrServerClosed {
-		return err
-	}
-	return nil
-}
-
 // Shutdown 关闭应用
 func (a *App) Shutdown() {
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_ = einoobserve.ShutdownOtel(shutdownCtx)
-	shutdownCancel()
-	if a.alertCancel != nil {
-		a.alertCancel()
-		a.alertCancel = nil
-	}
-
-	// 停止钉钉/飞书长连接
-	a.robotMu.Lock()
-	if a.dingCancel != nil {
-		a.dingCancel()
-		a.dingCancel = nil
-	}
-	if a.larkCancel != nil {
-		a.larkCancel()
-		a.larkCancel = nil
-	}
-	a.robotMu.Unlock()
-
-	a.shutdownC2()
-
-	// 停止所有外部MCP客户端
-	if a.externalMCPMgr != nil {
-		a.externalMCPMgr.StopAll()
-	}
-
-	// 关闭知识库数据库连接（如果使用独立数据库）
-	if a.knowledgeDB != nil {
-		if err := a.knowledgeDB.Close(); err != nil {
-			a.logger.Logger.Warn("关闭知识库数据库连接失败", zap.Error(err))
+	a.shutdownOnce.Do(func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		_ = einoobserve.ShutdownOtel(shutdownCtx)
+		backgroundDone := a.stopBackgroundTasks()
+		if a.alertCancel != nil {
+			a.alertCancel()
+			a.alertCancel = nil
 		}
-	}
 
-	// 关闭主数据库连接
-	if a.db != nil {
-		if err := a.db.Close(); err != nil {
-			a.logger.Logger.Warn("关闭主数据库连接失败", zap.Error(err))
+		a.stopRobotConnections()
+		a.shutdownC2()
+		if a.agentHandler != nil {
+			if err := a.agentHandler.Shutdown(shutdownCtx); err != nil {
+				a.logger.Warn("停止 Agent 后台任务失败", zap.Error(err))
+			}
 		}
-	}
+		if a.mcpServer != nil {
+			a.mcpServer.CancelAllExecutions("应用正在关闭")
+		}
+
+		// 停止所有外部MCP客户端
+		if a.externalMCPMgr != nil {
+			a.externalMCPMgr.StopAll()
+		}
+		if err := waitForBackgroundTasks(shutdownCtx, backgroundDone); err != nil {
+			a.logger.Warn("等待后台保留任务退出失败", zap.Error(err))
+		}
+
+		// 关闭知识库数据库连接（如果使用独立数据库）
+		if a.knowledgeDB != nil {
+			if err := a.knowledgeDB.Close(); err != nil {
+				a.logger.Logger.Warn("关闭知识库数据库连接失败", zap.Error(err))
+			}
+		}
+
+		// 关闭主数据库连接
+		if a.db != nil {
+			if err := a.db.Close(); err != nil {
+				a.logger.Logger.Warn("关闭主数据库连接失败", zap.Error(err))
+			}
+		}
+	})
 }
 
 // startRobotConnections 根据当前配置启动钉钉/飞书长连接（不先关闭已有连接，仅用于首次启动）
@@ -822,38 +792,28 @@ func (a *App) startRobotConnections() {
 	}
 }
 
+func (a *App) stopRobotConnections() {
+	a.robotMu.Lock()
+	defer a.robotMu.Unlock()
+	for _, cancel := range []*context.CancelFunc{
+		&a.dingCancel,
+		&a.larkCancel,
+		&a.wechatCancel,
+		&a.telegramCancel,
+		&a.slackCancel,
+		&a.discordCancel,
+		&a.qqCancel,
+	} {
+		if *cancel != nil {
+			(*cancel)()
+			*cancel = nil
+		}
+	}
+}
+
 // RestartRobotConnections 重启钉钉/飞书/微信长连接，使前端应用配置后立即生效（实现 handler.RobotRestarter）
 func (a *App) RestartRobotConnections() {
-	a.robotMu.Lock()
-	if a.dingCancel != nil {
-		a.dingCancel()
-		a.dingCancel = nil
-	}
-	if a.larkCancel != nil {
-		a.larkCancel()
-		a.larkCancel = nil
-	}
-	if a.wechatCancel != nil {
-		a.wechatCancel()
-		a.wechatCancel = nil
-	}
-	if a.telegramCancel != nil {
-		a.telegramCancel()
-		a.telegramCancel = nil
-	}
-	if a.slackCancel != nil {
-		a.slackCancel()
-		a.slackCancel = nil
-	}
-	if a.discordCancel != nil {
-		a.discordCancel()
-		a.discordCancel = nil
-	}
-	if a.qqCancel != nil {
-		a.qqCancel()
-		a.qqCancel = nil
-	}
-	a.robotMu.Unlock()
+	a.stopRobotConnections()
 	// 给旧 goroutine 一点时间退出
 	time.Sleep(200 * time.Millisecond)
 	a.startRobotConnections()
@@ -892,7 +852,10 @@ func setupRoutes(
 	mcpServer *mcp.Server,
 	authManager *security.AuthManager,
 	openAPIHandler *handler.OpenAPIHandler,
+	desktopMode bool,
 ) {
+	registerHealthRoutes(router, app)
+
 	// API路由
 	api := router.Group("/api")
 
@@ -904,21 +867,25 @@ func setupRoutes(
 		authRoutes.POST("/logout", security.AuthMiddleware(authManager), authHandler.Logout)
 		authRoutes.POST("/change-password", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), authHandler.ChangePassword)
 		authRoutes.GET("/validate", security.AuthMiddleware(authManager), authHandler.Validate)
-		authRoutes.POST("/robot-binding-code", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.CreateRobotBindingCode)
-		authRoutes.GET("/robot-bindings", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.ListMyRobotBindings)
-		authRoutes.DELETE("/robot-bindings/:id", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.DeleteMyRobotBinding)
+		if !desktopMode {
+			authRoutes.POST("/robot-binding-code", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.CreateRobotBindingCode)
+			authRoutes.GET("/robot-bindings", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.ListMyRobotBindings)
+			authRoutes.DELETE("/robot-bindings/:id", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.DeleteMyRobotBinding)
+		}
 	}
 
 	// 机器人回调（无需登录，供企业微信/钉钉/飞书服务器调用）
 	// 添加速率限制：每个 IP 每分钟最多 60 次请求，防止滥用
-	robotRL := security.NewRateLimiter(60, 1*time.Minute)
-	robotGroup := api.Group("/robot")
-	robotGroup.Use(security.RateLimitMiddleware(robotRL))
-	{
-		robotGroup.GET("/wecom", robotHandler.HandleWecomGET)
-		robotGroup.POST("/wecom", robotHandler.HandleWecomPOST)
-		robotGroup.POST("/dingtalk", robotHandler.HandleDingtalkPOST)
-		robotGroup.POST("/lark", robotHandler.HandleLarkPOST)
+	if !desktopMode {
+		robotRL := security.NewRateLimiter(60, 1*time.Minute)
+		robotGroup := api.Group("/robot")
+		robotGroup.Use(security.RateLimitMiddleware(robotRL))
+		{
+			robotGroup.GET("/wecom", robotHandler.HandleWecomGET)
+			robotGroup.POST("/wecom", robotHandler.HandleWecomPOST)
+			robotGroup.POST("/dingtalk", robotHandler.HandleDingtalkPOST)
+			robotGroup.POST("/lark", robotHandler.HandleLarkPOST)
+		}
 	}
 
 	protected := api.Group("")
@@ -933,29 +900,31 @@ func setupRoutes(
 		}
 	}))
 	{
-		protected.GET("/rbac/me", rbacHandler.Me)
-		protected.GET("/rbac/metadata", rbacHandler.Metadata)
-		protected.GET("/rbac/users", rbacHandler.ListUsers)
-		protected.POST("/rbac/users", rbacHandler.CreateUser)
-		protected.PUT("/rbac/users/:id", rbacHandler.UpdateUser)
-		protected.DELETE("/rbac/users/:id", rbacHandler.DeleteUser)
-		protected.GET("/rbac/roles", rbacHandler.ListRoles)
-		protected.POST("/rbac/roles", rbacHandler.CreateRole)
-		protected.PUT("/rbac/roles/:id", rbacHandler.UpdateRole)
-		protected.DELETE("/rbac/roles/:id", rbacHandler.DeleteRole)
-		protected.GET("/rbac/resource-assignments", rbacHandler.ListResourceAssignments)
-		protected.GET("/rbac/resources", rbacHandler.ListAssignableResources)
-		protected.POST("/rbac/resource-assignments", rbacHandler.AssignResource)
-		protected.DELETE("/rbac/resource-assignments/:id", rbacHandler.DeleteResourceAssignment)
+		if !desktopMode {
+			protected.GET("/rbac/me", rbacHandler.Me)
+			protected.GET("/rbac/metadata", rbacHandler.Metadata)
+			protected.GET("/rbac/users", rbacHandler.ListUsers)
+			protected.POST("/rbac/users", rbacHandler.CreateUser)
+			protected.PUT("/rbac/users/:id", rbacHandler.UpdateUser)
+			protected.DELETE("/rbac/users/:id", rbacHandler.DeleteUser)
+			protected.GET("/rbac/roles", rbacHandler.ListRoles)
+			protected.POST("/rbac/roles", rbacHandler.CreateRole)
+			protected.PUT("/rbac/roles/:id", rbacHandler.UpdateRole)
+			protected.DELETE("/rbac/roles/:id", rbacHandler.DeleteRole)
+			protected.GET("/rbac/resource-assignments", rbacHandler.ListResourceAssignments)
+			protected.GET("/rbac/resources", rbacHandler.ListAssignableResources)
+			protected.POST("/rbac/resource-assignments", rbacHandler.AssignResource)
+			protected.DELETE("/rbac/resource-assignments/:id", rbacHandler.DeleteResourceAssignment)
 
-		// 机器人测试（需登录）：POST /api/robot/test，body: {"platform":"dingtalk","user_id":"test","text":"帮助"}，用于验证机器人逻辑
-		protected.POST("/robot/test", robotHandler.HandleRobotTest)
+			// 机器人测试（需登录）：POST /api/robot/test，body: {"platform":"dingtalk","user_id":"test","text":"帮助"}，用于验证机器人逻辑
+			protected.POST("/robot/test", robotHandler.HandleRobotTest)
 
-		// 微信 iLink 扫码绑定（需登录）
-		protected.POST("/robot/wechat/qrcode", wechatRobotHandler.HandleWechatQRCode)
-		protected.GET("/robot/wechat/qrcode/status", wechatRobotHandler.HandleWechatQRCodeStatus)
-		protected.POST("/robot/wechat/qrcode/verify", wechatRobotHandler.HandleWechatVerifyCode)
-		protected.GET("/robot/wechat/status", wechatRobotHandler.HandleWechatStatus)
+			// 微信 iLink 扫码绑定（需登录）
+			protected.POST("/robot/wechat/qrcode", wechatRobotHandler.HandleWechatQRCode)
+			protected.GET("/robot/wechat/qrcode/status", wechatRobotHandler.HandleWechatQRCodeStatus)
+			protected.POST("/robot/wechat/qrcode/verify", wechatRobotHandler.HandleWechatVerifyCode)
+			protected.GET("/robot/wechat/status", wechatRobotHandler.HandleWechatStatus)
+		}
 
 		// Eino ADK 单代理（ChatModelAgent + Runner；不依赖 multi_agent.enabled）
 		protected.POST("/eino-agent", agentHandler.EinoSingleAgentLoop)
@@ -1073,9 +1042,11 @@ func setupRoutes(
 		protected.POST("/config/list-models", configHandler.ListModels)
 
 		// 系统设置 - 终端（执行命令，提高运维效率）
-		protected.POST("/terminal/run", terminalHandler.RunCommand)
-		protected.POST("/terminal/run/stream", terminalHandler.RunCommandStream)
-		protected.GET("/terminal/ws", terminalHandler.RunCommandWS)
+		if !desktopMode {
+			protected.POST("/terminal/run", terminalHandler.RunCommand)
+			protected.POST("/terminal/run/stream", terminalHandler.RunCommandStream)
+			protected.GET("/terminal/ws", terminalHandler.RunCommandWS)
+		}
 
 		// 平台审计日志
 		protected.GET("/audit/meta", auditHandler.Meta)
@@ -1248,8 +1219,10 @@ func setupRoutes(
 		protected.DELETE("/vulnerabilities/batch", vulnerabilityHandler.BatchDeleteVulnerabilities)
 		protected.GET("/vulnerabilities/filter-options", vulnerabilityHandler.GetVulnerabilityFilterOptions)
 		protected.GET("/vulnerabilities/stats", vulnerabilityHandler.GetVulnerabilityStats)
-		protected.GET("/vulnerability-alerts/subscription", vulnerabilityHandler.GetMyAlertSubscription)
-		protected.PUT("/vulnerability-alerts/subscription", vulnerabilityHandler.UpdateMyAlertSubscription)
+		if !desktopMode {
+			protected.GET("/vulnerability-alerts/subscription", vulnerabilityHandler.GetMyAlertSubscription)
+			protected.PUT("/vulnerability-alerts/subscription", vulnerabilityHandler.UpdateMyAlertSubscription)
+		}
 		protected.GET("/vulnerabilities/:id", vulnerabilityHandler.GetVulnerability)
 		protected.POST("/vulnerabilities", vulnerabilityHandler.CreateVulnerability)
 		protected.PUT("/vulnerabilities/:id", vulnerabilityHandler.UpdateVulnerability)
@@ -1277,64 +1250,66 @@ func setupRoutes(
 		protected.POST("/projects/:id/facts/restore", projectHandler.RestoreFact)
 
 		// WebShell 管理（代理执行 + 连接配置存 SQLite）
-		protected.GET("/webshell/connections", webshellHandler.ListConnections)
-		protected.POST("/webshell/connections", webshellHandler.CreateConnection)
-		protected.GET("/webshell/connections/:id/ai-history", webshellHandler.GetAIHistory)
-		protected.GET("/webshell/connections/:id/ai-conversations", webshellHandler.ListAIConversations)
-		protected.GET("/webshell/connections/:id/state", webshellHandler.GetConnectionState)
-		protected.PUT("/webshell/connections/:id", webshellHandler.UpdateConnection)
-		protected.PUT("/webshell/connections/:id/state", webshellHandler.SaveConnectionState)
-		protected.DELETE("/webshell/connections/:id", webshellHandler.DeleteConnection)
-		protected.POST("/webshell/exec", webshellHandler.Exec)
-		protected.POST("/webshell/file", webshellHandler.FileOp)
+		if !desktopMode {
+			protected.GET("/webshell/connections", webshellHandler.ListConnections)
+			protected.POST("/webshell/connections", webshellHandler.CreateConnection)
+			protected.GET("/webshell/connections/:id/ai-history", webshellHandler.GetAIHistory)
+			protected.GET("/webshell/connections/:id/ai-conversations", webshellHandler.ListAIConversations)
+			protected.GET("/webshell/connections/:id/state", webshellHandler.GetConnectionState)
+			protected.PUT("/webshell/connections/:id", webshellHandler.UpdateConnection)
+			protected.PUT("/webshell/connections/:id/state", webshellHandler.SaveConnectionState)
+			protected.DELETE("/webshell/connections/:id", webshellHandler.DeleteConnection)
+			protected.POST("/webshell/exec", webshellHandler.Exec)
+			protected.POST("/webshell/file", webshellHandler.FileOp)
 
-		// C2 管理（未启用时返回 503，避免 Handler 空指针）
-		c2Routes := protected.Group("/c2")
-		c2Routes.Use(func(c *gin.Context) {
-			if app.c2Manager == nil {
-				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-					"error":   "c2_disabled",
-					"message": "C2 功能已在系统设置中关闭",
-					"enabled": false,
-				})
-				return
-			}
-			c.Next()
-		})
-		c2Routes.GET("/listeners", c2Handler.ListListeners)
-		c2Routes.POST("/listeners", c2Handler.CreateListener)
-		c2Routes.GET("/listeners/:id", c2Handler.GetListener)
-		c2Routes.PUT("/listeners/:id", c2Handler.UpdateListener)
-		c2Routes.DELETE("/listeners/:id", c2Handler.DeleteListener)
-		c2Routes.POST("/listeners/:id/start", c2Handler.StartListener)
-		c2Routes.POST("/listeners/:id/stop", c2Handler.StopListener)
-		c2Routes.GET("/sessions", c2Handler.ListSessions)
-		c2Routes.DELETE("/sessions", c2Handler.DeleteSessions)
-		c2Routes.GET("/sessions/:id", c2Handler.GetSession)
-		c2Routes.DELETE("/sessions/:id", c2Handler.DeleteSession)
-		c2Routes.PUT("/sessions/:id/sleep", c2Handler.SetSessionSleep)
-		c2Routes.PUT("/sessions/:id/note", c2Handler.SetSessionNote)
-		c2Routes.GET("/tasks", c2Handler.ListTasks)
-		c2Routes.DELETE("/tasks", c2Handler.DeleteTasks)
-		c2Routes.GET("/tasks/:id", c2Handler.GetTask)
-		c2Routes.POST("/tasks", c2Handler.CreateTask)
-		c2Routes.POST("/tasks/:id/cancel", c2Handler.CancelTask)
-		c2Routes.GET("/tasks/:id/wait", c2Handler.WaitTask)
-		c2Routes.POST("/sessions/:id/tasks", c2Handler.CreateTask)
-		c2Routes.POST("/payloads/oneliner", c2Handler.PayloadOneliner)
-		c2Routes.POST("/payloads/build", c2Handler.PayloadBuild)
-		c2Routes.GET("/payloads/:id/download", c2Handler.PayloadDownload)
-		c2Routes.GET("/events", c2Handler.ListEvents)
-		c2Routes.DELETE("/events", c2Handler.DeleteEvents)
-		c2Routes.GET("/events/stream", c2Handler.EventStream)
-		c2Routes.POST("/files/upload", c2Handler.UploadFileForImplant)
-		c2Routes.GET("/files", c2Handler.ListFiles)
-		c2Routes.GET("/tasks/:id/result-file", c2Handler.DownloadResultFile)
-		c2Routes.GET("/profiles", c2Handler.ListProfiles)
-		c2Routes.GET("/profiles/:id", c2Handler.GetProfile)
-		c2Routes.POST("/profiles", c2Handler.CreateProfile)
-		c2Routes.PUT("/profiles/:id", c2Handler.UpdateProfile)
-		c2Routes.DELETE("/profiles/:id", c2Handler.DeleteProfile)
+			// C2 管理（未启用时返回 503，避免 Handler 空指针）
+			c2Routes := protected.Group("/c2")
+			c2Routes.Use(func(c *gin.Context) {
+				if app.c2Manager == nil {
+					c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+						"error":   "c2_disabled",
+						"message": "C2 功能已在系统设置中关闭",
+						"enabled": false,
+					})
+					return
+				}
+				c.Next()
+			})
+			c2Routes.GET("/listeners", c2Handler.ListListeners)
+			c2Routes.POST("/listeners", c2Handler.CreateListener)
+			c2Routes.GET("/listeners/:id", c2Handler.GetListener)
+			c2Routes.PUT("/listeners/:id", c2Handler.UpdateListener)
+			c2Routes.DELETE("/listeners/:id", c2Handler.DeleteListener)
+			c2Routes.POST("/listeners/:id/start", c2Handler.StartListener)
+			c2Routes.POST("/listeners/:id/stop", c2Handler.StopListener)
+			c2Routes.GET("/sessions", c2Handler.ListSessions)
+			c2Routes.DELETE("/sessions", c2Handler.DeleteSessions)
+			c2Routes.GET("/sessions/:id", c2Handler.GetSession)
+			c2Routes.DELETE("/sessions/:id", c2Handler.DeleteSession)
+			c2Routes.PUT("/sessions/:id/sleep", c2Handler.SetSessionSleep)
+			c2Routes.PUT("/sessions/:id/note", c2Handler.SetSessionNote)
+			c2Routes.GET("/tasks", c2Handler.ListTasks)
+			c2Routes.DELETE("/tasks", c2Handler.DeleteTasks)
+			c2Routes.GET("/tasks/:id", c2Handler.GetTask)
+			c2Routes.POST("/tasks", c2Handler.CreateTask)
+			c2Routes.POST("/tasks/:id/cancel", c2Handler.CancelTask)
+			c2Routes.GET("/tasks/:id/wait", c2Handler.WaitTask)
+			c2Routes.POST("/sessions/:id/tasks", c2Handler.CreateTask)
+			c2Routes.POST("/payloads/oneliner", c2Handler.PayloadOneliner)
+			c2Routes.POST("/payloads/build", c2Handler.PayloadBuild)
+			c2Routes.GET("/payloads/:id/download", c2Handler.PayloadDownload)
+			c2Routes.GET("/events", c2Handler.ListEvents)
+			c2Routes.DELETE("/events", c2Handler.DeleteEvents)
+			c2Routes.GET("/events/stream", c2Handler.EventStream)
+			c2Routes.POST("/files/upload", c2Handler.UploadFileForImplant)
+			c2Routes.GET("/files", c2Handler.ListFiles)
+			c2Routes.GET("/tasks/:id/result-file", c2Handler.DownloadResultFile)
+			c2Routes.GET("/profiles", c2Handler.ListProfiles)
+			c2Routes.GET("/profiles/:id", c2Handler.GetProfile)
+			c2Routes.POST("/profiles", c2Handler.CreateProfile)
+			c2Routes.PUT("/profiles/:id", c2Handler.UpdateProfile)
+			c2Routes.DELETE("/profiles/:id", c2Handler.DeleteProfile)
+		}
 
 		// 对话附件（chat_uploads）管理
 		protected.GET("/chat-uploads", chatUploadsHandler.List)
@@ -1405,9 +1380,9 @@ func setupRoutes(
 		c.HTML(http.StatusOK, "api-docs.html", nil)
 	})
 
-	// 静态文件
-	router.Static("/static", "./web/static")
-	router.LoadHTMLGlob("web/templates/*")
+	// 静态文件和模板由调用方文件系统提供；server 默认仍使用磁盘目录，desktop 使用受控 embed.FS。
+	router.SetHTMLTemplate(app.webAssets.templates)
+	router.StaticFS("/static", app.webAssets.static)
 
 	// 前端页面
 	router.GET("/", func(c *gin.Context) {
@@ -1415,7 +1390,10 @@ func setupRoutes(
 		if version == "" {
 			version = "v1.0.0"
 		}
-		c.HTML(http.StatusOK, "index.html", gin.H{"Version": version})
+		c.HTML(http.StatusOK, "index.html", gin.H{
+			"DesktopMode": desktopMode,
+			"Version":     version,
+		})
 	})
 }
 
@@ -2106,7 +2084,7 @@ func initializeKnowledge(
 	}
 
 	// 扫描知识库并建立索引（异步）
-	go func() {
+	indexKnowledge := func(ctx context.Context) {
 		itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
 		if err != nil {
 			logger.Warn("扫描知识库失败", zap.Error(err))
@@ -2124,7 +2102,6 @@ func initializeKnowledge(
 			// 如果已有索引，只索引新添加或更新的项
 			if len(itemsToIndex) > 0 {
 				logger.Info("检测到已有知识库索引，开始增量索引", zap.Int("count", len(itemsToIndex)))
-				ctx := context.Background()
 				consecutiveFailures := 0
 				var firstFailureItemID string
 				var firstFailureError error
@@ -2170,11 +2147,15 @@ func initializeKnowledge(
 
 		// 冷启动：仅为尚无向量的知识项构建索引（与 IndexMissing 语义一致）
 		logger.Info("未检测到知识库索引，开始自动构建索引")
-		ctx := context.Background()
 		if err := knowledgeIndexer.IndexMissing(ctx); err != nil {
 			logger.Warn("自动构建知识库索引失败", zap.Error(err))
 		}
-	}()
+	}
+	if app == nil {
+		go indexKnowledge(context.Background())
+	} else if !app.startManagedBackgroundTask(indexKnowledge) {
+		logger.Info("应用正在关闭，跳过知识库后台索引")
+	}
 
 	return knowledgeHandler, nil
 }
@@ -2182,7 +2163,7 @@ func initializeKnowledge(
 // corsMiddleware allows same-origin requests, valid Chromium extension
 // origins, and exact origins explicitly configured by the operator. CORS is
 // not an authentication boundary; API access still requires a valid session.
-func corsMiddleware(configuredOrigins []string) gin.HandlerFunc {
+func corsMiddleware(configuredOrigins []string, allowAnyChromiumExtension bool) gin.HandlerFunc {
 	allowedOrigins := make(map[string]struct{}, len(configuredOrigins))
 	for _, origin := range configuredOrigins {
 		if normalized, ok := normalizeCORSOrigin(origin); ok {
@@ -2198,7 +2179,7 @@ func corsMiddleware(configuredOrigins []string) gin.HandlerFunc {
 			_, explicitlyAllowed := allowedOrigins[normalized]
 			parsed, _ := url.Parse(origin)
 			sameHost := valid && strings.EqualFold(parsed.Host, c.Request.Host)
-			browserExtension := valid && isChromiumExtensionOrigin(parsed)
+			browserExtension := allowAnyChromiumExtension && valid && isChromiumExtensionOrigin(parsed)
 			if !sameHost && !browserExtension && !explicitlyAllowed {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "cross-origin request denied"})
 				return

@@ -264,10 +264,44 @@ func (m *BatchTaskManager) CreateBatchQueue(
 	return queue, nil
 }
 
-// GetBatchQueue 获取批量任务队列
+func cloneBatchTaskQueue(queue *BatchTaskQueue) *BatchTaskQueue {
+	if queue == nil {
+		return nil
+	}
+	cloneTime := func(value *time.Time) *time.Time {
+		if value == nil {
+			return nil
+		}
+		copyValue := *value
+		return &copyValue
+	}
+	copyQueue := *queue
+	copyQueue.NextRunAt = cloneTime(queue.NextRunAt)
+	copyQueue.LastScheduleTriggerAt = cloneTime(queue.LastScheduleTriggerAt)
+	copyQueue.StartedAt = cloneTime(queue.StartedAt)
+	copyQueue.CompletedAt = cloneTime(queue.CompletedAt)
+	if queue.Tasks != nil {
+		copyQueue.Tasks = make([]*BatchTask, len(queue.Tasks))
+		for index, task := range queue.Tasks {
+			if task == nil {
+				continue
+			}
+			copyTask := *task
+			copyTask.StartedAt = cloneTime(task.StartedAt)
+			copyTask.CompletedAt = cloneTime(task.CompletedAt)
+			copyQueue.Tasks[index] = &copyTask
+		}
+	}
+	return &copyQueue
+}
+
+// GetBatchQueue 获取批量任务队列的只读快照。
 func (m *BatchTaskManager) GetBatchQueue(queueID string) (*BatchTaskQueue, bool) {
 	m.mu.RLock()
 	queue, exists := m.queues[queueID]
+	if exists {
+		queue = cloneBatchTaskQueue(queue)
+	}
 	m.mu.RUnlock()
 
 	if exists {
@@ -278,9 +312,14 @@ func (m *BatchTaskManager) GetBatchQueue(queueID string) (*BatchTaskQueue, bool)
 	if m.db != nil {
 		if queue := m.loadQueueFromDB(queueID); queue != nil {
 			m.mu.Lock()
-			m.queues[queueID] = queue
+			if cached, exists := m.queues[queueID]; exists {
+				queue = cached
+			} else {
+				m.queues[queueID] = queue
+			}
+			result := cloneBatchTaskQueue(queue)
 			m.mu.Unlock()
-			return queue, true
+			return result, true
 		}
 	}
 
@@ -384,23 +423,23 @@ func (m *BatchTaskManager) loadQueueFromDB(queueID string) *BatchTaskQueue {
 	return queue
 }
 
-// GetLoadedQueues 获取内存中已加载的队列（不触发 DB 加载，仅用 RLock）
+// GetLoadedQueues 获取内存中已加载队列的只读快照（不触发 DB 加载，仅用 RLock）。
 func (m *BatchTaskManager) GetLoadedQueues() []*BatchTaskQueue {
 	m.mu.RLock()
 	result := make([]*BatchTaskQueue, 0, len(m.queues))
 	for _, queue := range m.queues {
-		result = append(result, queue)
+		result = append(result, cloneBatchTaskQueue(queue))
 	}
 	m.mu.RUnlock()
 	return result
 }
 
-// GetAllQueues 获取所有队列
+// GetAllQueues 获取所有队列的只读快照。
 func (m *BatchTaskManager) GetAllQueues() []*BatchTaskQueue {
 	m.mu.RLock()
 	result := make([]*BatchTaskQueue, 0, len(m.queues))
 	for _, queue := range m.queues {
-		result = append(result, queue)
+		result = append(result, cloneBatchTaskQueue(queue))
 	}
 	m.mu.RUnlock()
 
@@ -413,7 +452,7 @@ func (m *BatchTaskManager) GetAllQueues() []*BatchTaskQueue {
 				if _, exists := m.queues[queueRow.ID]; !exists {
 					if queue := m.loadQueueFromDB(queueRow.ID); queue != nil {
 						m.queues[queueRow.ID] = queue
-						result = append(result, queue)
+						result = append(result, cloneBatchTaskQueue(queue))
 					}
 				}
 			}
@@ -463,7 +502,7 @@ func (m *BatchTaskManager) ListQueuesForAccess(limit, offset int, status, keywor
 				}
 			}
 			if queue != nil {
-				queues = append(queues, queue)
+				queues = append(queues, cloneBatchTaskQueue(queue))
 			}
 		}
 		m.mu.Unlock()
@@ -472,7 +511,7 @@ func (m *BatchTaskManager) ListQueuesForAccess(limit, offset int, status, keywor
 		m.mu.RLock()
 		allQueues := make([]*BatchTaskQueue, 0, len(m.queues))
 		for _, queue := range m.queues {
-			allQueues = append(allQueues, queue)
+			allQueues = append(allQueues, cloneBatchTaskQueue(queue))
 		}
 		m.mu.RUnlock()
 
@@ -1414,6 +1453,46 @@ func (m *BatchTaskManager) CancelQueue(queueID string) bool {
 	}
 
 	return true
+}
+
+// PauseAll stops every running queue while preserving it for a later restart.
+func (m *BatchTaskManager) PauseAll() {
+	if m == nil {
+		return
+	}
+	m.mu.RLock()
+	queueIDs := make([]string, 0, len(m.queues))
+	for queueID, queue := range m.queues {
+		if queue != nil && queue.Status == BatchQueueStatusRunning {
+			queueIDs = append(queueIDs, queueID)
+		}
+	}
+	m.mu.RUnlock()
+	for _, queueID := range queueIDs {
+		m.PauseQueue(queueID)
+	}
+}
+
+// WaitForExecutors waits until every active batch queue goroutine exits.
+func (m *BatchTaskManager) WaitForExecutors(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		m.mu.RLock()
+		active := len(m.queueExecutors)
+		m.mu.RUnlock()
+		if active == 0 {
+			return nil
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // DeleteQueue 删除队列。执行协程活跃或 status 为 running 时拒绝删除，避免 executeBatchQueue 空指针 panic。

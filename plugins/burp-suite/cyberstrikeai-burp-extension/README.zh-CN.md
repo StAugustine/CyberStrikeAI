@@ -1,8 +1,10 @@
 ## CyberStrikeAI Burp Suite 插件（中文说明）
 
+**当前版本：1.1.0**
+
 ### 功能概述
 
-- 在 Burp 的 `CyberStrikeAI` 标签页中配置 **Host、端口、密码**
+- 在 Burp 的 `CyberStrikeAI` 标签页中配置 **Host、端口、密码**，或点击 **Use Desktop** 发现已显式启用插件联动的本地桌面客户端
 - 点击 **Validate（验证）**：
   - 调用 `POST /api/auth/login` 用密码换取 Token
   - 调用 `GET /api/auth/validate` 校验 Token
@@ -80,7 +82,9 @@ cd plugins/burp-suite/cyberstrikeai-burp-extension
 ### 使用方法
 
 1) 打开 Burp 顶部标签页 `CyberStrikeAI`
-2) 填写：
+2) 使用以下任一种连接方式：
+   - **桌面客户端**：先在桌面客户端的“本地插件联动”中显式启用，再点击 Burp 中的 **Use Desktop**。该操作只读取短时有效的本地地址和实例信息，不读取或传递密码、Token；发现成功后仍需在 Burp 中输入密码并点击 **Validate**
+   - **手动配置**：填写以下字段：
    - **Host**：例如 `127.0.0.1`
    - **Port**：例如 `8080`
    - **HTTPS**：默认勾选（对接 `config.yaml` 中 `tls_enabled` / 自签证书）；插件会自动信任本地自签证书，无需导入
@@ -109,4 +113,3 @@ cd plugins/burp-suite/cyberstrikeai-burp-extension
   - 先确认已 Validate（拿到 Token）
   - 确认 Burp 能访问到 CyberStrikeAI（网络/代理/防火墙）
   - 服务端的流式端点为 SSE，插件会解析 `data: {json}` 行；如果中间件缓冲可能影响实时性
-

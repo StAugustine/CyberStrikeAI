@@ -1,6 +1,6 @@
 ## CyberStrikeAI Browser Extension
 
-**Version 0.3.10** — Full docs: **README.zh-CN.md**
+**Version 0.4.0** — Full docs: **README.zh-CN.md**
 
 Chromium DevTools extension: capture Network traffic and send it to CyberStrikeAI for AI-assisted security testing. Aligned with the Burp Suite plugin.
 
@@ -8,8 +8,11 @@ Chromium DevTools extension: capture Network traffic and send it to CyberStrikeA
 
 1. `chrome://extensions/` → Developer mode → **Load unpacked**
 2. Select `plugins/browser-extension/cyberstrikeai-browser-extension/`
-3. Open target page → **F12** → **CyberStrikeAI** tab → **Validate**
-4. Select a captured request → **Send** → view **Output**
+3. For the desktop client, explicitly enable **Local plugin integration**, then open the target page → **F12** → **CyberStrikeAI** → **Use Desktop**
+4. Enter the local administrator password → **Validate**
+5. Select a captured request → **Send** → view **Output**
+
+`Use Desktop` uses the pinned native-messaging host for extension ID `okialefpaaimfgjelpednbehgebgkdgo`. Discovery returns only a short-lived `127.0.0.1` endpoint and instance metadata; passwords and session tokens continue through the normal authenticated API flow and are never returned by discovery. Manual Host/Port configuration remains available for the standalone server.
 
 ### Popup vs DevTools panel
 
@@ -51,7 +54,7 @@ Closing DevTools clears panel data. Closing the browser invalidates the session 
 
 After reloading the extension, close DevTools completely and reopen (F12) if you see `chrome.runtime.connect` errors — the old panel context is invalidated.
 
-If Validate reports `cross-origin request denied`, upgrade and restart the CyberStrikeAI server. Current versions recognize valid Chrome/Edge extension origins automatically, so no extension ID or CORS configuration is required. The browser requests access only to the configured server origin on the first Validate, directly from the Validate click so Chromium can reliably show the optional-permission prompt.
+If Validate reports `cross-origin request denied`, upgrade and restart CyberStrikeAI. Desktop mode accepts only the pinned official extension origin above; changing or removing the manifest public key changes the extension identity and is rejected. Standalone server mode retains canonical Chromium-extension origin support. The browser requests access only to a manually configured non-desktop origin on the first Validate.
 
 ### Package
 

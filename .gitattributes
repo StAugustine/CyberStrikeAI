@@ -1,0 +1,15 @@
+# Desktop resource hashes must describe identical bytes on Windows and macOS.
+/config.example.yaml text eol=lf
+/agents/**/*.md text eol=lf
+/roles/**/*.md text eol=lf
+/roles/**/*.yaml text eol=lf
+/skills/**/*.md text eol=lf
+/skills/**/*.json text eol=lf
+/skills/**/*.sh text eol=lf
+/skills/**/*.txt text eol=lf
+/tools/**/*.md text eol=lf
+/tools/**/*.yaml text eol=lf
+/knowledge_base/**/*.md text eol=lf
+/knowledge_base/**/*.json text eol=lf
+/knowledge_base/**/*.txt text eol=lf
+/desktop/resources/**/*.json text eol=lf

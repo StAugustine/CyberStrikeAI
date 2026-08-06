@@ -1,5 +1,8 @@
 name: "arjun"
-command: "arjun"
+command: "python3"
+args:
+  - "-m"
+  - "arjun"
 enabled: true
 short_description: "HTTP参数发现工具"
 description: |

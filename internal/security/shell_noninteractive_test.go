@@ -111,17 +111,18 @@ func TestNonInteractiveStdinReadBlocksWithoutRedirect(t *testing.T) {
 
 	cmd := exec.Command("sh", "-c", `read x; echo done`)
 	cmd.Stdin = r
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
 
 	done := make(chan error, 1)
-	go func() { done <- cmd.Run() }()
+	go func() { done <- cmd.Wait() }()
 
 	select {
 	case err := <-done:
 		t.Fatalf("expected hang, but command finished: %v", err)
 	case <-time.After(500 * time.Millisecond):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		_ = cmd.Process.Kill()
 		_ = w.Close()
 		<-done // 等待 goroutine 退出
 	}

@@ -1,5 +1,14 @@
 # Troubleshooting
 
+## Portable desktop startup
+
+- On Windows, install or repair WebView2 Evergreen Runtime. Antivirus may scan the unsigned Go core/native-host sidecars on first launch and delay READY; review the desktop log instead of adding a broad antivirus exclusion.
+- On macOS, the development candidate is unsigned and unnotarized, so Gatekeeper may block it. Do not disable system security as a deployment step.
+- For an upgrade, exit the app and replace only the extracted program directory. Keep the operating-system data/configuration directory and the generated upgrade recovery point.
+- For browser or Burp integration, enable **Local plugin integration**, choose **Use Desktop**, then enter the local administrator password and **Validate** again after an instance restart or discovery expiry.
+
+Terminal, WebShell, C2, robot connectors, platform multi-user RBAC, and remote-service mode are outside the desktop scope. A missing page or 404 for those APIs is expected.
+
 [中文](../zh-CN/troubleshooting.md)
 
 Debug by layer. Do not change random config before locating the failing layer.

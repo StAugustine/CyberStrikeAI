@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CyberStrikeAI 数据维护</title>
+  <link rel="stylesheet" href="loading.css">
+  <script src="data-maintenance.js" defer></script>
+</head>
+<body class="maintenance-body">
+  <main class="data-maintenance-card">
+    <header class="maintenance-header">
+      <div>
+        <p class="eyebrow">本地数据维护</p>
+        <h1>导入与恢复</h1>
+        <p>所有替换操作都会先停止本地核心并创建回滚点；原数据不会被无备份覆盖。</p>
+      </div>
+      <button id="close-maintenance" class="secondary compact" type="button">返回客户端</button>
+    </header>
+
+    <p id="maintenance-message" class="maintenance-message" role="status" aria-live="polite"></p>
+
+    <section class="maintenance-section" aria-labelledby="legacy-import-title">
+      <div class="section-heading">
+        <div>
+          <h2 id="legacy-import-title">旧版数据导入</h2>
+          <p>支持 CyberStrikeAI v1.7.8 及更高的 v1.7.x。先只做校验和预览，确认后才替换当前数据。</p>
+        </div>
+        <button id="select-import" type="button">选择旧版目录</button>
+      </div>
+
+      <div id="no-pending-import" class="empty-state">当前没有待确认的导入。</div>
+      <article id="pending-import" class="pending-import" hidden>
+        <div class="pending-summary">
+          <div><span>来源版本</span><strong id="import-source-version">-</strong></div>
+          <div><span>目标版本</span><strong id="import-target-version">-</strong></div>
+          <div><span>文件</span><strong id="import-file-count">-</strong></div>
+          <div><span>数据量</span><strong id="import-total-bytes">-</strong></div>
+        </div>
+        <div class="report-grid">
+          <div>
+            <h3>将导入</h3>
+            <ul id="import-sections"></ul>
+          </div>
+          <div>
+            <h3>需迁移至系统凭据库</h3>
+            <ul id="import-credentials"></ul>
+          </div>
+          <div>
+            <h3>明确排除</h3>
+            <ul id="import-excluded"></ul>
+          </div>
+          <div>
+            <h3>预检提示</h3>
+            <ul id="import-warnings"></ul>
+          </div>
+        </div>
+        <p id="removed-users" class="privacy-note"></p>
+        <div class="inline-actions">
+          <button id="confirm-import" type="button">确认导入并重启</button>
+          <button id="cancel-import" class="secondary" type="button">取消待导入数据</button>
+        </div>
+      </article>
+    </section>
+
+    <section class="maintenance-section" aria-labelledby="backup-title">
+      <div class="section-heading">
+        <div>
+          <h2 id="backup-title">恢复点</h2>
+          <p>至少保留最近两个有效恢复点；正在被事务使用的恢复点不可删除。</p>
+        </div>
+        <button id="refresh-maintenance" class="secondary compact" type="button">刷新</button>
+      </div>
+      <div id="backup-list" class="backup-list" aria-live="polite"></div>
+    </section>
+  </main>
+</body>
+</html>

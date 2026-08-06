@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "core_binary_basename": "server",
+  "native_host_binary_basename": "sihost"
+}

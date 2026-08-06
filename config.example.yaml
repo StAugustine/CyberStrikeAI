@@ -65,7 +65,7 @@ ai:
       name: Qwen Max
       provider: openai_compatible
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      api_key: sk-xxxxxxx
+      api_key: "" # 首次启动后通过设置向导写入系统凭据库
       model: qwen3-max
       max_total_tokens: 120000
       max_completion_tokens: 32768
@@ -372,7 +372,7 @@ knowledge:
     provider: openai # 嵌入模型提供商（目前仅支持openai）
     model: text-embedding-v4 # 嵌入模型名称
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1 # 留空则使用OpenAI配置的base_url
-    api_key: sk-xxxxxxx # 留空则使用OpenAI配置的api_key
+    api_key: "" # 留空则使用默认 AI 通道 api_key
   retrieval:
     top_k: 5 # 检索返回的Top-K结果数量
     similarity_threshold: 0.4 # 余弦相似度阈值（0-1），低于此值的结果将被过滤

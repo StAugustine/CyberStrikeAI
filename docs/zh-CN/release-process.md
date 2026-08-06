@@ -2,6 +2,8 @@
 
 本文用于维护者或部署者发布、升级和回滚 CyberStrikeAI。
 
+桌面客户端当前采用免安装 ZIP 候选流程，构建、内容审计、解压运行和数据保留要求见 [desktop-portable-release.md](desktop-portable-release.md)。本页其余内容主要描述共享服务端发布。
+
 ## 版本准备
 
 发布前检查：

@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "startup-error",
+  "description": "The local startup error window may read a safe error category, retry, open application directories, or exit.",
+  "windows": ["startup-error"],
+  "permissions": [
+    "allow-get-startup-failure",
+    "allow-retry-startup",
+    "allow-exit-after-startup-failure",
+    "allow-open-desktop-directory"
+  ]
+}

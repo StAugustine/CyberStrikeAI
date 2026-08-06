@@ -1,6 +1,6 @@
 ## CyberStrikeAI 浏览器扩展
 
-**当前版本：0.3.10**（UI 为英文；中文说明见下文）
+**当前版本：0.4.0**（UI 为英文；中文说明见下文）
 
 Chrome / Edge（Chromium）DevTools 扩展：在开发者工具中捕获 **Network** 流量，发送到 CyberStrikeAI 进行 AI 辅助安全测试。能力与 Burp Suite 插件对齐，并按生产场景做了性能与体验优化。
 
@@ -11,8 +11,9 @@ Chrome / Edge（Chromium）DevTools 扩展：在开发者工具中捕获 **Netwo
 1. `chrome://extensions/` → 开发者模式 → **加载已解压的扩展程序**
 2. 选择目录：`plugins/browser-extension/cyberstrikeai-browser-extension/`
 3. 打开目标页面 → **F12** → 顶部 Tab **CyberStrikeAI**
-4. 填写 Host / Port / Password → **Validate**（首次会请求访问服务器地址权限）
-5. 左侧选中捕获请求 → **Send** → 在 **Output** 查看 AI 结果
+4. 桌面模式：先在桌面客户端中显式启用“本地插件联动”，再点击 **Use Desktop**；手动服务模式仍可填写 Host / Port
+5. 输入本地管理员 Password → **Validate**（手动地址首次会请求访问服务器地址权限）
+6. 左侧选中捕获请求 → **Send** → 在 **Output** 查看 AI 结果
 
 点击浏览器工具栏图标可查看 **只读连接状态**；完整配置与操作均在 DevTools 面板内完成。
 
@@ -34,7 +35,7 @@ Chrome / Edge（Chromium）DevTools 扩展：在开发者工具中捕获 **Netwo
 
 | 区域 | 说明 |
 |------|------|
-| **连接栏** | Host、Port、HTTPS、Password、Validate；成功后收起为 `https://host:port` 摘要 |
+| **连接栏** | Use Desktop、Host、Port、HTTPS、Password、Validate；成功后收起为 `https://host:port` 摘要 |
 | **Test History** | 最多 50 次 Send 记录，可回看 Progress / Final |
 | **Captured Requests** | 当前 Tab 捕获列表，最多 200 条，支持搜索 |
 | **Output** | 默认 Tab：流式 Progress + Final Response |
@@ -80,6 +81,10 @@ Cookie: ...
 
 #### 安全与权限
 
+- **Use Desktop 为显式操作**：只通过固定原生消息宿主读取 90 秒有效的 `127.0.0.1` 地址、实例 ID 和应用版本
+- 扩展公钥固定官方 ID `okialefpaaimfgjelpednbehgebgkdgo`；桌面模式 CORS 只允许该精确 Origin
+- 发现响应严格拒绝额外字段、远程地址、过期/未来时间和超过 120 秒的有效期，且绝不包含 Password、Token、Session 或 Credential
+- 发现成功后会清空旧密码和旧会话，仍需用户输入本地管理员密码并走现有登录、授权和审计链
 - Token 存 **chrome.storage.session**（关浏览器失效）
 - 登录后保存 **`expires_at`**，状态栏显示 **剩余时间**（如 `OK · 剩余 11h 30m`）
 - **不会自动续期**：过期后需重新 Validate（需 Password）
@@ -96,6 +101,7 @@ Cookie: ...
 
 | 控件 | 作用 |
 |------|------|
+| **Use Desktop** | 发现用户已显式启用联动的当前桌面实例；不读取密码或 Token |
 | **Validate** | 登录并校验 Token；进行中再次点击为 Cancel |
 | **连接设置 / 收起** | 展开或折叠 Host/Port/Password 表单 |
 | **Send** | 对选中捕获发起到 CyberStrikeAI |
@@ -160,7 +166,7 @@ HTTP/2 伪首部。展示与 AI Prompt 已归一化为 HTTP/1.1；原始 HAR 仍
 不是。那是页面自身请求本机服务被浏览器拦截，与扩展无关。
 
 **Validate 显示 `cross-origin request denied`？**  
-升级并重启 CyberStrikeAI 服务。新版服务会自动识别格式合法的 Chrome/Edge 扩展 Origin，无需复制插件 ID 或配置 CORS 白名单；插件首次 Validate 时仍会请求访问目标服务地址的浏览器权限。
+升级并重启 CyberStrikeAI。桌面模式只接受清单公钥固定的官方扩展 Origin；若自行删除或替换 `manifest.json` 中的 `key`，扩展 ID 会变化并被桌面 CORS 拒绝。独立服务模式仍兼容格式合法的 Chrome/Edge 扩展 Origin。
 
 **Validate 要求允许访问 CyberStrikeAI 服务？**  
 在浏览器弹出的权限框中允许访问当前服务地址。插件只按需申请所填写的服务 origin，不需要开启全站访问。如果未出现权限框，请在 `chrome://extensions/` 重新加载扩展，完全关闭 DevTools 后再打开并点击 Validate。

@@ -1,5 +1,11 @@
 # Security Model
 
+## Reduced desktop boundary
+
+The portable desktop profile hosts a local Go sidecar on a random IPv4 loopback port and retains single-administrator login, authorization middleware, HITL, and audit. It does not register or package local Terminal, WebShell, C2, robot connectors, platform multi-user RBAC, or remote-service mode. Those capabilities may remain in the shared standalone-server source but are not desktop features.
+
+Browser/Burp discovery is disabled by default and returns only short-lived `127.0.0.1` routing and instance metadata—never passwords, tokens, or credentials. Discovery is not authentication; integrations must still log in. AI secrets remain in the operating-system credential store while configuration keeps references. Current portable ZIPs are unsigned development candidates and must not rely on disabling Windows or macOS protections.
+
 [中文](../zh-CN/security-model.md)
 
 CyberStrikeAI is not a generic chatbot. It is a high-privilege security automation system with command execution, MCP tools, WebShell management, optional C2, batch tasks, and multi-agent orchestration.

@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "data-maintenance",
+  "description": "The local maintenance window may inspect recovery points and invoke fixed import, restore, delete, or close operations.",
+  "windows": ["data-maintenance"],
+  "permissions": [
+    "allow-get-data-maintenance-state",
+    "allow-choose-and-prepare-legacy-import",
+    "allow-confirm-legacy-import",
+    "allow-cancel-legacy-import",
+    "allow-restore-desktop-backup",
+    "allow-delete-desktop-backup",
+    "allow-close-data-maintenance"
+  ]
+}

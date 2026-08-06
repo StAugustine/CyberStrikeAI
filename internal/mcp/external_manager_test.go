@@ -199,10 +199,12 @@ func TestLazySDKClient_InitializeFails(t *testing.T) {
 func TestExternalMCPManager_StartStopClient(t *testing.T) {
 	logger := zap.NewNop()
 	manager := NewExternalMCPManager(logger)
+	defer manager.StopAll()
 
 	// 添加一个禁用的配置
 	cfg := config.ExternalMCPServerConfig{
 		Command:           "python3",
+		Disabled:          true,
 		ExternalMCPEnable: false,
 	}
 
@@ -213,6 +215,10 @@ func TestExternalMCPManager_StartStopClient(t *testing.T) {
 	if err != nil {
 		t.Logf("启动失败（可能是没有服务器）: %v", err)
 	}
+	configs := manager.GetConfigs()
+	if configs["test-start-stop"].Disabled || !configs["test-start-stop"].ExternalMCPEnable {
+		t.Errorf("启动后配置状态不一致: %#v", configs["test-start-stop"])
+	}
 
 	// 停止
 	err = manager.StopClient("test-start-stop")
@@ -221,9 +227,9 @@ func TestExternalMCPManager_StartStopClient(t *testing.T) {
 	}
 
 	// 验证配置已更新为禁用
-	configs := manager.GetConfigs()
-	if configs["test-start-stop"].ExternalMCPEnable {
-		t.Error("配置应该已被禁用")
+	configs = manager.GetConfigs()
+	if !configs["test-start-stop"].Disabled || configs["test-start-stop"].ExternalMCPEnable {
+		t.Errorf("停止后配置状态不一致: %#v", configs["test-start-stop"])
 	}
 }
 

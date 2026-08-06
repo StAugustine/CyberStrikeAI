@@ -13,6 +13,13 @@ let robotBindingExpiresAt = 0;
 let robotBindingLifetimeMs = 5 * 60 * 1000;
 let activeRobotBindingCode = '';
 
+function getAuthStorage() {
+    if (typeof window !== 'undefined' && window.__TAURI__?.core?.invoke) {
+        return window.sessionStorage;
+    }
+    return window.localStorage;
+}
+
 function isTokenValid() {
     return !!authToken && authTokenExpiry instanceof Date && authTokenExpiry.getTime() > Date.now();
 }
@@ -26,7 +33,7 @@ function saveAuth(token, expiresAt, meta = {}) {
     authPermissions = new Set(Array.isArray(meta.permissions) ? meta.permissions : []);
     authScope = meta.scope || '';
     try {
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+        getAuthStorage().setItem(AUTH_STORAGE_KEY, JSON.stringify({
             token,
             expiresAt: expiry.toISOString(),
             user: authUser,
@@ -48,7 +55,7 @@ function clearAuthStorage() {
     authPermissions = new Set();
     authScope = '';
     try {
-        localStorage.removeItem(AUTH_STORAGE_KEY);
+        getAuthStorage().removeItem(AUTH_STORAGE_KEY);
     } catch (error) {
         console.warn('无法清除认证信息:', error);
     }
@@ -57,7 +64,7 @@ function clearAuthStorage() {
 
 function loadAuthFromStorage() {
     try {
-        const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+        const raw = getAuthStorage().getItem(AUTH_STORAGE_KEY);
         if (!raw) {
             return false;
         }
@@ -333,6 +340,9 @@ async function refreshAppData(showTaskErrors = false) {
         loadConversations(),
         loadActiveTasks(showTaskErrors),
     ]);
+    if (typeof window.maybeShowDesktopAISetup === 'function') {
+        await window.maybeShowDesktopAISetup();
+    }
 }
 
 async function bootstrapApp() {

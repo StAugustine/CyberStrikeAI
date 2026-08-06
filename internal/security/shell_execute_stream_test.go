@@ -44,7 +44,16 @@ func TestEinoStreamingShell_StreamsStderrBeforeStdoutEOF(t *testing.T) {
 
 func TestEinoStreamingShell_SudoFailsFast(t *testing.T) {
 	shell := NewEinoStreamingShell()
-	cmd := PrepareNonInteractiveShellCommand("sudo whoami && sudo cat /etc/os-release")
+	cmd := PrepareNonInteractiveShellCommand(`
+sudo() {
+	if IFS= read -r password; then
+		echo "unexpected interactive stdin" >&2
+		return 0
+	fi
+	echo "sudo: a password is required" >&2
+	return 1
+}
+sudo whoami && sudo cat /etc/os-release`)
 	sr, err := shell.ExecuteStreaming(context.Background(), &filesystem.ExecuteRequest{Command: cmd})
 	if err != nil {
 		t.Fatalf("ExecuteStreaming: %v", err)

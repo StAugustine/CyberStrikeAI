@@ -44,6 +44,17 @@ type ChatUploadsHandler struct {
 	logger *zap.Logger
 	audit  *audit.Service
 	db     *database.DB
+	root   string
+}
+
+// SetRootDir overrides the legacy CWD-relative chat_uploads directory.
+func (h *ChatUploadsHandler) SetRootDir(root string) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		h.root = ""
+		return
+	}
+	h.root = filepath.Clean(root)
 }
 
 // SetAudit wires platform audit logging.
@@ -162,6 +173,9 @@ func (h *ChatUploadsHandler) conversationArtifactVirtualPathAllowed(c *gin.Conte
 }
 
 func (h *ChatUploadsHandler) absRoot() (string, error) {
+	if h.root != "" {
+		return filepath.Abs(h.root)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -239,7 +253,11 @@ func (h *ChatUploadsHandler) resolveUnderChatUploads(relativePath string) (abs s
 	if rel == "" {
 		return "", fmt.Errorf("empty path")
 	}
-	rel = filepath.Clean(filepath.FromSlash(rel))
+	rel = filepath.FromSlash(rel)
+	if filepath.IsAbs(rel) || filepath.VolumeName(rel) != "" {
+		return "", fmt.Errorf("invalid path")
+	}
+	rel = filepath.Clean(rel)
 	if rel == "." || strings.HasPrefix(rel, "..") {
 		return "", fmt.Errorf("invalid path")
 	}
@@ -1288,7 +1306,7 @@ func (h *ChatUploadsHandler) Rename(c *gin.Context) {
 		return
 	}
 	newName := strings.TrimSpace(body.NewName)
-	if newName == "" || strings.ContainsAny(newName, `/\`) {
+	if newName == "" || strings.ContainsAny(newName, `/\`) || newName == "." || newName == ".." {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid newName"})
 		return
 	}

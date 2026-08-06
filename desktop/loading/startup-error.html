@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CyberStrikeAI could not start</title>
+  <link rel="stylesheet" href="loading.css">
+  <script src="startup-error.js" defer></script>
+</head>
+<body>
+  <main class="startup-error-card">
+    <div class="error-mark" aria-hidden="true">!</div>
+    <p class="eyebrow">Startup recovery</p>
+    <h1 id="failure-title">CyberStrikeAI could not start</h1>
+    <p id="failure-message">The local core stopped before it became ready.</p>
+    <p class="failure-code">Diagnostic category: <code id="failure-code">core_startup</code></p>
+    <div class="actions">
+      <button id="retry" type="button">Retry startup</button>
+      <div class="directory-actions">
+        <button id="open-logs" class="secondary" type="button">Open logs</button>
+        <button id="open-data" class="secondary" type="button">Open data</button>
+      </div>
+      <button id="exit" class="text-button" type="button">Exit CyberStrikeAI</button>
+    </div>
+    <p id="message" class="message" role="alert" aria-live="polite"></p>
+  </main>
+</body>
+</html>

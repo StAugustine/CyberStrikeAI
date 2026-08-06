@@ -88,19 +88,35 @@ func TestEinoTransientRunErrorUserDetail(t *testing.T) {
 			if summary == "" {
 				t.Fatal("summary should not be empty")
 			}
+			if strings.Contains(summary, "abc") || strings.Contains(summary, "secret-marker") {
+				t.Fatalf("summary exposed upstream detail: %q", summary)
+			}
 		})
 	}
 }
 
-func TestEinoTrimRetryErrorSummary(t *testing.T) {
+func TestSafeEinoRunErrorMessage(t *testing.T) {
 	t.Parallel()
-	raw := strings.Repeat("报错 ", 260)
-	got := einoTrimRetryErrorSummary(raw)
-	if len([]rune(got)) > 503 {
-		t.Fatalf("summary too long: %d runes", len([]rune(got)))
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"authentication", errors.New("status code: 401 upstream-secret-marker"), "模型服务认证失败，请检查 AI 通道凭据。"},
+		{"rate limit", errors.New("HTTP 429 upstream-secret-marker"), "模型服务限流或额度不足，请稍后重试。"},
+		{"network", errors.New("read tcp upstream-secret-marker: connection reset by peer"), "模型服务连接中断，请检查网络或服务地址。"},
+		{"unknown", errors.New("upstream-secret-marker"), "执行失败，请查看应用日志了解详情。"},
 	}
-	if !strings.HasSuffix(got, "...") {
-		t.Fatal("trimmed summary should end with ellipsis")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SafeEinoRunErrorMessage(tc.err)
+			if got != tc.want {
+				t.Fatalf("SafeEinoRunErrorMessage() = %q, want %q", got, tc.want)
+			}
+			if strings.Contains(got, "upstream-secret-marker") {
+				t.Fatalf("safe message exposed upstream detail: %q", got)
+			}
+		})
 	}
 }
 

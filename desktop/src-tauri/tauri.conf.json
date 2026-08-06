@@ -1,0 +1,50 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "CyberStrikeAI Desktop",
+  "version": "0.2.0",
+  "identifier": "com.cyberstrikeai.desktop",
+  "build": {
+    "frontendDist": "../loading"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; script-src 'self'; style-src 'self'",
+      "capabilities": ["bootstrap", "credential-migration", "startup-error", "desktop-paths", "data-maintenance"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "category": "DeveloperTool",
+    "createUpdaterArtifacts": false,
+    "license": "Apache-2.0",
+    "licenseFile": "../../LICENSE",
+    "shortDescription": "Local AI-assisted security workspace",
+    "longDescription": "CyberStrikeAI Desktop runs the supported CyberStrikeAI workspace locally with an isolated Go sidecar.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../resources/manifest.json": "defaults/manifest.json",
+      "../../config.example.yaml": "defaults/config.example.yaml",
+      "../../agents/": "defaults/agents",
+      "../../roles/": "defaults/roles",
+      "../../skills/": "defaults/skills",
+      "../../tools/": "defaults/tools",
+      "../../knowledge_base/": "defaults/knowledge_base"
+    },
+    "externalBin": [
+      "binaries/cyberstrike-core",
+      "binaries/cyberstrike-native-host"
+    ],
+    "macOS": {
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}
