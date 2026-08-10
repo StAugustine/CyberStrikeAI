@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "bootstrap",
+  "description": "The local bootstrap window may submit the initial administrator password.",
+  "windows": ["bootstrap"],
+  "permissions": [
+    "allow-submit-bootstrap-password"
+  ]
+}

@@ -1,7 +1,8 @@
 /* global chrome, loadConfig, saveConfig, baseUrlFrom, ensureHostPermission,
    loginAndValidate, validateTokenSession, fetchCatalogCached, invalidateCatalogCache, streamTest,
    cancelByConversationId, extractConversationId, AGENT_MODES, toPrompt,
-   defaultInstruction, markdownToHtml, CSAI_LIMITS, isExtensionContextError */
+   defaultInstruction, markdownToHtml, CSAI_LIMITS, isExtensionContextError,
+   discoverDesktopInstance */
 
 let config = {};
 let entries = [];
@@ -692,7 +693,52 @@ function connectionConfigFromForm() {
     filterApiOnly: $('filter-api').checked,
     renderMarkdown: $('render-md').checked,
     showDebugEvents: $('debug-events').checked,
+    connectionMode: config.connectionMode === 'desktop' ? 'desktop' : 'manual',
+    desktopInstanceId: config.connectionMode === 'desktop' ? (config.desktopInstanceId || '') : '',
   };
+}
+
+function onManualEndpointChange() {
+  config.connectionMode = 'manual';
+  config.desktopInstanceId = '';
+  updateConnSummary();
+}
+
+async function onUseDesktop() {
+  const button = $('btn-desktop');
+  button.disabled = true;
+  setStatus('Looking for CyberStrikeAI Desktop...', 'pending');
+  try {
+    const desktop = await discoverDesktopInstance();
+    $('host').value = desktop.host;
+    $('port').value = desktop.port;
+    $('https').checked = false;
+    $('password').value = '';
+    token = '';
+    tokenExpiresAt = '';
+    config = {
+      ...config,
+      host: desktop.host,
+      port: desktop.port,
+      https: false,
+      connectionMode: 'desktop',
+      desktopInstanceId: desktop.instanceId,
+      token: '',
+      tokenExpiresAt: '',
+    };
+    await saveConfig(config);
+    invalidateCatalogCache();
+    updateConnSummary();
+    updateSendButtons();
+    setConnExpanded(true);
+    setStatus(`Desktop ${desktop.appVersion} found — enter the local admin password`, 'ok');
+    $('password').focus();
+  } catch (error) {
+    setStatus(`Desktop discovery failed: ${error.message}`, 'error');
+    setConnExpanded(true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function onValidate() {
@@ -1206,10 +1252,11 @@ function setupTabs() {
 }
 
 $('btn-validate').addEventListener('click', onValidate);
+$('btn-desktop').addEventListener('click', onUseDesktop);
 $('btn-conn-toggle').addEventListener('click', onConnToggle);
-$('host').addEventListener('input', updateConnSummary);
-$('port').addEventListener('input', updateConnSummary);
-$('https').addEventListener('change', updateConnSummary);
+$('host').addEventListener('input', onManualEndpointChange);
+$('port').addEventListener('input', onManualEndpointChange);
+$('https').addEventListener('change', onManualEndpointChange);
 $('btn-send').addEventListener('click', () => openSendDialog());
 $('btn-latest-xhr').addEventListener('click', sendLatestXhr);
 $('btn-stop').addEventListener('click', onStop);

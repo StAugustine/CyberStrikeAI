@@ -1389,6 +1389,26 @@ function renderToolsList() {
             }
         }
 
+        let runtimeBadges = '';
+        if (tool.runtime_kind === 'system_command') {
+            const definitionText = typeof window.t === 'function' ? window.t('mcp.definitionInstalled') : '定义已安装';
+            const definitionTitle = typeof window.t === 'function' ? window.t('mcp.definitionInstalledHint') : '工具定义已加载，不代表系统命令可用';
+            const executableAvailable = tool.executable_available === true;
+            const executableText = executableAvailable
+                ? (typeof window.t === 'function' ? window.t('mcp.executableAvailable') : '命令可用')
+                : (typeof window.t === 'function' ? window.t('mcp.executableMissing') : '命令缺失');
+            const executableTitle = executableAvailable
+                ? (typeof window.t === 'function' ? window.t('mcp.executableAvailableHint', { path: tool.executable_path || tool.executable_command || '' }) : `当前 PATH 可执行：${tool.executable_path || tool.executable_command || ''}`)
+                : (typeof window.t === 'function' ? window.t('mcp.executableMissingHint', { command: tool.executable_command || tool.name }) : `当前 PATH 未找到：${tool.executable_command || tool.name}`);
+            runtimeBadges = `
+                <span class="tool-runtime-badge definition" title="${escapeHtml(definitionTitle)}">${escapeHtml(definitionText)}</span>
+                <span class="tool-runtime-badge ${executableAvailable ? 'available' : 'missing'}" title="${escapeHtml(executableTitle)}">${escapeHtml(executableText)}</span>
+            `;
+        } else if (tool.runtime_kind === 'builtin') {
+            const builtinText = typeof window.t === 'function' ? window.t('mcp.builtinRuntime') : '内置运行时';
+            runtimeBadges = `<span class="tool-runtime-badge builtin">${escapeHtml(builtinText)}</span>`;
+        }
+
         // 生成唯一的checkbox id，使用工具唯一标识符
         const checkboxId = `tool-${settingsEscapeAttr(toolKey).replace(/::/g, '--')}`;
 
@@ -1398,6 +1418,7 @@ function renderToolsList() {
                 <div class="tool-item-name">
                     ${escapeHtml(tool.name)}
                     ${externalBadge}
+                    ${runtimeBadges}
                     <label class="tool-resident-toggle" title="${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleHint') : '始终常驻在 Tool Search 可见列表'}" onclick="event.stopPropagation()">
                         <input type="checkbox" class="theme-checkbox" ${alwaysVisibleChecked ? 'checked' : ''} ${alwaysVisibleLocked ? 'disabled' : ''} onchange="handleToolAlwaysVisibleChange(${settingsEscapeJsStringAttr(toolKey)}, this.checked)" />
                         <span>${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleLabel') : '常驻'}</span>

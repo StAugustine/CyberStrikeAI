@@ -1,0 +1,131 @@
+name: Desktop core integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/desktop-d1.yml"
+      - "cmd/desktop-poc-sidecar/**"
+      - "cmd/desktop-core/**"
+      - "cmd/desktop-native-host/**"
+      - "desktop/**"
+      - "internal/desktopruntime/**"
+      - "internal/desktopcredentials/**"
+      - "internal/desktopmigration/**"
+      - "internal/desktopplugin/**"
+      - "internal/handler/**"
+      - "web/**"
+      - "agents/**"
+      - "roles/**"
+      - "skills/**"
+      - "tools/**"
+      - "knowledge_base/**"
+      - "plugins/browser-extension/cyberstrikeai-browser-extension/**"
+      - "plugins/burp-suite/cyberstrikeai-burp-extension/**"
+      - "config.example.yaml"
+      - "requirements.txt"
+      - "requirements-win-x64.lock"
+      - "go.mod"
+      - "go.sum"
+
+permissions:
+  contents: read
+
+jobs:
+  protocol-poc:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - name: macOS arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - name: macOS x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "11"
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+      - name: Select pinned Rust toolchain
+        run: rustup default 1.97.1
+      - name: Install locked Tauri CLI
+        working-directory: desktop
+        run: npm ci --ignore-scripts
+      - name: Test Go desktop core
+        run: go test ./cmd/desktop-poc-sidecar ./cmd/desktop-core ./cmd/desktop-native-host ./internal/app ./internal/config ./internal/desktopcredentials ./internal/desktopmigration ./internal/desktopplugin ./internal/desktopprotocol ./internal/desktopruntime ./internal/handler ./internal/pythonruntime ./internal/security ./web
+      - name: Test desktop web setup
+        run: node --test web/static/js/workflow-package-client.test.cjs web/static/js/workflow-package-ui.test.cjs web/static/js/desktop-setup-ui.test.cjs web/static/js/desktop-auth-ui.test.cjs web/static/js/desktop-dashboard-ui.test.cjs web/static/js/desktop-theme-ui.test.cjs web/static/js/desktop-tools-ui.test.cjs plugins/browser-extension/cyberstrikeai-browser-extension/lib/desktop-discovery.test.cjs
+      - name: Test Burp desktop discovery
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.tmp/burp-discovery-classes" "$GITHUB_WORKSPACE/.tmp/burp-discovery-runtime"
+          javac --release 11 -d "$GITHUB_WORKSPACE/.tmp/burp-discovery-classes" \
+            plugins/burp-suite/cyberstrikeai-burp-extension/src/main/java/burp/DesktopDiscovery.java \
+            plugins/burp-suite/cyberstrikeai-burp-extension/src/test/java/burp/DesktopDiscoveryTest.java
+          java -Dcyberstrike.test.tmp="$GITHUB_WORKSPACE/.tmp/burp-discovery-runtime" \
+            -cp "$GITHUB_WORKSPACE/.tmp/burp-discovery-classes" burp.DesktopDiscoveryTest
+      - name: Compile Burp extension
+        working-directory: plugins/burp-suite/cyberstrikeai-burp-extension
+        shell: bash
+        run: >-
+          mvn --batch-mode --quiet
+          -Dmaven.repo.local="$GITHUB_WORKSPACE/.tmp/m2"
+          -Dcyberstrike.build.directory="$GITHUB_WORKSPACE/.tmp/burp-target"
+          package
+      - name: Verify desktop resource manifest
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm run resources:manifest
+          git diff --exit-code -- resources/manifest.json
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
+      - name: Build Go core sidecar for Tauri tests
+        working-directory: desktop
+        env:
+          CYBERSTRIKE_DESKTOP_TARGET: ${{ matrix.target }}
+        run: npm run desktop:sidecar
+      - name: Test Tauri shell
+        working-directory: desktop
+        env:
+          CYBERSTRIKE_DESKTOP_TARGET: ${{ matrix.target }}
+        run: npm run desktop:test:rust
+      - name: Build unbundled desktop client
+        working-directory: desktop
+        env:
+          CYBERSTRIKE_DESKTOP_TARGET: ${{ matrix.target }}
+        run: npm run desktop:build
+      - name: Run lifecycle smoke
+        working-directory: desktop
+        env:
+          CYBERSTRIKE_DESKTOP_TARGET: ${{ matrix.target }}
+        run: npm run desktop:smoke
+      - name: Run single-instance smoke
+        working-directory: desktop
+        env:
+          CYBERSTRIKE_DESKTOP_TARGET: ${{ matrix.target }}
+        run: npm run desktop:smoke:single-instance
+      - name: Run lifecycle failure smokes
+        working-directory: desktop
+        env:
+          CYBERSTRIKE_DESKTOP_TARGET: ${{ matrix.target }}
+        run: npm run desktop:smoke:failures

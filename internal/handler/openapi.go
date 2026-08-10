@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"cyberstrike-ai/internal/database"
 
@@ -15,6 +16,7 @@ type OpenAPIHandler struct {
 	logger           *zap.Logger
 	conversationHdlr *ConversationHandler
 	agentHdlr        *AgentHandler
+	desktopMode      bool
 }
 
 // NewOpenAPIHandler 创建新的OpenAPI处理器
@@ -25,6 +27,12 @@ func NewOpenAPIHandler(db *database.DB, logger *zap.Logger, conversationHdlr *Co
 		conversationHdlr: conversationHdlr,
 		agentHdlr:        agentHdlr,
 	}
+}
+
+// SetDesktopMode limits the generated specification to routes that are
+// actually registered by the local desktop profile.
+func (h *OpenAPIHandler) SetDesktopMode(enabled bool) {
+	h.desktopMode = enabled
 }
 
 // GetOpenAPISpec 获取OpenAPI规范
@@ -6808,8 +6816,32 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 		},
 	}
 
+	if h.desktopMode {
+		paths, _ := spec["paths"].(map[string]interface{})
+		for route := range paths {
+			if desktopExcludedOpenAPIPath(route) {
+				delete(paths, route)
+			}
+		}
+	}
 	enrichSpecWithI18nKeys(spec)
 	c.JSON(http.StatusOK, spec)
+}
+
+func desktopExcludedOpenAPIPath(route string) bool {
+	for _, prefix := range []string{
+		"/api/c2",
+		"/api/rbac",
+		"/api/robot",
+		"/api/terminal",
+		"/api/vulnerability-alerts",
+		"/api/webshell",
+	} {
+		if route == prefix || strings.HasPrefix(route, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // GetConversationResults 获取对话结果（OpenAPI端点）

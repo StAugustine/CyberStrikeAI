@@ -156,7 +156,7 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 	var savedPaths []string
 	if len(req.Attachments) > 0 {
 		var aerr error
-		savedPaths, aerr = saveAttachmentsToDateAndConversationDir(req.Attachments, conversationID, h.logger)
+		savedPaths, aerr = saveAttachmentsToDateAndConversationDir(h.chatUploadsRoot, req.Attachments, conversationID, h.logger)
 		if aerr != nil {
 			return nil, fmt.Errorf("保存上传文件失败: %w", aerr)
 		}

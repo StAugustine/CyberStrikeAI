@@ -1,0 +1,666 @@
+{
+  "schema_version": 1,
+  "app_version": "0.2.0",
+  "files": [
+    {
+      "path": "agents/attack-surface-enumeration.md",
+      "sha256": "ecc20298d791912d400856a0e0bbb3904f4ff5d8512684d0353525767c54504d"
+    },
+    {
+      "path": "agents/cleanup-rollback.md",
+      "sha256": "62c9e3b976a147bed578847e9bbb5c59f4fb5cebe313bb87f8b274b47eff5b80"
+    },
+    {
+      "path": "agents/engagement-planning.md",
+      "sha256": "be5f5e05bbfbda44e323cc2a1cd554e9b5d0ea1ac039be281c986a8e2c21ce5f"
+    },
+    {
+      "path": "agents/impact-exfiltration.md",
+      "sha256": "87e17d754e0f65d1005004c7eef9c3bf3f42e68ccd613acf3b7dc22a62aff4c3"
+    },
+    {
+      "path": "agents/intel-collection.md",
+      "sha256": "c089acfff6400b67ce119fc0cf0c6e3f4c706adcec67b65c86bc5f70d69fabdf"
+    },
+    {
+      "path": "agents/lateral-movement.md",
+      "sha256": "1583f24486f68c69ba51e5ad46bad2350865b73fbc5406076141b99de9f843df"
+    },
+    {
+      "path": "agents/opsec-evasion.md",
+      "sha256": "b7e80bcac15eac0234859571547a09be7d9127ee135e8669788d0c07f530780a"
+    },
+    {
+      "path": "agents/orchestrator-plan-execute.md",
+      "sha256": "e35de2410044c0de29423e30250b50a55e72f89692287ce1e61d43a9c51cd2b0"
+    },
+    {
+      "path": "agents/orchestrator-supervisor.md",
+      "sha256": "179c5336744a150c46e459c1b89f6f4b037ce2edf83f3ceb73f4e31fdb3cd829"
+    },
+    {
+      "path": "agents/orchestrator.md",
+      "sha256": "7beff36d7b0a4738c037616ed87167de5fc4da504d9b605ebd69c850a0366318"
+    },
+    {
+      "path": "agents/penetration.md",
+      "sha256": "6a8b90502e789f03943fbb975afd4a0748435a5cb9fc6d52c317e7d7f754f1fe"
+    },
+    {
+      "path": "agents/persistence-maintenance.md",
+      "sha256": "9bd9bc2f988edbb40a429ca1e7a9e6c19a76ffb7732be4da6692fb247364fa2f"
+    },
+    {
+      "path": "agents/privilege-escalation.md",
+      "sha256": "1cc50013d003bbb9779ce4ecd2be2842266c8765b12d270e7cc6f086368ee280"
+    },
+    {
+      "path": "agents/recon.md",
+      "sha256": "f6d395bb9d33e192d8b471f9ef96a34c8eea02d76cc617ea360490ff7ab8e73b"
+    },
+    {
+      "path": "agents/reporting-remediation.md",
+      "sha256": "b38e91d450355ccd2a5d9d57eb1b9d71c1968b1401e6f04617f8be3910d6337b"
+    },
+    {
+      "path": "agents/vulnerability-triage.md",
+      "sha256": "920880b035e7ed3dabc3c3f80c68632426edaaf2ab1aee618d505a72613bb3c7"
+    },
+    {
+      "path": "config.example.yaml",
+      "sha256": "6d4e45e874a34ea1290c07c9a5c6779cbe40bdbd522149a1024c17b926ffbf11"
+    },
+    {
+      "path": "knowledge_base/Prompt Injection/README.md",
+      "sha256": "fbece487c9a2594178325b4dbb6cfcf4b0cdcdfbb45c1979e864dc7935f90760"
+    },
+    {
+      "path": "knowledge_base/SQL Injection/BigQuery Injection.md",
+      "sha256": "49f4c46402dd5ece404191d4d0fa40a39047b7fc9e89e58cc4e42db1c6f4d54e"
+    },
+    {
+      "path": "knowledge_base/SQL Injection/Cassandra Injection.md",
+      "sha256": "49c9f861f9ad30ddc1f51b288bde83ccdd4a6c3c33b38a281630c8bfa487d7f3"
+    },
+    {
+      "path": "knowledge_base/SQL Injection/DB2 Injection.md",
+      "sha256": "94cd912301c53b0719742da952fe16807042dc29ad8d096ab2c11308d43cf5cc"
+    },
+    {
+      "path": "knowledge_base/SQL Injection/MSSQL Injection.md",
+      "sha256": "2a2ebde0f44bab2a8b03a0c58f6e71536eda11529bc414411e9697d293a66eae"
+    },
+    {
+      "path": "knowledge_base/SQL Injection/MySQL Injection.md",
+      "sha256": "e47dd10e3cc73de539310c1b6879841b471707887134039360e8edee72ecaff1"
+    },
+    {
+      "path": "knowledge_base/SQL Injection/OracleSQL Injection.md",
+      "sha256": "7779b324a434e78ea8ef57023df3c73e98727339c4bdf6d6012308770f6f7f9a"
+    },
+    {
+      "path": "knowledge_base/SQL Injection/PostgreSQL Injection.md",
+      "sha256": "b6e34993753785ac4a42b29fb193cd3f875947633378e62125f1722e18652f6a"
+    },
+    {
+      "path": "knowledge_base/SQL Injection/README.md",
+      "sha256": "668bf162c85be18e21074997ddcfaa4aa6b202e01a45496a4e8b6bb5e7308e8e"
+    },
+    {
+      "path": "knowledge_base/SQL Injection/SQLite Injection.md",
+      "sha256": "2999defa46a9c21bc5cec2f909ba7b769d472d03f5c8305cfd3542078c2ab9d4"
+    },
+    {
+      "path": "knowledge_base/SQL Injection/SQLmap.md",
+      "sha256": "32d9049aefc36f8d6e59cad571520188c7991a79fe4b4db29de998348f06e865"
+    },
+    {
+      "path": "roles/API安全测试.yaml",
+      "sha256": "329429bc3fb6b65a422cd16eabfa8998efe0f1adefbd4ba218896c6387821549"
+    },
+    {
+      "path": "roles/CTF.yaml",
+      "sha256": "8ca086dcc2030a7595484ca6290355a10d65f9f1deb57407b78642d59fe7b7ab"
+    },
+    {
+      "path": "roles/README.md",
+      "sha256": "945b9debfefe700ce394970e2379ab0dd9f5a626968c3939a6a256631c90732d"
+    },
+    {
+      "path": "roles/Web应用扫描.yaml",
+      "sha256": "a68a6d7da04be25e3044f09865ab8bfa2e578931deae7b5ce050bbaaced3cf1a"
+    },
+    {
+      "path": "roles/Web框架测试.yaml",
+      "sha256": "57f992c61ae3edf242ad04bc9bb716283d2fce6e2a0ad89b31ed420cbfcc39eb"
+    },
+    {
+      "path": "roles/二进制分析.yaml",
+      "sha256": "67e2ec59bf4c99cec89512143e0f2a56dac19518014f7013307c6c8e0ed8e49c"
+    },
+    {
+      "path": "roles/云安全审计.yaml",
+      "sha256": "c2550294960e7a49b96b091b8c11b5c0938fa02368b83207e8eb15cc51dd57cb"
+    },
+    {
+      "path": "roles/信息收集.yaml",
+      "sha256": "8f42274914007f0017084959047a698b51e62aef55864deb7af2d926fd78cff6"
+    },
+    {
+      "path": "roles/后渗透测试.yaml",
+      "sha256": "e9657698446ab22603132d9f7fb56088f0c5ee3a9cd8f916dfc1de9abfa5528c"
+    },
+    {
+      "path": "roles/容器安全.yaml",
+      "sha256": "6eab6b98326b1b04b38fc6ac45a3d04a9c45d2f2ebee561587627af0292ce500"
+    },
+    {
+      "path": "roles/数字取证.yaml",
+      "sha256": "af14728a9de0acc855bc11b06d3a756a249af89f34540b67450c2240ffd31642"
+    },
+    {
+      "path": "roles/渗透测试.yaml",
+      "sha256": "c8f9bcfca8de3ff61b686d66f9f2af70f9f1416ef5b2b4dfff579f7aa1ceaafa"
+    },
+    {
+      "path": "roles/综合漏洞扫描.yaml",
+      "sha256": "9144d656608b47d8d37d83b982ea3c277f6b884176df7867ae9dff9bd5013081"
+    },
+    {
+      "path": "roles/默认.yaml",
+      "sha256": "6d8240cafa062b78ee26ad95d640b82347f5703d4568fc21d6defb572f8e17aa"
+    },
+    {
+      "path": "skills/README.md",
+      "sha256": "93e61349827cfe71c615b538968396005dce0e4da0cb3d92c30c2c21a83b5ad1"
+    },
+    {
+      "path": "skills/active-directory-attack/SKILL.md",
+      "sha256": "8f08520d82a6bcffcf624f85f0e9f80ee19336805090cce266563bf1f1a925a6"
+    },
+    {
+      "path": "skills/ai-llm-app-attack/SKILL.md",
+      "sha256": "7286e92053f960948337cd446750c44a9525dfb595831f43597748f36ca4be02"
+    },
+    {
+      "path": "skills/attack-surface-recon/SKILL.md",
+      "sha256": "38057ec722df81fd1d6881280bf5753adffe955996fb9f830f220ef241ce1a54"
+    },
+    {
+      "path": "skills/binary-mobile-reversing/SKILL.md",
+      "sha256": "c1c9d41078dd9358ac5385c338aff976849263996083084a860bd990a9c52e7b"
+    },
+    {
+      "path": "skills/blockchain-contract-attack/SKILL.md",
+      "sha256": "eeadd2a46fb32b66cfc277b15f8dc3dcb5f34f599df1d9676b52b6bd505ba2ea"
+    },
+    {
+      "path": "skills/capability-primitive-search/SKILL.md",
+      "sha256": "045689b563f5610ca505e1d2d870a0e635087a8a5864c926ade82bde28a227e4"
+    },
+    {
+      "path": "skills/cloud-attack-methods/SKILL.md",
+      "sha256": "aa3dad21178735b2d077c342eac536f8af46cd370c4a6263c8703ae3f103f19d"
+    },
+    {
+      "path": "skills/component-vuln-intel/SKILL.md",
+      "sha256": "d00539c4c234d007734ff0909a3a8b9d0b12a0427fe75180c485c26412cc2d0c"
+    },
+    {
+      "path": "skills/cyberstrike-eino-demo/FORMS.md",
+      "sha256": "6fa457574ea7020b953a8b8cb31a925cae0798384ded144c89e4edc5159e66a7"
+    },
+    {
+      "path": "skills/cyberstrike-eino-demo/REFERENCE.md",
+      "sha256": "986026723f438cc0a97d6517d6f7fa011a802162468341e96974cfce11ef09b7"
+    },
+    {
+      "path": "skills/cyberstrike-eino-demo/SKILL.md",
+      "sha256": "72d7ebbb8b111be935b227d51e44b3160b0510bc7fb0ecac99581b5832bd3f86"
+    },
+    {
+      "path": "skills/cyberstrike-eino-demo/assets/README.txt",
+      "sha256": "4d66bbab6f25a6b8a026e0d6165dc3f64339295c312550fcee62171df09fc04c"
+    },
+    {
+      "path": "skills/cyberstrike-eino-demo/references/citations.md",
+      "sha256": "157cf2c85055cd316ae31e7a2e061c376b4d2c019f88d0bb6b591bfc690573ee"
+    },
+    {
+      "path": "skills/cyberstrike-eino-demo/scripts/check-env.sh",
+      "sha256": "39a1d6286d8e0fd16bc4ab3fe1ca7c3b94305f51feb93a44f44034c4c98729e4"
+    },
+    {
+      "path": "skills/cyberstrike-eino-demo/scripts/payloads.txt",
+      "sha256": "92142cb39fc34ebd10e051684f1d8de3cfe75e50921c24055f78920b1d32046f"
+    },
+    {
+      "path": "skills/cyberstrike-eino-demo/scripts/report-snippet.json",
+      "sha256": "c601fdf67cb1031b56a4956451a33ca26b55cbddca5d9c4b4390f9fb14421c00"
+    },
+    {
+      "path": "skills/initial-access-phishing/SKILL.md",
+      "sha256": "b4ab1aab6ee416870f92a642804010ee9ae53caf13ebd91a82f78a7283bb4598"
+    },
+    {
+      "path": "skills/pentest-agent-os/SKILL.md",
+      "sha256": "215bdab3c8d932e999bc5e0e56158e3dcd5751dc12cb4b843b66c26e8c37e7fa"
+    },
+    {
+      "path": "skills/pentest-blackboard/SKILL.md",
+      "sha256": "d1927dbf6a60a676955b16dd52591d513d4d67ce6129bb5c19cd05714109dbf7"
+    },
+    {
+      "path": "skills/pentest-output-standards/SKILL.md",
+      "sha256": "ab9adc9452eb2735eb98c865bd4ebc92c6db6034862fccfb5a49d18e7f20f71b"
+    },
+    {
+      "path": "skills/pentest-verification/SKILL.md",
+      "sha256": "d7a44cdb6dfbf86edc0c2a6c95bb0bad2f0f301f9f6706662d312e0bc3da10bf"
+    },
+    {
+      "path": "skills/post-exploitation/SKILL.md",
+      "sha256": "9758717d7d8b918ced0f46223b4758f61af974777e721022da2868244973217b"
+    },
+    {
+      "path": "skills/proxy-tool-bootstrap/SKILL.md",
+      "sha256": "b1f35b1a8edb3cbb42759c197a2c3748fdcd9ee3325f4c78db6575e4c2c70340"
+    },
+    {
+      "path": "skills/redteam-opsec/SKILL.md",
+      "sha256": "a303b302c85c145acd92d46c71f135c9d2f36077d88531c9dcbc92d92b207e74"
+    },
+    {
+      "path": "skills/source-code-hunting/SKILL.md",
+      "sha256": "8b963c593aac334cb26678c27e2247c8b7e78be9258733a32734dba658ac075f"
+    },
+    {
+      "path": "skills/specialized-attack-playbooks/SKILL.md",
+      "sha256": "4588025ac982885e8dfabaedf086c88bbc14ef5e397072f94227fa42c23401f2"
+    },
+    {
+      "path": "skills/unlimited-attack-scope/SKILL.md",
+      "sha256": "48ecc042a490046713367ed73b82b5a65eadaa4184b687298a119002217060a0"
+    },
+    {
+      "path": "skills/web-attack-methods/SKILL.md",
+      "sha256": "c27fa53f96617301b6c87d038827617e464608fcff0a320a1a1144eae6c2289c"
+    },
+    {
+      "path": "skills/wireless-hardware-attack/SKILL.md",
+      "sha256": "fec92b403b35a4ec0ac0ebc0c873ed0a11cc94870c23863e49e188138519d7cf"
+    },
+    {
+      "path": "skills/zero-day-discovery/SKILL.md",
+      "sha256": "81e41579c6d410f9bdc531cc50bde649239d47f35fbba37acfd3a4666e9f7db6"
+    },
+    {
+      "path": "tools/README.md",
+      "sha256": "bd09cb8e42af6540c14e538d1843c46b82d2148a89fb164261f7483eee1785d7"
+    },
+    {
+      "path": "tools/README_EN.md",
+      "sha256": "0cbbcd0ea92c3a123aef46ddd1b8c18879b1e6f2da665efe69d5d9db5804f4dd"
+    },
+    {
+      "path": "tools/amass.yaml",
+      "sha256": "aab56288b3e5322d58de6efa5691baecf164ed9f1ad44aa0f47995bd9cf27ad7"
+    },
+    {
+      "path": "tools/angr.yaml",
+      "sha256": "8a25c1ce9d3e0089dc4c03aaf50b6e9296fdaebd2fca7ab1df94d14db2bc0fb6"
+    },
+    {
+      "path": "tools/api-schema-analyzer.yaml",
+      "sha256": "7baf265a07030407346f0eee174f421141e10051e636bedda692ebb29307a473"
+    },
+    {
+      "path": "tools/arjun.yaml",
+      "sha256": "71572c082180f2a47edc2f1a38876cb3c6575ac6da37ce93224839225c6f2c5d"
+    },
+    {
+      "path": "tools/arp-scan.yaml",
+      "sha256": "82d32af0d2a50a8dd068431d3fe27b0b119469ec4c9aab7a18491abf10b89bdb"
+    },
+    {
+      "path": "tools/binwalk.yaml",
+      "sha256": "a7e78369be1a0db0461c33ce11d9487a46af3e5c30ebb47eb4bb6cb7c9cf3502"
+    },
+    {
+      "path": "tools/bloodhound.yaml",
+      "sha256": "135bd0e93ad3a5a9824e7d753aa50ceafa2cd67d36a9a9bdf91f86bc91266092"
+    },
+    {
+      "path": "tools/checkov.yaml",
+      "sha256": "c507b76d04f298c5e33261364e59f5898da3263116a96b1dfbdc91d16766bdd7"
+    },
+    {
+      "path": "tools/checksec.yaml",
+      "sha256": "77821f9b422ecf3aca1e6911dbefd17ab6c8800ab54de3260d474185471f7611"
+    },
+    {
+      "path": "tools/clair.yaml",
+      "sha256": "2399c1bd8fafdc966c53f88827c4639a0be52103946104fa557ad39800937ad1"
+    },
+    {
+      "path": "tools/cloudmapper.yaml",
+      "sha256": "612af59bdda771042289b2b42c08e310cbf60f3a3cb02ba082ab8772ff3e7bb7"
+    },
+    {
+      "path": "tools/dalfox.yaml",
+      "sha256": "cfff8ec766b5e22a84e6a41ace291be779e59bb916de4d9849f4a16698143d6e"
+    },
+    {
+      "path": "tools/dirsearch.yaml",
+      "sha256": "dabb7c217da87d8bede38d7137cde52feecb909bf64ac74c7d09d00183b28ab0"
+    },
+    {
+      "path": "tools/dnsenum.yaml",
+      "sha256": "94b35b3fc614104bd8948aeb32b1b590c74f105fa712acfdf921e53717a30b6d"
+    },
+    {
+      "path": "tools/dnslog.yaml",
+      "sha256": "177c96d38243e7da83f8e827fea2c9969dcbdf01ed88ab456b9abb8bed6fe2c4"
+    },
+    {
+      "path": "tools/dotdotpwn.yaml",
+      "sha256": "909edd7814fdae113bba00ffb823e69d3e39f4aa3ac546a01d382a860e21000c"
+    },
+    {
+      "path": "tools/enum4linux-ng.yaml",
+      "sha256": "9f2e16a399962beed09fd309e062ce3d0f23a330b225f1526e02e03aa59550f9"
+    },
+    {
+      "path": "tools/exec.yaml",
+      "sha256": "174e9e9e5cf63133ba0adba8f2123598c74778048719799cc6d852c9b1e1cd07"
+    },
+    {
+      "path": "tools/execute-python-script.yaml",
+      "sha256": "0e3a8172e1b91859f192305c7576f0561b348914b9cc96200a86685a1a381ed7"
+    },
+    {
+      "path": "tools/exiftool.yaml",
+      "sha256": "87a14b08679fb01614ac2a51d3f57858eb926ea4ac7976e7ef39cb9a253c7015"
+    },
+    {
+      "path": "tools/falco.yaml",
+      "sha256": "cbc2c552db3d7445ddc0f015e62ee77242c2fa71a365c0625810cad05e1b740a"
+    },
+    {
+      "path": "tools/feroxbuster.yaml",
+      "sha256": "4e6b252015614a5f472c5a4687e09f67dcb25eea99625a457aac56ed3d998a0a"
+    },
+    {
+      "path": "tools/ffuf.yaml",
+      "sha256": "2bae28815274cb7f698135849a25797e3dfbaab5f43aa3998b686dd99fdb02dc"
+    },
+    {
+      "path": "tools/fierce.yaml",
+      "sha256": "ba31cb18c448ad0a9933b862c1ed4c9bfbe7e0847744dc4de068a482ce6c9dc6"
+    },
+    {
+      "path": "tools/fofa_search.yaml",
+      "sha256": "1f9463753f0f31008ecf5fa50f2437ebf4864cb3585db9ae9e6d9093cc380141"
+    },
+    {
+      "path": "tools/foremost.yaml",
+      "sha256": "fa7f415a857ab4700447998bc8977432e2eecf21c23aa989f8e757f620ed1196"
+    },
+    {
+      "path": "tools/fscan.yaml",
+      "sha256": "aa50a1d5e057531eaca77d054f5a05fb5fe9f4a7a93b1f1efbb591799356e53a"
+    },
+    {
+      "path": "tools/gau.yaml",
+      "sha256": "7e71354949d2ba5d2c1c36d8d3c45b058657adc9ae0a6669d52f2c70b00d0c76"
+    },
+    {
+      "path": "tools/gdb.yaml",
+      "sha256": "4d0f621b34913c3666aa87919af09a3c092bafba6d59d4e39dd9822264a1c21b"
+    },
+    {
+      "path": "tools/ghidra.yaml",
+      "sha256": "c79a4dce92181277cb0023f1963e3cd116ce5f70467772b635b5c46e06fa03c8"
+    },
+    {
+      "path": "tools/gobuster.yaml",
+      "sha256": "c287e880d91a41d3289b8b45d06434fa0f926e97c8caf04109bdce6dd0c0a533"
+    },
+    {
+      "path": "tools/graphql-scanner.yaml",
+      "sha256": "681bd3cbd96d5ad092fe2ab9b0e676b6db42bafff32daf2a79c407151c323d25"
+    },
+    {
+      "path": "tools/hashcat.yaml",
+      "sha256": "e60fa22bc1692ce5fc082b1a8f6ed2d685b4325550229fede655c2b2d3a5eff8"
+    },
+    {
+      "path": "tools/hashpump.yaml",
+      "sha256": "338275653f4d8040bc514b68e5cc601410a9dadef3104098c1e6827e276344a3"
+    },
+    {
+      "path": "tools/http-framework-test.yaml",
+      "sha256": "83946360ab662a91ea78e26d52b6c511e2172be3f38d78da3cb7bb7d01015bb8"
+    },
+    {
+      "path": "tools/hydra.yaml",
+      "sha256": "f225870d774858fd1963739fd580da744bbbc34a5c5ee7d65ad0e9206997fc07"
+    },
+    {
+      "path": "tools/impacket.yaml",
+      "sha256": "3c996ad08b8d7fd87385a90d900ab581996d9e103b6970c2772a2b9e3917f27e"
+    },
+    {
+      "path": "tools/install-python-package.yaml",
+      "sha256": "daa699a1f81ae526c46567dca1677564a1f12b1bc6dc1cd07678baf80b284865"
+    },
+    {
+      "path": "tools/jaeles.yaml",
+      "sha256": "089c06c432efda33b78cebbe00b6137832095716bee8adb4064c2627705054d5"
+    },
+    {
+      "path": "tools/john.yaml",
+      "sha256": "0739e0721875ec5f2a60c7a7a2805f30c0a52f7f639feace93967eacd777a367"
+    },
+    {
+      "path": "tools/jwt-analyzer.yaml",
+      "sha256": "1bc9b58b52842885e9b5f21dc350225dbb666dfbecf9c97c9778aba7de3915b4"
+    },
+    {
+      "path": "tools/katana.yaml",
+      "sha256": "4de5f3c58e85556a70a18bfc820d8439c7154f572d982c89852a1bacaa76d9ac"
+    },
+    {
+      "path": "tools/kube-bench.yaml",
+      "sha256": "7bfd1ab8c3de913522abe5068cd70d60579339f73fba538dd7980fe131772ff8"
+    },
+    {
+      "path": "tools/kube-hunter.yaml",
+      "sha256": "bd72792461521a8a6d32338afd27183adfd5c0a4fa5ccaebe2134fab267da228"
+    },
+    {
+      "path": "tools/libc-database.yaml",
+      "sha256": "3d00f0d295e55e6a0ee79a26f9a16ccb393c81a50ec3c76dc96ee07227388a42"
+    },
+    {
+      "path": "tools/lightx.yaml",
+      "sha256": "9450abe7f5f91b2d47963fbe4237054d82c7e49b437e0ddf7c0ed7200005e3cb"
+    },
+    {
+      "path": "tools/linpeas.yaml",
+      "sha256": "bc6f03239753415ef8a3063634ff040716d7220fa39c280c5186ed0397275065"
+    },
+    {
+      "path": "tools/masscan.yaml",
+      "sha256": "8fd1bbe07d9a2370b85425215bdd6684c62eb86d95a2021cd2307e32cbae314e"
+    },
+    {
+      "path": "tools/metasploit.yaml",
+      "sha256": "7b5812792de9c10733f5d2868d036aab92ff3a70542166fe0d07dbfe1ada28ba"
+    },
+    {
+      "path": "tools/msfvenom.yaml",
+      "sha256": "f792b3f3bd2c87c18f09c1b71604153abd7b8dadc7aa55b609f26ba5e2788bc3"
+    },
+    {
+      "path": "tools/nbtscan.yaml",
+      "sha256": "ff1b93dfe475820ef632b0f8f95622c584f05fece29330157bd51fd762e1f036"
+    },
+    {
+      "path": "tools/netexec.yaml",
+      "sha256": "c9b0548297a4d8491bc3b6603ea13834f9e951d584abb01d06139a6d16dbd4df"
+    },
+    {
+      "path": "tools/nikto.yaml",
+      "sha256": "9d4e1c8a2c5056b9e08755d5c78b5af911ba1de938a78c03d787c59affc1a272"
+    },
+    {
+      "path": "tools/nmap.yaml",
+      "sha256": "6071d855994cea4d54698625a79598e4ba83254a29bf74ceaee97efcad53245d"
+    },
+    {
+      "path": "tools/nuclei.yaml",
+      "sha256": "d5f56e69f0f9647f6c4d959e3507e628ccccef41f49f2dccf4903f3bfd1aa95c"
+    },
+    {
+      "path": "tools/objdump.yaml",
+      "sha256": "9ff9f9ef01ec41f697bade3371783647592148fd9055fb9afe542f1590fdbbae"
+    },
+    {
+      "path": "tools/one-gadget.yaml",
+      "sha256": "4b5675bd4e806349f4a86737145f009e57c3636860268a235712224e89fbaea7"
+    },
+    {
+      "path": "tools/pacu.yaml",
+      "sha256": "98ebfea3e5545e0c250f5c164ca3cfd6025db62a868c5e70c211f54dc238003b"
+    },
+    {
+      "path": "tools/paramspider.yaml",
+      "sha256": "46ea41c52eaba3d39f4a042b75ae987ec00e4d3b99a489c7bb5574ff21814bd1"
+    },
+    {
+      "path": "tools/prowler.yaml",
+      "sha256": "63bea7fcbbfe106d9d4591e829c47532bbee62ac036a3f50d1484668b47e8aa9"
+    },
+    {
+      "path": "tools/pwninit.yaml",
+      "sha256": "3c8307bd0207b9054b26036e08b69f30712d10e6500040b441d4856149a3a20e"
+    },
+    {
+      "path": "tools/pwntools.yaml",
+      "sha256": "cb99634516319a9073e45ef9f250af5979660d8a63f1e4858075600cd9a01de5"
+    },
+    {
+      "path": "tools/quake_search.yaml",
+      "sha256": "3834a5f6ce719fe481a1171fdd195ae1966de4ed0afa0d0b04eff71f8ea98be9"
+    },
+    {
+      "path": "tools/query-execution-result.yaml",
+      "sha256": "1a01a3e177a7a45139d8a573ddddc1c063a60f378441e530f330bf545d4c1a5a"
+    },
+    {
+      "path": "tools/radare2.yaml",
+      "sha256": "bd786ca247ace271eca9e0ed5c39b4465e48848ae65f1b086b6f4d3c09ebb019"
+    },
+    {
+      "path": "tools/responder.yaml",
+      "sha256": "12b1599cf9553f338f4752bc4c4ce705cc3cb1dd00fd2594ff4b2680f5477737"
+    },
+    {
+      "path": "tools/ropgadget.yaml",
+      "sha256": "66bf0c236b268c576365e24a919d0a89a5c15a62669cd247c4f263f561a1c224"
+    },
+    {
+      "path": "tools/ropper.yaml",
+      "sha256": "faf2dd315a04b028d3d12281a17e150daa334892813dd7d4ae57538e7d4729d7"
+    },
+    {
+      "path": "tools/rpcclient.yaml",
+      "sha256": "4a964110b14a33fa0e6c7e9bf4f855782470f8cebfc744481f3fe340a5048327"
+    },
+    {
+      "path": "tools/rustscan.yaml",
+      "sha256": "49e03c2a2d73b9d8602ac8558e3aa1105ea94be2c1145610185039552ea86ce8"
+    },
+    {
+      "path": "tools/scout-suite.yaml",
+      "sha256": "be57beb5b9d68d0b68194c3c015d119a10d9ada74949f907bdf53c5aace95add"
+    },
+    {
+      "path": "tools/shodan_search.yaml",
+      "sha256": "63f2d440257caeadf36412ea5396a82dada370d0dfff6c33dc4ef5501b9fa42e"
+    },
+    {
+      "path": "tools/smbmap.yaml",
+      "sha256": "bb55cf3996a6c889a8ad50954c6c5a28c4b38491598e48c252acfe2f01049de6"
+    },
+    {
+      "path": "tools/sqlmap.yaml",
+      "sha256": "22cf1bc07c96cf7cc8741478e2bf48aa061cac84320eea56a05bd82fd39550e1"
+    },
+    {
+      "path": "tools/steghide.yaml",
+      "sha256": "0e10ab6f9f3e0638f786d830cb2edfadc5eaa37bdd005c90176c85ade1195cfc"
+    },
+    {
+      "path": "tools/strings.yaml",
+      "sha256": "254529ed72791230cb6fc7e3e661a9a5da89cf1633a97df528719e60ea0af833"
+    },
+    {
+      "path": "tools/subfinder.yaml",
+      "sha256": "93445d505df410e3bca858b68646658aad145e94a348117baaf48f1c2213572c"
+    },
+    {
+      "path": "tools/terrascan.yaml",
+      "sha256": "821eda7cbfd884917c0e69dfd88fa305377c72bfa890edcab105b07e343d38a6"
+    },
+    {
+      "path": "tools/trivy.yaml",
+      "sha256": "adca042a7d6c8e2c3465b935b2ca7342479b1a57e387897afd399f357936c1b1"
+    },
+    {
+      "path": "tools/virustotal_search.yaml",
+      "sha256": "bad8a9accb5c8a560c12191752117f385027de947510d22be2b85cfae89adfcf"
+    },
+    {
+      "path": "tools/volatility3.yaml",
+      "sha256": "92f36a27eeb1457a76c1e6268c4967f342f98f877aa2b0dfda2f090c731982ff"
+    },
+    {
+      "path": "tools/wafw00f.yaml",
+      "sha256": "3ed92fe5acfb7fd620a1ddaa731e7f9e5731d4d9ffe104ac97941b66affd3037"
+    },
+    {
+      "path": "tools/waybackurls.yaml",
+      "sha256": "119c90a0736ae9cb7a950aeb03ac5fdd790a910ef9058c6456f4cdd6457f7893"
+    },
+    {
+      "path": "tools/wpscan.yaml",
+      "sha256": "67474fdbd1c710c16c6f7d81fa51c41c40ce2c859014ddea539b6afaaea68794"
+    },
+    {
+      "path": "tools/x8.yaml",
+      "sha256": "9f6e1c3ec6829e21dfd9e5fe853b6fdbbb9b9b8055793d6e1e6ca851d360a25e"
+    },
+    {
+      "path": "tools/xsser.yaml",
+      "sha256": "1070e116696b184f63a6f235a3964a8261c5e6f723bab5bc7ab393d87397d3cb"
+    },
+    {
+      "path": "tools/xxd.yaml",
+      "sha256": "c664d52caf438d67b1414cfc22e00274787c295160e40f00328ce59e93278745"
+    },
+    {
+      "path": "tools/zap.yaml",
+      "sha256": "d530ed70722a48f283bae81f31c2e7751dee30301d25dd5840efaad70da5117a"
+    },
+    {
+      "path": "tools/zoomeye_search.yaml",
+      "sha256": "ee4423c731a197ef4237c2516261b8c0aa19b105970a9ac1bfae89692be44bac"
+    },
+    {
+      "path": "tools/zsteg.yaml",
+      "sha256": "321399cae5f9dda0ab47928b838d20991b714634708bb47a839a2d7d43edbf28"
+    }
+  ]
+}

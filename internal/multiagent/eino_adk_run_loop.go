@@ -462,7 +462,7 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 		if errors.Is(runErr, context.DeadlineExceeded) {
 			flushAllPendingAsFailed(runErr)
 			if progress != nil {
-				progress("error", runErr.Error(), map[string]interface{}{
+				progress("error", SafeEinoRunErrorMessage(runErr), map[string]interface{}{
 					"conversationId": conversationID,
 					"source":         "eino",
 					"errorKind":      "timeout",
@@ -474,7 +474,7 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 		if errors.Is(runErr, context.Canceled) {
 			flushAllPendingAsFailed(runErr)
 			if progress != nil {
-				progress("error", runErr.Error(), map[string]interface{}{
+				progress("error", SafeEinoRunErrorMessage(runErr), map[string]interface{}{
 					"conversationId": conversationID,
 					"source":         "eino",
 				})
@@ -484,12 +484,13 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 		if isEinoIterationLimitError(runErr) {
 			flushAllPendingAsFailed(runErr)
 			if progress != nil {
-				progress("iteration_limit_reached", runErr.Error(), map[string]interface{}{
+				safeMessage := SafeEinoRunErrorMessage(runErr)
+				progress("iteration_limit_reached", safeMessage, map[string]interface{}{
 					"conversationId": conversationID,
 					"source":         "eino",
 					"orchestration":  orchMode,
 				})
-				progress("error", runErr.Error(), map[string]interface{}{
+				progress("error", safeMessage, map[string]interface{}{
 					"conversationId": conversationID,
 					"source":         "eino",
 					"errorKind":      "iteration_limit",
@@ -499,7 +500,7 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 		}
 		flushAllPendingAsFailed(runErr)
 		if progress != nil {
-			progress("error", runErr.Error(), map[string]interface{}{
+			progress("error", SafeEinoRunErrorMessage(runErr), map[string]interface{}{
 				"conversationId": conversationID,
 				"source":         "eino",
 			})
@@ -603,7 +604,6 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 				"conversationId": conversationID,
 				"source":         "eino",
 				"orchestration":  orchMode,
-				"error":          runErr.Error(),
 				"errorKind":      errorKind,
 				"errorSummary":   errorSummary,
 				"attempt":        attemptNo,
@@ -614,7 +614,6 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 				"conversationId": conversationID,
 				"source":         "eino",
 				"orchestration":  orchMode,
-				"error":          runErr.Error(),
 				"errorKind":      errorKind,
 				"errorSummary":   errorSummary,
 				"attempt":        attemptNo,

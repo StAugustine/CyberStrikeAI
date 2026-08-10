@@ -40,6 +40,5 @@ mkdir -p "$DIST_DIR"
 echo "[*] Building with Maven (downloads Burp API from Maven Central)..."
 (cd "$ROOT_DIR" && "$MVN_BIN" -q -DskipTests package)
 
-cp "$ROOT_DIR/target/cyberstrikeai-burp-extension-1.0.0.jar" "$DIST_DIR/cyberstrikeai-burp-extension.jar"
+cp "$ROOT_DIR/target/cyberstrikeai-burp-extension-1.1.0.jar" "$DIST_DIR/cyberstrikeai-burp-extension.jar"
 echo "[+] Done: $DIST_DIR/cyberstrikeai-burp-extension.jar"
-

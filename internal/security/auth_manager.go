@@ -3,6 +3,7 @@ package security
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,14 @@ func NewAuthManager(sessionDurationHours int) *AuthManager {
 // AttachRBACStore enables multi-user RBAC authentication. When no users exist yet,
 // it bootstraps the built-in admin account and returns the generated initial password.
 func (a *AuthManager) AttachRBACStore(db *database.DB) (generatedAdminPassword string, err error) {
+	return a.AttachRBACStoreWithPasswordProvider(db, nil)
+}
+
+// AttachRBACStoreWithPasswordProvider lets a desktop bootstrap window provide
+// the initial password without writing it to stdout, arguments, or config.
+// The provider is called only when the database actually needs an admin
+// password. A nil provider preserves the CLI's generated-password behavior.
+func (a *AuthManager) AttachRBACStoreWithPasswordProvider(db *database.DB, provider func() (string, error)) (generatedAdminPassword string, err error) {
 	if db == nil {
 		return "", errors.New("database is required for authentication")
 	}
@@ -65,9 +74,21 @@ func (a *AuthManager) AttachRBACStore(db *database.DB) (generatedAdminPassword s
 
 	adminPasswordHash := ""
 	if needsAdminPassword {
-		generatedAdminPassword, err = GenerateStrongPassword(24)
-		if err != nil {
-			return "", err
+		if provider == nil {
+			generatedAdminPassword, err = GenerateStrongPassword(24)
+			if err != nil {
+				return "", err
+			}
+		} else {
+			providedPassword, providerErr := provider()
+			if providerErr != nil {
+				return "", fmt.Errorf("provide initial admin password: %w", providerErr)
+			}
+			providedPassword = strings.TrimSpace(providedPassword)
+			if len(providedPassword) < 8 {
+				return "", errors.New("initial admin password must be at least 8 characters")
+			}
+			generatedAdminPassword = providedPassword
 		}
 		adminPasswordHash, err = HashPassword(generatedAdminPassword)
 		if err != nil {
@@ -82,6 +103,9 @@ func (a *AuthManager) AttachRBACStore(db *database.DB) (generatedAdminPassword s
 	a.mu.Lock()
 	a.db = db
 	a.mu.Unlock()
+	if provider != nil {
+		generatedAdminPassword = ""
+	}
 	return generatedAdminPassword, nil
 }
 

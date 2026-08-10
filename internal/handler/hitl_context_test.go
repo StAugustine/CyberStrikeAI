@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -16,7 +15,11 @@ func TestEnrichHitlApprovalPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db: %v", err)
 	}
-	defer os.RemoveAll(tmp)
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Close database: %v", err)
+		}
+	})
 
 	conv, err := db.CreateConversation("hitl ctx", database.ConversationCreateMeta{})
 	if err != nil {

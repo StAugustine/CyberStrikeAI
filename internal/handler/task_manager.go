@@ -254,6 +254,10 @@ type AgentTaskManager struct {
 	eventBus         *TaskEventBus    // 可选：任务结束时关闭镜像 SSE 订阅
 	// toolCanceler 在用户整轮停止任务或会话结束时终止该会话仍在运行的 MCP 工具（非「中断并继续」）。
 	toolCanceler func(conversationID string)
+	stop         chan struct{}
+	done         chan struct{}
+	stopOnce     sync.Once
+	stopped      bool
 }
 
 const (
@@ -272,6 +276,8 @@ func NewAgentTaskManager() *AgentTaskManager {
 		completedTasks:   make([]*CompletedTask, 0),
 		maxHistorySize:   50,             // 最多保留50条历史记录
 		historyRetention: 24 * time.Hour, // 保留24小时
+		stop:             make(chan struct{}),
+		done:             make(chan struct{}),
 	}
 	go m.runStuckCancellingCleanup()
 	return m
@@ -312,10 +318,67 @@ func (m *AgentTaskManager) GetTaskSnapshot(conversationID string) *AgentTask {
 
 // runStuckCancellingCleanup 定期将长时间处于「取消中」的任务强制结束，避免卡住无法发新消息
 func (m *AgentTaskManager) runStuckCancellingCleanup() {
+	defer close(m.done)
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		m.cleanupStuckCancelling()
+	for {
+		select {
+		case <-ticker.C:
+			m.cleanupStuckCancelling()
+		case <-m.stop:
+			return
+		}
+	}
+}
+
+// Shutdown cancels active Agent work and stops the task cleanup loop.
+func (m *AgentTaskManager) Shutdown(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
+	m.stopOnce.Do(func() {
+		close(m.stop)
+		type activeTask struct {
+			conversationID string
+			cancel         func(error)
+			executeCancel  context.CancelFunc
+		}
+		m.mu.Lock()
+		m.stopped = true
+		active := make([]activeTask, 0, len(m.tasks))
+		toolCanceler := m.toolCanceler
+		for conversationID, task := range m.tasks {
+			if task == nil {
+				continue
+			}
+			task.Status = "cancelling"
+			task.CancellingAt = time.Now()
+			active = append(active, activeTask{
+				conversationID: conversationID,
+				cancel:         task.cancel,
+				executeCancel:  task.activeEinoExecuteCancel,
+			})
+		}
+		m.mu.Unlock()
+
+		for _, task := range active {
+			if task.executeCancel != nil {
+				task.executeCancel()
+			}
+			if task.cancel != nil {
+				task.cancel(ErrTaskCancelled)
+			}
+			if toolCanceler != nil {
+				toolCanceler(task.conversationID)
+			}
+		}
+	})
+
+	select {
+	case <-m.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -351,6 +414,9 @@ func (m *AgentTaskManager) cleanupStuckCancelling() {
 func (m *AgentTaskManager) StartTask(conversationID, message string, cancel context.CancelCauseFunc) (*AgentTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.stopped {
+		return nil, ErrTaskCancelled
+	}
 
 	if _, exists := m.tasks[conversationID]; exists {
 		return nil, ErrTaskAlreadyRunning

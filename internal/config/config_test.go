@@ -50,6 +50,77 @@ server:
 	}
 }
 
+func TestEnsureLocalConfigFromTemplateDoesNotOverwriteExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config", "config.yaml")
+	templatePath := filepath.Join(dir, "bundle", "config.example.yaml")
+	if err := os.MkdirAll(filepath.Dir(templatePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(templatePath, []byte("version: bundled\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := EnsureLocalConfigFromTemplate(configPath, templatePath)
+	if err != nil {
+		t.Fatalf("EnsureLocalConfigFromTemplate: %v", err)
+	}
+	if !result.Created || result.ExamplePath != templatePath {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if err := os.WriteFile(configPath, []byte("version: user\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := EnsureLocalConfigFromTemplate(configPath, templatePath); err != nil || result.Created {
+		t.Fatalf("existing config result=%#v err=%v", result, err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "version: user\n" {
+		t.Fatalf("existing config was overwritten: %q", data)
+	}
+}
+
+func TestLoadWithTransformResolvesResourceDirectoriesBeforeReading(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	toolsDir := filepath.Join(dir, "desktop-resources", "tools")
+	rolesDir := filepath.Join(dir, "desktop-resources", "roles")
+	if err := os.MkdirAll(toolsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(rolesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsDir, "demo.yaml"), []byte("name: demo\ndescription: demo\ncommand: echo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rolesDir, "demo.yaml"), []byte("name: demo\ndescription: demo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("security:\n  tools_dir: missing-tools\nroles_dir: missing-roles\n")
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadWithTransform(configPath, func(cfg *Config) error {
+		cfg.Security.ToolsDir = toolsDir
+		cfg.RolesDir = rolesDir
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("LoadWithTransform: %v", err)
+	}
+	if len(cfg.Security.Tools) != 1 || cfg.Security.Tools[0].Name != "demo" {
+		t.Fatalf("tools were not loaded from transformed path: %#v", cfg.Security.Tools)
+	}
+	if _, exists := cfg.Roles["demo"]; !exists {
+		t.Fatalf("roles were not loaded from transformed path: %#v", cfg.Roles)
+	}
+}
+
 func TestLoadIgnoresLegacyAuthPasswordField(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

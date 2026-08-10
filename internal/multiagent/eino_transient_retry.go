@@ -100,8 +100,7 @@ func einoTransientRunErrorUserDetail(err error) (kind, summary string) {
 	if err == nil {
 		return "", ""
 	}
-	msg := strings.TrimSpace(err.Error())
-	lower := strings.ToLower(msg)
+	lower := strings.ToLower(strings.TrimSpace(err.Error()))
 	if status := httpStatusFromErrorText(lower); status > 0 {
 		switch {
 		case status == 429:
@@ -163,17 +162,71 @@ func einoTransientRunErrorUserDetail(err error) (kind, summary string) {
 			kind = "transient"
 		}
 	}
-	return kind, einoTrimRetryErrorSummary(msg)
+	switch kind {
+	case "rate_limit":
+		summary = "上游模型服务限流或额度不足"
+	case "retryable_http":
+		summary = "上游模型请求暂时无法完成"
+	case "upstream_server", "upstream_busy":
+		summary = "上游模型服务暂时不可用"
+	case "network":
+		summary = "连接上游模型服务失败"
+	case "stream":
+		summary = "上游模型响应流中断"
+	case "http_error":
+		summary = "上游模型请求失败"
+	default:
+		summary = "上游模型请求暂时失败"
+	}
+	return kind, summary
 }
 
-func einoTrimRetryErrorSummary(msg string) string {
-	msg = strings.Join(strings.Fields(strings.TrimSpace(msg)), " ")
-	const maxRunes = 500
-	runes := []rune(msg)
-	if len(runes) <= maxRunes {
-		return msg
+// SafeEinoRunErrorMessage returns a stable client-facing error without exposing
+// upstream response bodies, request URLs, request IDs, or credentials.
+func SafeEinoRunErrorMessage(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "任务已取消。"
 	}
-	return string(runes[:maxRunes]) + "..."
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "任务执行超时，已自动终止。"
+	}
+	if isEinoIterationLimitError(err) {
+		return "任务达到最大迭代次数，已停止执行。"
+	}
+	if err == nil {
+		return "执行失败，请查看应用日志了解详情。"
+	}
+	lower := strings.ToLower(strings.TrimSpace(err.Error()))
+	status := httpStatusFromErrorText(lower)
+	var apiErr *einoopenai.APIError
+	if errors.As(err, &apiErr) && apiErr.HTTPStatusCode > 0 {
+		status = apiErr.HTTPStatusCode
+	}
+	if status == 401 || status == 403 ||
+		strings.Contains(lower, "invalid api key") ||
+		strings.Contains(lower, "incorrect api key") ||
+		strings.Contains(lower, "authentication failed") ||
+		strings.Contains(lower, "unauthorized") {
+		return "模型服务认证失败，请检查 AI 通道凭据。"
+	}
+	if status == 429 ||
+		strings.Contains(lower, "too many requests") ||
+		strings.Contains(lower, "rate limit") ||
+		strings.Contains(lower, "rate_limit") ||
+		strings.Contains(lower, "ratelimit") ||
+		strings.Contains(lower, "insufficient_quota") {
+		return "模型服务限流或额度不足，请稍后重试。"
+	}
+	if isEinoTransientRunError(err) {
+		kind, _ := einoTransientRunErrorUserDetail(err)
+		switch kind {
+		case "network", "stream":
+			return "模型服务连接中断，请检查网络或服务地址。"
+		default:
+			return "模型服务暂时不可用，请稍后重试。"
+		}
+	}
+	return "执行失败，请查看应用日志了解详情。"
 }
 
 func httpStatusFromErrorText(msg string) int {

@@ -172,18 +172,6 @@ func (h *ExternalMCPHandler) AddOrUpdateExternalMCP(c *gin.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	// 添加或更新配置
-	if err := h.manager.AddOrUpdateConfig(name, req.Config); err != nil {
-		h.logger.Error("添加或更新外部MCP配置失败", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "添加或更新配置失败: " + err.Error()})
-		return
-	}
-
-	// 更新内存中的配置
-	if h.config.ExternalMCP.Servers == nil {
-		h.config.ExternalMCP.Servers = make(map[string]config.ExternalMCPServerConfig)
-	}
-
 	cfg := req.Config
 
 	// 官方 disabled 字段 → ExternalMCPEnable 取反
@@ -196,6 +184,18 @@ func (h *ExternalMCPHandler) AddOrUpdateExternalMCP(c *gin.Context) {
 
 	// 展开 ${VAR} 环境变量
 	config.ExpandConfigEnv(&cfg)
+
+	// 规范化完成后再交给 manager；其连接 goroutine 可能立即读取 Args/Env/Headers。
+	if err := h.manager.AddOrUpdateConfig(name, cfg); err != nil {
+		h.logger.Error("添加或更新外部MCP配置失败", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "添加或更新配置失败: " + err.Error()})
+		return
+	}
+
+	// 更新内存中的配置
+	if h.config.ExternalMCP.Servers == nil {
+		h.config.ExternalMCP.Servers = make(map[string]config.ExternalMCPServerConfig)
+	}
 
 	h.config.ExternalMCP.Servers[name] = cfg
 
@@ -272,6 +272,7 @@ func (h *ExternalMCPHandler) StartExternalMCP(c *gin.Context) {
 	}
 	cfg := h.config.ExternalMCP.Servers[name]
 	cfg.ExternalMCPEnable = true
+	cfg.Disabled = false
 	h.config.ExternalMCP.Servers[name] = cfg
 
 	// 保存到配置文件
@@ -326,6 +327,7 @@ func (h *ExternalMCPHandler) StopExternalMCP(c *gin.Context) {
 	}
 	cfg := h.config.ExternalMCP.Servers[name]
 	cfg.ExternalMCPEnable = false
+	cfg.Disabled = true
 	h.config.ExternalMCP.Servers[name] = cfg
 
 	// 保存到配置文件

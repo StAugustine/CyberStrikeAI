@@ -1314,6 +1314,19 @@ func (s *Server) CancelToolExecution(id string) bool {
 	return s.CancelToolExecutionWithNote(id, "")
 }
 
+// CancelAllExecutions cancels every in-memory tool execution owned by this server.
+func (s *Server) CancelAllExecutions(note string) {
+	if s == nil {
+		return
+	}
+	if s.executionService != nil {
+		s.executionService.CancelAll(note)
+	}
+	for executionID := range s.ActiveRunningExecutionIDs() {
+		s.CancelToolExecutionWithNote(executionID, note)
+	}
+}
+
 // ActiveRunningExecutionIDs 返回当前进程内仍登记 cancel 的 executionId 快照。
 func (s *Server) ActiveRunningExecutionIDs() map[string]struct{} {
 	if s == nil {

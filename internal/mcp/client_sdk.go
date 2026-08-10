@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/pythonruntime"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.uber.org/zap"
@@ -369,7 +370,8 @@ func createSDKClient(ctx context.Context, serverCfg config.ExternalMCPServerConf
 		}
 		// 必须用 exec.Command 而非 CommandContext：doConnect 返回后 ctx 会被 cancel，
 		// 若用 CommandContext(ctx) 会立刻杀掉子进程，导致 ListTools 等后续请求失败、显示 0 工具
-		cmd := exec.Command(serverCfg.Command, serverCfg.Args...)
+		cmd := exec.Command(pythonruntime.ResolveCommand(serverCfg.Command), serverCfg.Args...)
+		prepareExternalCommand(cmd)
 		if len(serverCfg.Env) > 0 {
 			cmd.Env = append(cmd.Env, envMapToSlice(serverCfg.Env)...)
 		}

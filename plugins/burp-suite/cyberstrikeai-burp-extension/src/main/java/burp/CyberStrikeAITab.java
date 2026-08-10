@@ -16,6 +16,7 @@ final class CyberStrikeAITab implements ITab {
     private final JTextField portField = new JTextField("8080");
     private final JCheckBox useHttpsBox = new JCheckBox("HTTPS", true);
     private final JPasswordField passwordField = new JPasswordField();
+    private final JButton desktopButton = new JButton("Use Desktop");
     private final JButton validateButton = new JButton("Validate");
     private final JButton clearButton = new JButton("Clear Output");
     private final JButton stopButton = new JButton("Stop");
@@ -113,6 +114,8 @@ final class CyberStrikeAITab implements ITab {
         row1.add(useHttpsBox);
         row1.add(new JLabel("Password"));
         row1.add(passwordField);
+        desktopButton.setToolTipText("Discover an explicitly enabled local CyberStrikeAI desktop client");
+        row1.add(desktopButton);
         row1.add(validateButton);
         row1.add(statusLabel);
 
@@ -407,6 +410,8 @@ final class CyberStrikeAITab implements ITab {
     // right panel builds scroll panes for each tab
 
     private void wireActions() {
+        desktopButton.addActionListener(e -> discoverDesktop());
+
         validateButton.addActionListener(e -> {
             if ("Cancel".equals(validateButton.getText())) {
                 cancelValidateInProgress();
@@ -535,6 +540,30 @@ final class CyberStrikeAITab implements ITab {
         });
 
         renderMarkdownBox.addActionListener(e -> refreshOutputView());
+    }
+
+    private void discoverDesktop() {
+        desktopButton.setEnabled(false);
+        statusLabel.setText("Discovering desktop...");
+        Thread worker = new Thread(() -> {
+            try {
+                DesktopDiscovery.Endpoint endpoint = DesktopDiscovery.loadDefault();
+                SwingUtilities.invokeLater(() -> {
+                    hostField.setText(endpoint.host);
+                    portField.setText(Integer.toString(endpoint.port));
+                    useHttpsBox.setSelected(false);
+                    passwordField.setText("");
+                    tokenRef.set("");
+                    statusLabel.setText("Desktop " + endpoint.appVersion + " found; enter password, then Validate");
+                });
+            } catch (Exception ex) {
+                tokenRef.set("");
+                SwingUtilities.invokeLater(() -> statusLabel.setText("Desktop unavailable: " + ex.getMessage()));
+            } finally {
+                SwingUtilities.invokeLater(() -> desktopButton.setEnabled(true));
+            }
+        }, "CyberStrikeAI-Desktop-Discovery");
+        worker.start();
     }
 
     CyberStrikeAIClient.Config currentConfig() {
@@ -848,4 +877,3 @@ final class CyberStrikeAITab implements ITab {
         return root;
     }
 }
-

@@ -9,7 +9,11 @@
     <script>
         (function () {
             try {
-                var stored = localStorage.getItem('cyberstrike-theme') || 'system';
+                var stored = localStorage.getItem('cyberstrike-theme');
+                if (stored !== 'system' && stored !== 'light' && stored !== 'dark') {
+                    var match = document.cookie.match(/(?:^|;\s*)cyberstrike-theme=([^;]*)/);
+                    stored = match ? decodeURIComponent(match[1]) : 'system';
+                }
                 if (stored !== 'system' && stored !== 'light' && stored !== 'dark') {
                     stored = 'system';
                 }
@@ -24,8 +28,10 @@
         })();
     </script>
     <link rel="stylesheet" href="/static/css/style.css?v=20260720-2">
+    {{if not .DesktopMode}}
     <link rel="stylesheet" href="/static/css/c2.css">
     <link rel="stylesheet" href="/static/vendor/xterm.css">
+    {{end}}
     <script src="/static/js/router.js"></script>
 </head>
 <body>
@@ -57,6 +63,44 @@
         </div>
     </div>
 
+    <div id="desktop-ai-setup" class="desktop-ai-setup" role="dialog" aria-modal="true" aria-labelledby="desktop-ai-setup-title" hidden>
+        <div class="desktop-ai-setup-card">
+            <div class="desktop-ai-setup-heading">
+                <span class="desktop-ai-setup-step">桌面端首次设置</span>
+                <h2 id="desktop-ai-setup-title">连接你的 AI 通道</h2>
+                <p>配置一个默认模型即可开始对话和 Agent 工作。API Key 会写入系统凭据库，配置文件只保存受保护的引用。</p>
+            </div>
+            <form id="desktop-ai-setup-form" class="desktop-ai-setup-form">
+                <label>
+                    API 提供商
+                    <select id="desktop-ai-provider">
+                        <option value="openai_compatible">OpenAI / 兼容 OpenAI 协议</option>
+                        <option value="claude">Claude (Anthropic Messages API)</option>
+                    </select>
+                </label>
+                <label>
+                    Base URL
+                    <input id="desktop-ai-base-url" type="url" placeholder="https://api.openai.com/v1" required autocomplete="url">
+                </label>
+                <label>
+                    API Key
+                    <input id="desktop-ai-api-key" type="password" placeholder="输入 API Key" required autocomplete="off">
+                </label>
+                <label>
+                    模型
+                    <input id="desktop-ai-model" type="text" placeholder="gpt-4.1" required autocomplete="off">
+                </label>
+                <p class="desktop-ai-security-note">密钥只会通过本机受认证接口交给 Go core，不进入 URL、命令行或日志。</p>
+                <p id="desktop-ai-setup-message" class="desktop-ai-setup-message" role="status" aria-live="polite"></p>
+                <div class="desktop-ai-setup-actions">
+                    <button id="desktop-ai-test" class="btn-secondary" type="button">测试连接</button>
+                    <button id="desktop-ai-save" class="btn-primary" type="submit" data-require-permission="config:write">保存并继续</button>
+                </div>
+                <button id="desktop-ai-later" class="desktop-ai-later" type="button">稍后在“系统设置”中配置</button>
+            </form>
+        </div>
+    </div>
+
     <div class="container">
         <header>
             <div class="header-content">
@@ -69,6 +113,7 @@
                 </div>
                 <div class="header-right">
                     <div class="header-actions">
+                        {{if not .DesktopMode}}
                         <button class="openapi-doc-btn" onclick="window.open('/api-docs', '_blank')" data-i18n="header.apiDocs" data-i18n-attr="title" data-i18n-skip-text="true" title="API 文档">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -83,6 +128,7 @@
                                             </svg>
                                             <span data-i18n="header.github">GitHub</span>
                                         </button>
+                        {{end}}
                         <button id="theme-toggle-btn" class="theme-toggle-btn" type="button" onclick="window.cycleThemePreference && window.cycleThemePreference()" data-i18n="theme.toggle" data-i18n-attr="title" title="切换主题" aria-label="切换主题">
                             <svg class="theme-toggle-icon theme-toggle-icon--system" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
                                 <rect x="3" y="4" width="18" height="13" rx="2" stroke="currentColor" stroke-width="2"/>
@@ -148,6 +194,22 @@
                                     </div>
                                 </div>
                                 <div class="user-menu-divider" role="separator"></div>
+                                <div id="desktop-directory-actions" hidden>
+                                    <div class="user-menu-item" role="menuitem" tabindex="0" onclick="openDesktopDirectory('logs')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDesktopDirectory('logs');}">
+                                        <span>打开日志目录</span>
+                                    </div>
+                                    <div class="user-menu-item" role="menuitem" tabindex="0" onclick="openDesktopDirectory('data')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDesktopDirectory('data');}">
+                                        <span>打开数据目录</span>
+                                    </div>
+                                    <div class="user-menu-item" role="menuitem" tabindex="0" onclick="openDesktopDataMaintenance()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDesktopDataMaintenance();}">
+                                        <span>数据导入与恢复</span>
+                                    </div>
+                                    <div class="user-menu-item" role="menuitem" tabindex="0" onclick="manageDesktopPluginIntegration()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();manageDesktopPluginIntegration();}">
+                                        <span>本地插件联动</span>
+                                    </div>
+                                    <div class="user-menu-divider" role="separator"></div>
+                                </div>
+                                {{if not .DesktopMode}}
                                 <div class="user-menu-item" role="menuitem" tabindex="0" onclick="openRobotAccountBinding()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openRobotAccountBinding();}">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                         <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -155,6 +217,7 @@
                                     </svg>
                                     <span>绑定机器人账号</span>
                                 </div>
+                                {{end}}
                                 <div class="user-menu-item" role="menuitem" tabindex="0" onclick="logout()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();logout();}">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -266,6 +329,7 @@
                             <span data-i18n="nav.workflows">工作流</span>
                         </div>
                     </div>
+                    {{if not .DesktopMode}}
                     <div class="nav-item" data-page="webshell">
                         <div class="nav-item-content" data-title="WebShell管理" onclick="switchPage('webshell')" data-i18n="nav.webshell" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -299,6 +363,7 @@
                             <div class="nav-submenu-item" data-page="c2-profiles" onclick="switchPage('c2-profiles')" data-i18n="nav.c2Profiles">流量伪装</div>
                         </div>
                     </div>
+                    {{end}}
                     <div class="nav-item" data-page="chat-files">
                         <div class="nav-item-content" data-title="文件管理" onclick="switchPage('chat-files')" data-i18n="nav.chatFiles" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -412,6 +477,7 @@
                     <div class="nav-section-label" role="presentation">
                         <span data-i18n="navGroups.administration">平台管理</span>
                     </div>
+                    {{if not .DesktopMode}}
                     <div class="nav-item" data-page="platform-rbac">
                         <div class="nav-item-content" data-title="平台权限" onclick="switchPage('platform-rbac')" data-i18n="nav.platformRbac" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -427,6 +493,7 @@
                             <span data-i18n="nav.platformRbac">平台权限</span>
                         </div>
                     </div>
+                    {{end}}
                     <div class="nav-item" data-page="settings">
                         <div class="nav-item-content" data-title="系统设置" onclick="switchPage('settings')" data-i18n="nav.settings" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -717,6 +784,7 @@
                                             </div>
                                         </div>
                                     </section>
+                                    {{if not .DesktopMode}}
                                     <!-- 接入概览：C2 / WebShell Tab 切换（样式同「最近漏洞 / 近期事实」） -->
                                     <section class="dashboard-section dashboard-section-access" id="dashboard-section-access" hidden>
                                         <div class="dashboard-section-header dashboard-section-header--tabs">
@@ -752,6 +820,7 @@
                                             <div class="dashboard-webshell-recent" id="dashboard-webshell-recent" hidden></div>
                                         </div>
                                     </section>
+                                    {{end}}
                                     <!-- 推荐操作：基于当前数据状态智能生成（如「修复 4 个待处理严重漏洞」「审批 2 个 HITL」），
                                          比纯静态导航更有意义；当没有任何推荐时整个 section 隐藏 -->
                                     <section class="dashboard-section dashboard-section-recommend" id="dashboard-section-recommend" hidden>
@@ -2658,6 +2727,7 @@
                     </div>
                 </div>
 
+                {{if not .DesktopMode}}
                 <!-- WebShell 管理页面 -->
                 <div id="page-webshell" class="page">
                     <div class="page-header">
@@ -2694,6 +2764,7 @@
                         </div>
                     </div>
                 </div>
+                {{end}}
 
                 <!-- 对话附件 / 文件管理 -->
                 <div id="page-chat-files" class="page">
@@ -2797,6 +2868,7 @@
                     </div>
                 </div>
 
+                {{if not .DesktopMode}}
                 <!-- C2 监听器管理页面 -->
                 <div id="page-c2-listeners" class="page">
                     <div class="page-header">
@@ -3080,6 +3152,7 @@
                         <div id="c2-modal-content"></div>
                     </div>
                 </div>
+                {{end}}
 
                 <!-- 工作流页面 -->
                 <div id="page-workflows" class="page">
@@ -3420,6 +3493,7 @@
                                 <div class="settings-nav-item" data-section="knowledge" onclick="switchSettingsSection('knowledge')">
                                     <span data-i18n="settings.nav.knowledge">知识库</span>
                                 </div>
+                                {{if not .DesktopMode}}
                                 <div class="settings-nav-item" data-section="c2" onclick="switchSettingsSection('c2')">
                                     <span data-i18n="settings.nav.c2">C2</span>
                                 </div>
@@ -3429,6 +3503,7 @@
                                 <div class="settings-nav-item" data-section="terminal" onclick="switchSettingsSection('terminal')">
                                     <span data-i18n="settings.nav.terminal">终端</span>
                                 </div>
+                                {{end}}
                                 <div class="settings-nav-item" data-section="security" onclick="switchSettingsSection('security')">
                                     <span data-i18n="settings.nav.security">安全设置</span>
                                 </div>
@@ -4146,6 +4221,7 @@
                                 </div>
                             </div>
 
+                            {{if not .DesktopMode}}
                             <!-- C2 总开关 -->
                             <div id="settings-section-c2" class="settings-section-content">
                                 <div class="settings-section-header">
@@ -4744,6 +4820,7 @@
                                     </div>
                                 </div>
                             </div>
+                            {{end}}
 
                             <!-- 日志审计 -->
                             <div id="settings-section-audit" class="settings-section-content">
@@ -4887,6 +4964,7 @@
                     </div>
                 </div>
 
+                {{if not .DesktopMode}}
                 <!-- 平台权限页面 -->
                 <div id="page-platform-rbac" class="page platform-rbac-page">
                                 <div class="page-header">
@@ -5131,6 +5209,7 @@
             </div>
         </div>
     </div>
+    {{end}}
 
 
     <!-- MCP调用详情模态框 -->
@@ -6224,6 +6303,7 @@
         </div>
     </div>
 
+    {{if not .DesktopMode}}
     <!-- WebShell 添加连接模态框 -->
     <div id="webshell-modal" class="modal">
         <div class="modal-content" style="max-width: 560px;">
@@ -6299,6 +6379,7 @@
             </div>
         </div>
     </div>
+    {{end}}
 
     <!-- 角色选择弹窗 -->
     <div id="role-select-modal" class="modal">
@@ -6408,6 +6489,7 @@
         </div>
     </div>
 
+    {{if not .DesktopMode}}
     <div id="rbac-user-modal" class="modal">
         <div class="modal-content" style="max-width: 640px;">
             <div class="modal-header">
@@ -6494,6 +6576,7 @@
             </div>
         </div>
     </div>
+    {{end}}
 
     <!-- 项目管理弹窗（挂 body 下，避免被 .page overflow 裁剪） -->
     <div id="project-modal" class="modal-overlay projects-modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="project-modal-title" onclick="if(event.target===this)closeProjectModal()">
@@ -6629,6 +6712,7 @@
         </div>
     </div>
 
+    {{if not .DesktopMode}}
     <div id="robot-account-binding-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="robot-account-binding-title">
         <div class="modal-content robot-account-binding-content">
             <div class="modal-header robot-binding-header">
@@ -6702,6 +6786,7 @@
             </div>
         </div>
     </div>
+    {{end}}
 
     <script src="/static/vendor/i18next.min.js"></script>
     <script src="/static/js/i18n.js"></script>
@@ -6719,25 +6804,32 @@
     <script src="/static/js/chat.js?v=20260724-1"></script>
     <script src="/static/js/hitl.js"></script>
     <script src="/static/js/settings.js?v=20260717-1"></script>
+    <script src="/static/js/desktop-setup.js"></script>
     <script src="/static/js/audit-datetime-picker.js"></script>
     <script src="/static/js/audit.js"></script>
+    {{if not .DesktopMode}}
     <script src="/static/js/wechat-robot.js"></script>
     <script src="/static/vendor/xterm.js"></script>
     <script src="/static/vendor/xterm-addon-fit.js"></script>
     <script src="/static/js/terminal.js"></script>
+    {{end}}
     <script src="/static/js/knowledge.js"></script>
     <script src="/static/js/skills.js"></script>
     <script src="/static/js/fact-graph.js"></script>
     <script src="/static/js/projects.js?v=20260717-1"></script>
     <script src="/static/js/vulnerability.js?v=14"></script>
+    {{if not .DesktopMode}}
     <script src="/static/js/webshell.js"></script>
+    {{end}}
     <script src="/static/js/chat-files.js"></script>
     <script src="/static/js/tasks.js"></script>
     <script src="/static/js/workflow-package-client.js"></script>
     <script src="/static/js/workflows.js"></script>
     <script src="/static/js/roles.js"></script>
+    {{if not .DesktopMode}}
     <script src="/static/js/rbac.js"></script>
     <script src="/static/js/c2.js"></script>
+    {{end}}
     <script src="/static/js/rbac-guards.js?v=20260717-1"></script>
 </body>
 </html>

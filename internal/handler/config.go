@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/desktopcredentials"
 	"cyberstrike-ai/internal/knowledge"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/mcp/builtin"
@@ -94,10 +96,17 @@ type ConfigHandler struct {
 	logger                     *zap.Logger
 	mu                         sync.RWMutex
 	lastEmbeddingConfig        *config.EmbeddingConfig // 上一次的嵌入模型配置（用于检测变更）
+	desktopCredentials         *desktopcredentials.Manager
 }
 
 func (h *ConfigHandler) SetDB(db *database.DB) {
 	h.db = db
+}
+
+func (h *ConfigHandler) SetDesktopCredentialManager(manager *desktopcredentials.Manager) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.desktopCredentials = manager
 }
 
 func (h *ConfigHandler) validateRobotServiceAccounts(robots config.RobotsConfig) error {
@@ -258,38 +267,74 @@ func (h *ConfigHandler) ApplyWechatRobotBinding(wc config.RobotWechatConfig) err
 
 // GetConfigResponse 获取配置响应
 type GetConfigResponse struct {
-	AI         config.AIConfig          `json:"ai"`
-	OpenAI     config.OpenAIConfig      `json:"openai"`
-	Vision     config.VisionConfig      `json:"vision"`
-	FOFA       config.FofaConfig        `json:"fofa"`
-	ZoomEye    config.SpaceSearchConfig `json:"zoomeye"`
-	Quake      config.SpaceSearchConfig `json:"quake"`
-	Shodan     config.SpaceSearchConfig `json:"shodan"`
-	MCP        config.MCPConfig         `json:"mcp"`
-	Tools      []ToolConfigInfo         `json:"tools"`
-	Agent      config.AgentConfig       `json:"agent"`
-	Hitl       config.HitlConfig        `json:"hitl,omitempty"`
-	Knowledge  config.KnowledgeConfig   `json:"knowledge"`
-	Robots     config.RobotsConfig      `json:"robots,omitempty"`
-	MultiAgent config.MultiAgentPublic  `json:"multi_agent,omitempty"`
-	C2         config.C2Public          `json:"c2"`
+	AI               config.AIConfig          `json:"ai"`
+	OpenAI           config.OpenAIConfig      `json:"openai"`
+	Vision           config.VisionConfig      `json:"vision"`
+	FOFA             config.FofaConfig        `json:"fofa"`
+	ZoomEye          config.SpaceSearchConfig `json:"zoomeye"`
+	Quake            config.SpaceSearchConfig `json:"quake"`
+	Shodan           config.SpaceSearchConfig `json:"shodan"`
+	MCP              config.MCPConfig         `json:"mcp"`
+	Tools            []ToolConfigInfo         `json:"tools"`
+	Agent            config.AgentConfig       `json:"agent"`
+	Hitl             config.HitlConfig        `json:"hitl,omitempty"`
+	Knowledge        config.KnowledgeConfig   `json:"knowledge"`
+	Robots           config.RobotsConfig      `json:"robots,omitempty"`
+	MultiAgent       config.MultiAgentPublic  `json:"multi_agent,omitempty"`
+	C2               config.C2Public          `json:"c2"`
+	CredentialStatus map[string]bool          `json:"credential_status,omitempty"`
 }
 
 // ToolConfigInfo 工具配置信息
 type ToolConfigInfo struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Enabled     bool                   `json:"enabled"`
-	IsExternal  bool                   `json:"is_external,omitempty"`  // 是否为外部MCP工具
-	ExternalMCP string                 `json:"external_mcp,omitempty"` // 外部MCP名称（如果是外部工具）
-	RoleEnabled *bool                  `json:"role_enabled,omitempty"` // 该工具在当前角色中是否启用（nil表示未指定角色或使用所有工具）
-	InputSchema map[string]interface{} `json:"input_schema,omitempty"` // 工具参数 JSON Schema（用于前端展示详情）
+	Name                string                 `json:"name"`
+	Description         string                 `json:"description"`
+	Enabled             bool                   `json:"enabled"`
+	DefinitionInstalled bool                   `json:"definition_installed"`
+	RuntimeKind         string                 `json:"runtime_kind"`
+	ExecutableCommand   string                 `json:"executable_command,omitempty"`
+	ExecutableAvailable *bool                  `json:"executable_available,omitempty"`
+	ExecutablePath      string                 `json:"executable_path,omitempty"`
+	IsExternal          bool                   `json:"is_external,omitempty"`  // 是否为外部MCP工具
+	ExternalMCP         string                 `json:"external_mcp,omitempty"` // 外部MCP名称（如果是外部工具）
+	RoleEnabled         *bool                  `json:"role_enabled,omitempty"` // 该工具在当前角色中是否启用（nil表示未指定角色或使用所有工具）
+	InputSchema         map[string]interface{} `json:"input_schema,omitempty"` // 工具参数 JSON Schema（用于前端展示详情）
+}
+
+func configuredToolRuntime(command string) (kind, executableCommand, executablePath string, executableAvailable *bool) {
+	command = strings.TrimSpace(command)
+	if command == "" || strings.HasPrefix(command, "internal:") {
+		return "builtin", "", "", nil
+	}
+	available := false
+	path, err := exec.LookPath(command)
+	if err == nil {
+		available = true
+	}
+	return "system_command", command, path, &available
 }
 
 // GetConfig 获取当前配置
 func (h *ConfigHandler) GetConfig(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	responseConfig := h.config
+	var credentialStatus map[string]bool
+	if h.desktopCredentials != nil {
+		redacted, err := h.desktopCredentials.RedactedCopy(h.config)
+		if err != nil {
+			h.logger.Error("生成脱敏桌面配置失败", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取安全配置"})
+			return
+		}
+		responseConfig = redacted
+		credentialStatus, err = h.desktopCredentials.ConfiguredPaths(h.config)
+		if err != nil {
+			h.logger.Error("读取桌面凭据状态失败", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取安全配置"})
+			return
+		}
+	}
 
 	// 获取工具列表（包含内部和外部工具）
 	// 首先从配置文件获取工具
@@ -298,11 +343,17 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 
 	for _, tool := range h.config.Security.Tools {
 		configToolMap[tool.Name] = true
+		runtimeKind, executableCommand, executablePath, executableAvailable := configuredToolRuntime(tool.Command)
 		info := ToolConfigInfo{
-			Name:        tool.Name,
-			Description: h.pickToolDescription(tool.ShortDescription, tool.Description),
-			Enabled:     tool.Enabled,
-			IsExternal:  false,
+			Name:                tool.Name,
+			Description:         h.pickToolDescription(tool.ShortDescription, tool.Description),
+			Enabled:             tool.Enabled,
+			DefinitionInstalled: true,
+			RuntimeKind:         runtimeKind,
+			ExecutableCommand:   executableCommand,
+			ExecutableAvailable: executableAvailable,
+			ExecutablePath:      executablePath,
+			IsExternal:          false,
 		}
 		tools = append(tools, info)
 	}
@@ -316,10 +367,12 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 			}
 			description := h.pickToolDescription(mcpTool.ShortDescription, mcpTool.Description)
 			tools = append(tools, ToolConfigInfo{
-				Name:        mcpTool.Name,
-				Description: description,
-				Enabled:     true,
-				IsExternal:  false,
+				Name:                mcpTool.Name,
+				Description:         description,
+				Enabled:             true,
+				DefinitionInstalled: true,
+				RuntimeKind:         "builtin",
+				IsExternal:          false,
 			})
 		}
 	}
@@ -364,21 +417,22 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, GetConfigResponse{
-		AI:         h.config.AI,
-		OpenAI:     h.config.OpenAI,
-		Vision:     h.config.Vision,
-		FOFA:       h.config.FOFA,
-		ZoomEye:    h.config.ZoomEye,
-		Quake:      h.config.Quake,
-		Shodan:     h.config.Shodan,
-		MCP:        h.config.MCP,
-		Tools:      tools,
-		Agent:      h.config.Agent,
-		Hitl:       h.config.Hitl,
-		Knowledge:  h.config.Knowledge,
-		C2:         h.config.C2.Public(),
-		Robots:     h.config.Robots,
-		MultiAgent: multiPub,
+		AI:               responseConfig.AI,
+		OpenAI:           responseConfig.OpenAI,
+		Vision:           responseConfig.Vision,
+		FOFA:             responseConfig.FOFA,
+		ZoomEye:          responseConfig.ZoomEye,
+		Quake:            responseConfig.Quake,
+		Shodan:           responseConfig.Shodan,
+		MCP:              h.config.MCP,
+		Tools:            tools,
+		Agent:            h.config.Agent,
+		Hitl:             responseConfig.Hitl,
+		Knowledge:        responseConfig.Knowledge,
+		C2:               h.config.C2.Public(),
+		Robots:           h.config.Robots,
+		MultiAgent:       multiPub,
+		CredentialStatus: credentialStatus,
 	})
 }
 
@@ -486,11 +540,17 @@ func (h *ConfigHandler) GetTools(c *gin.Context) {
 	allTools := make([]ToolConfigInfo, 0, len(securityTools))
 	for _, tool := range securityTools {
 		configToolMap[tool.Name] = true
+		runtimeKind, executableCommand, executablePath, executableAvailable := configuredToolRuntime(tool.Command)
 		toolInfo := ToolConfigInfo{
-			Name:        tool.Name,
-			Description: pickDesc(tool.ShortDescription, tool.Description),
-			Enabled:     tool.Enabled,
-			IsExternal:  false,
+			Name:                tool.Name,
+			Description:         pickDesc(tool.ShortDescription, tool.Description),
+			Enabled:             tool.Enabled,
+			DefinitionInstalled: true,
+			RuntimeKind:         runtimeKind,
+			ExecutableCommand:   executableCommand,
+			ExecutableAvailable: executableAvailable,
+			ExecutablePath:      executablePath,
+			IsExternal:          false,
 		}
 
 		// 根据角色配置标注工具状态
@@ -547,10 +607,12 @@ func (h *ConfigHandler) GetTools(c *gin.Context) {
 			description := pickDesc(mcpTool.ShortDescription, mcpTool.Description)
 
 			toolInfo := ToolConfigInfo{
-				Name:        mcpTool.Name,
-				Description: description,
-				Enabled:     true,
-				IsExternal:  false,
+				Name:                mcpTool.Name,
+				Description:         description,
+				Enabled:             true,
+				DefinitionInstalled: true,
+				RuntimeKind:         "builtin",
+				IsExternal:          false,
 			}
 
 			// 根据角色配置标注工具状态
@@ -786,6 +848,31 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	var credentialUpdate *desktopcredentials.Update
+	var credentialSnapshot *desktopCredentialSnapshot
+	credentialUpdateCommitted := false
+	if h.desktopCredentials != nil {
+		credentialSnapshot = snapshotDesktopCredentials(h.config)
+		credentialUpdate = h.desktopCredentials.BeginUpdate()
+		if err := protectDesktopCredentialUpdates(credentialUpdate, &req, h.config); err != nil {
+			credentialUpdate.Rollback()
+			h.logger.Warn("保护桌面凭据失败", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "系统凭据库写入失败"})
+			return
+		}
+		if err := credentialUpdate.Activate(); err != nil {
+			credentialUpdate.Rollback()
+			h.logger.Warn("激活桌面凭据更新失败", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "系统凭据库写入失败"})
+			return
+		}
+		defer func() {
+			if !credentialUpdateCommitted {
+				credentialUpdate.Rollback()
+				restoreDesktopCredentials(h.config, credentialSnapshot)
+			}
+		}()
+	}
 
 	// 更新OpenAI配置
 	if req.AI != nil {
@@ -1134,11 +1221,147 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存配置失败: " + err.Error()})
 		return
 	}
+	if credentialUpdate != nil {
+		credentialUpdate.Commit()
+		credentialUpdateCommitted = true
+	}
 
 	if h.audit != nil {
 		h.audit.RecordOK(c, "config", "update", "更新内存配置", "config", "", nil)
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "配置已更新"})
+}
+
+type desktopCredentialSnapshot struct {
+	openAI             string
+	vision             string
+	fofa               string
+	zoomEye            string
+	quake              string
+	shodan             string
+	hitlAuditModel     string
+	knowledgeEmbedding string
+	knowledgeRerank    string
+	aiChannels         map[string]string
+}
+
+func snapshotDesktopCredentials(cfg *config.Config) *desktopCredentialSnapshot {
+	snapshot := &desktopCredentialSnapshot{
+		openAI:             cfg.OpenAI.APIKey,
+		vision:             cfg.Vision.APIKey,
+		fofa:               cfg.FOFA.APIKey,
+		zoomEye:            cfg.ZoomEye.APIKey,
+		quake:              cfg.Quake.APIKey,
+		shodan:             cfg.Shodan.APIKey,
+		hitlAuditModel:     cfg.Hitl.AuditModel.APIKey,
+		knowledgeEmbedding: cfg.Knowledge.Embedding.APIKey,
+		knowledgeRerank:    cfg.Knowledge.Retrieval.Rerank.APIKey,
+		aiChannels:         make(map[string]string, len(cfg.AI.Channels)),
+	}
+	for id, channel := range cfg.AI.Channels {
+		snapshot.aiChannels[config.NormalizeAIChannelID(id)] = channel.APIKey
+	}
+	return snapshot
+}
+
+func restoreDesktopCredentials(cfg *config.Config, snapshot *desktopCredentialSnapshot) {
+	if cfg == nil || snapshot == nil {
+		return
+	}
+	cfg.OpenAI.APIKey = snapshot.openAI
+	cfg.Vision.APIKey = snapshot.vision
+	cfg.FOFA.APIKey = snapshot.fofa
+	cfg.ZoomEye.APIKey = snapshot.zoomEye
+	cfg.Quake.APIKey = snapshot.quake
+	cfg.Shodan.APIKey = snapshot.shodan
+	cfg.Hitl.AuditModel.APIKey = snapshot.hitlAuditModel
+	cfg.Knowledge.Embedding.APIKey = snapshot.knowledgeEmbedding
+	cfg.Knowledge.Retrieval.Rerank.APIKey = snapshot.knowledgeRerank
+	for id, channel := range cfg.AI.Channels {
+		channel.APIKey = snapshot.aiChannels[config.NormalizeAIChannelID(id)]
+		cfg.AI.Channels[id] = channel
+	}
+}
+
+func protectDesktopCredentialUpdates(update *desktopcredentials.Update, req *UpdateConfigRequest, current *config.Config) error {
+	if update == nil || req == nil || current == nil {
+		return fmt.Errorf("桌面凭据更新参数不完整")
+	}
+	if req.AI != nil {
+		for id, incoming := range req.AI.Channels {
+			currentSecret := ""
+			normalizedID := config.NormalizeAIChannelID(id)
+			for currentID, currentChannel := range current.AI.Channels {
+				if config.NormalizeAIChannelID(currentID) == normalizedID {
+					currentSecret = currentChannel.APIKey
+					break
+				}
+			}
+			if err := update.Protect(desktopcredentials.AIChannelPath(id), &incoming.APIKey, currentSecret); err != nil {
+				return err
+			}
+			req.AI.Channels[id] = incoming
+		}
+	}
+	defaultChannelID := config.NormalizeAIChannelID(current.AI.DefaultChannel)
+	if req.AI != nil {
+		defaultChannelID = config.NormalizeAIChannelID(req.AI.DefaultChannel)
+	}
+	if defaultChannelID == "" {
+		defaultChannelID = "default"
+	}
+	currentDefaultSecret := ""
+	for id, channel := range current.AI.Channels {
+		if config.NormalizeAIChannelID(id) == defaultChannelID {
+			currentDefaultSecret = channel.APIKey
+			break
+		}
+	}
+	if req.OpenAI != nil {
+		defaultSecret := req.OpenAI.APIKey
+		if err := update.Protect(desktopcredentials.AIChannelPath(defaultChannelID), &defaultSecret, currentDefaultSecret); err != nil {
+			return err
+		}
+	}
+	if req.Vision != nil {
+		if err := update.Protect(desktopcredentials.PathVision, &req.Vision.APIKey, current.Vision.APIKey); err != nil {
+			return err
+		}
+	}
+	if req.FOFA != nil {
+		if err := update.Protect(desktopcredentials.PathFOFA, &req.FOFA.APIKey, current.FOFA.APIKey); err != nil {
+			return err
+		}
+	}
+	if req.ZoomEye != nil {
+		if err := update.Protect(desktopcredentials.PathZoomEye, &req.ZoomEye.APIKey, current.ZoomEye.APIKey); err != nil {
+			return err
+		}
+	}
+	if req.Quake != nil {
+		if err := update.Protect(desktopcredentials.PathQuake, &req.Quake.APIKey, current.Quake.APIKey); err != nil {
+			return err
+		}
+	}
+	if req.Shodan != nil {
+		if err := update.Protect(desktopcredentials.PathShodan, &req.Shodan.APIKey, current.Shodan.APIKey); err != nil {
+			return err
+		}
+	}
+	if req.Hitl != nil {
+		if err := update.Protect(desktopcredentials.PathHitlAuditModel, &req.Hitl.AuditModel.APIKey, current.Hitl.AuditModel.APIKey); err != nil {
+			return err
+		}
+	}
+	if req.Knowledge != nil {
+		if err := update.Protect(desktopcredentials.PathKnowledgeEmbedding, &req.Knowledge.Embedding.APIKey, current.Knowledge.Embedding.APIKey); err != nil {
+			return err
+		}
+		if err := update.Protect(desktopcredentials.PathKnowledgeRerank, &req.Knowledge.Retrieval.Rerank.APIKey, current.Knowledge.Retrieval.Rerank.APIKey); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // TestOpenAIRequest 测试OpenAI连接请求
@@ -1215,7 +1438,7 @@ func (h *ConfigHandler) TestOpenAI(c *gin.Context) {
 		if apiErr, ok := err.(*openai.APIError); ok {
 			c.JSON(http.StatusOK, gin.H{
 				"success":     false,
-				"error":       fmt.Sprintf("API 返回错误 (HTTP %d): %s", apiErr.StatusCode, apiErr.Body),
+				"error":       safeUpstreamAPIError(apiErr.StatusCode),
 				"status_code": apiErr.StatusCode,
 			})
 			return
@@ -1302,9 +1525,10 @@ func (h *ConfigHandler) ListModels(c *gin.Context) {
 	if err != nil {
 		if apiErr, ok := err.(*openai.APIError); ok {
 			c.JSON(http.StatusOK, gin.H{
-				"success":   false,
-				"supported": true,
-				"error":     fmt.Sprintf("API 返回错误 (HTTP %d): %s", apiErr.StatusCode, apiErr.Body),
+				"success":     false,
+				"supported":   true,
+				"error":       safeUpstreamAPIError(apiErr.StatusCode),
+				"status_code": apiErr.StatusCode,
 			})
 			return
 		}
@@ -1391,7 +1615,7 @@ func (h *ConfigHandler) TestVision(c *gin.Context) {
 		if apiErr, ok := err.(*openai.APIError); ok {
 			c.JSON(http.StatusOK, gin.H{
 				"success":     false,
-				"error":       fmt.Sprintf("API 返回错误 (HTTP %d): %s", apiErr.StatusCode, apiErr.Body),
+				"error":       safeUpstreamAPIError(apiErr.StatusCode),
 				"status_code": apiErr.StatusCode,
 			})
 			return
@@ -1415,6 +1639,17 @@ func (h *ConfigHandler) TestVision(c *gin.Context) {
 		"model":      chatResp.Model,
 		"latency_ms": latency.Milliseconds(),
 	})
+}
+
+func safeUpstreamAPIError(statusCode int) string {
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "API 认证失败，请检查凭据"
+	case http.StatusTooManyRequests:
+		return "API 请求受限或额度不足，请稍后重试"
+	default:
+		return fmt.Sprintf("API 返回错误 (HTTP %d)", statusCode)
+	}
 }
 
 // ApplyConfig 应用配置（重新加载并重启相关服务）
@@ -1681,13 +1916,22 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 
 // saveConfig 保存配置到文件
 func (h *ConfigHandler) saveConfig() error {
+	configToSave := h.config
+	if h.desktopCredentials != nil {
+		protected, err := h.desktopCredentials.PersistenceCopy(h.config)
+		if err != nil {
+			return fmt.Errorf("生成安全配置失败: %w", err)
+		}
+		configToSave = protected
+	}
+
 	// 读取现有配置文件并创建备份
 	data, err := os.ReadFile(h.configPath)
 	if err != nil {
 		return fmt.Errorf("读取配置文件失败: %w", err)
 	}
 
-	if err := os.WriteFile(h.configPath+".backup", data, 0644); err != nil {
+	if err := os.WriteFile(h.configPath+".backup", data, 0600); err != nil {
 		h.logger.Warn("创建配置备份失败", zap.Error(err))
 	}
 
@@ -1698,17 +1942,17 @@ func (h *ConfigHandler) saveConfig() error {
 
 	updateAgentConfig(root, h.config.Agent)
 	updateMCPConfig(root, h.config.MCP)
-	updateAIConfig(root, h.config.AI)
+	updateAIConfig(root, configToSave.AI)
 	removeKeyFromMap(root.Content[0], "openai")
-	updateVisionConfig(root, h.config.Vision)
-	updateFOFAConfig(root, h.config.FOFA)
-	updateSpaceSearchConfig(root, "zoomeye", h.config.ZoomEye)
-	updateSpaceSearchConfig(root, "quake", h.config.Quake)
-	updateSpaceSearchConfig(root, "shodan", h.config.Shodan)
-	updateKnowledgeConfig(root, h.config.Knowledge)
+	updateVisionConfig(root, configToSave.Vision)
+	updateFOFAConfig(root, configToSave.FOFA)
+	updateSpaceSearchConfig(root, "zoomeye", configToSave.ZoomEye)
+	updateSpaceSearchConfig(root, "quake", configToSave.Quake)
+	updateSpaceSearchConfig(root, "shodan", configToSave.Shodan)
+	updateKnowledgeConfig(root, configToSave.Knowledge)
 	updateC2Config(root, h.config.C2)
 	updateRobotsConfig(root, h.config.Robots)
-	updateHitlConfig(root, h.config.Hitl)
+	updateHitlConfig(root, configToSave.Hitl)
 	updateMultiAgentConfig(root, h.config.MultiAgent)
 	// 更新外部MCP配置（使用external_mcp.go中的函数，同一包中可直接调用）
 	updateExternalMCPConfig(root, h.config.ExternalMCP)
@@ -1803,7 +2047,7 @@ func writeYAMLDocument(path string, doc *yaml.Node) error {
 	if err := encoder.Close(); err != nil {
 		return err
 	}
-	return os.WriteFile(path, buf.Bytes(), 0644)
+	return os.WriteFile(path, buf.Bytes(), 0600)
 }
 
 func updateAgentConfig(doc *yaml.Node, agent config.AgentConfig) {
@@ -2430,11 +2674,13 @@ func (h *ConfigHandler) getExternalMCPToolsWithManager(
 		enabled := h.calculateExternalToolEnabledWithManager(mcpName, actualToolName, externalMCPConfigs, mgr)
 
 		result = append(result, ToolConfigInfo{
-			Name:        actualToolName,
-			Description: pickDesc(externalTool.ShortDescription, externalTool.Description),
-			Enabled:     enabled,
-			IsExternal:  true,
-			ExternalMCP: mcpName,
+			Name:                actualToolName,
+			Description:         pickDesc(externalTool.ShortDescription, externalTool.Description),
+			Enabled:             enabled,
+			DefinitionInstalled: true,
+			RuntimeKind:         "external_mcp",
+			IsExternal:          true,
+			ExternalMCP:         mcpName,
 		})
 	}
 

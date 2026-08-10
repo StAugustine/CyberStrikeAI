@@ -12,6 +12,8 @@ const STORAGE_KEYS = {
   captureEnabled: 'csai_capture_enabled',
   renderMarkdown: 'csai_render_markdown',
   showDebugEvents: 'csai_show_debug',
+  connectionMode: 'csai_connection_mode',
+  desktopInstanceId: 'csai_desktop_instance_id',
 };
 
 const SESSION_TOKEN_KEY = 'csai_token';
@@ -25,6 +27,8 @@ const DEFAULTS = {
   captureEnabled: true,
   renderMarkdown: true,
   showDebugEvents: false,
+  connectionMode: 'manual',
+  desktopInstanceId: '',
 };
 
 function extensionContextAlive() {
@@ -147,6 +151,8 @@ async function loadConfig() {
     captureEnabled: data[STORAGE_KEYS.captureEnabled] !== false,
     renderMarkdown: data[STORAGE_KEYS.renderMarkdown] !== false,
     showDebugEvents: data[STORAGE_KEYS.showDebugEvents] === true,
+    connectionMode: data[STORAGE_KEYS.connectionMode] === 'desktop' ? 'desktop' : 'manual',
+    desktopInstanceId: data[STORAGE_KEYS.desktopInstanceId] || '',
   };
 }
 
@@ -163,6 +169,8 @@ async function saveConfig(partial) {
   if (partial.captureEnabled != null) localMap[STORAGE_KEYS.captureEnabled] = partial.captureEnabled;
   if (partial.renderMarkdown != null) localMap[STORAGE_KEYS.renderMarkdown] = partial.renderMarkdown;
   if (partial.showDebugEvents != null) localMap[STORAGE_KEYS.showDebugEvents] = partial.showDebugEvents;
+  if (partial.connectionMode != null) localMap[STORAGE_KEYS.connectionMode] = partial.connectionMode;
+  if (partial.desktopInstanceId != null) localMap[STORAGE_KEYS.desktopInstanceId] = partial.desktopInstanceId;
   if (Object.keys(localMap).length) await localSet(localMap);
   const sessionMap = {};
   if (partial.token != null) sessionMap[SESSION_TOKEN_KEY] = partial.token;

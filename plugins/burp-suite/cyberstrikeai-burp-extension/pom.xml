@@ -6,12 +6,13 @@
 
     <groupId>ai.cyberstrike</groupId>
     <artifactId>cyberstrikeai-burp-extension</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <name>CyberStrikeAI Burp Suite Extension</name>
 
     <properties>
         <maven.compiler.release>11</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <cyberstrike.build.directory>${project.basedir}/target</cyberstrike.build.directory>
     </properties>
 
     <dependencies>
@@ -25,6 +26,7 @@
     </dependencies>
 
     <build>
+        <directory>${cyberstrike.build.directory}</directory>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -41,4 +43,3 @@
         </plugins>
     </build>
 </project>
-

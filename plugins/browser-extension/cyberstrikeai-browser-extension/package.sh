@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-OUT="$ROOT/dist/cyberstrikeai-browser-extension.zip"
-mkdir -p "$ROOT/dist"
+OUT="${CYBERSTRIKE_BROWSER_EXTENSION_OUTPUT:-$ROOT/dist/cyberstrikeai-browser-extension.zip}"
+mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"
 (cd "$ROOT" && zip -r "$OUT" . \
-  -x './dist/*' -x './package.sh' -x '*/.DS_Store')
+  -x './dist/*' -x './package.sh' -x 'lib/*.test.cjs' -x '*/.DS_Store')
 echo "[+] $OUT"

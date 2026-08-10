@@ -191,7 +191,7 @@ func (s *ExecutionService) runWorker(ctx context.Context, entry *executionEntry,
 
 	if entry.preRun != nil {
 		var preErr error
-		release, preErr = entry.preRun(ctx, cloneToolExecution(entry.exec))
+		release, preErr = entry.preRun(ctx, s.cloneEntryExecution(entry))
 		if preErr != nil {
 			s.finishEntry(ctx, entry, nil, preErr, onDone)
 			return
@@ -318,8 +318,12 @@ func (s *ExecutionService) Wait(ctx context.Context, executionID string, timeout
 	if entry == nil {
 		return s.getPersistedSnapshot(executionID)
 	}
-	if isExecutionTerminal(entry.exec.Status) {
-		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, nil
+	initial := s.cloneEntryExecution(entry)
+	if initial == nil {
+		return s.getPersistedSnapshot(executionID)
+	}
+	if isExecutionTerminal(initial.Status) {
+		return &ExecutionSnapshot{Execution: initial}, nil
 	}
 
 	var timeoutCh <-chan time.Time
@@ -332,18 +336,18 @@ func (s *ExecutionService) Wait(ctx context.Context, executionID string, timeout
 
 	select {
 	case <-entry.done:
-		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, nil
+		return &ExecutionSnapshot{Execution: s.cloneEntryExecution(entry)}, nil
 	case <-timeoutCh:
-		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, ErrExecutionWaitTimeout
+		return &ExecutionSnapshot{Execution: s.cloneEntryExecution(entry)}, ErrExecutionWaitTimeout
 	case <-ctxDone(ctx):
-		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, ctx.Err()
+		return &ExecutionSnapshot{Execution: s.cloneEntryExecution(entry)}, ctx.Err()
 	}
 }
 
 func (s *ExecutionService) Get(executionID string) (*ExecutionSnapshot, error) {
 	entry := s.getEntry(executionID)
 	if entry != nil {
-		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, nil
+		return &ExecutionSnapshot{Execution: s.cloneEntryExecution(entry)}, nil
 	}
 	return s.getPersistedSnapshot(executionID)
 }
@@ -438,6 +442,15 @@ func (s *ExecutionService) getEntry(executionID string) *executionEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.entries[id]
+}
+
+func (s *ExecutionService) cloneEntryExecution(entry *executionEntry) *ToolExecution {
+	if s == nil || entry == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneToolExecution(entry.exec)
 }
 
 func (s *ExecutionService) getPersistedSnapshot(executionID string) (*ExecutionSnapshot, error) {
